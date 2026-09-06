@@ -1,0 +1,1594 @@
+using System;
+using System.Diagnostics;
+using System.Drawing;
+using System.IO;
+using System.IO.Pipes;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+using System.Text;
+using System.Windows.Forms;
+
+namespace MultiExplorer;
+
+/// <summary>
+/// Hosts a full Windows Explorer UI (address bar, toolbar, file list) using the
+/// IExplorerBrowser COM interface (CLSID_ExplorerBrowser).
+///
+/// The browser is created as an in-process child window inside this control's HWND.
+/// There is no external process, no window detection, and no DPI context mismatch.
+///
+/// Path tracking
+/// -------------
+/// We do NOT use IExplorerBrowserEvents (the COM callback interface).  In .NET 8
+/// the CLR's COM Callable Wrapper (CCW) for a private nested class implementing a
+/// non-[ComImport] interface does not reliably respond to QueryInterface; the browser
+/// stores a null sink pointer and dereferences it during user navigation → AV.
+///
+/// Instead, GetCurrentPath() queries the live folder on demand via the chain:
+///   IExplorerBrowser.GetCurrentView(IFolderView) → IFolderView.GetFolder(IPersistFolder2)
+///   → IPersistFolder2.GetCurFolder(pidl) → SHGetPathFromIDList
+/// This is called once at window-close time, which is sufficient for persistence.
+/// </summary>
+public sealed class ExplorerHost : Control, IMessageFilter
+{
+    private const uint GW_CHILD = 5; // GetWindow flag: first child in Z-order
+
+    private const uint FVM_DETAILS = 4;
+
+    private const uint FWF_NOCOLUMNHEADER     = 0x00800000;
+    private const uint FWF_NOHEADERINALLVIEWS = 0x01000000;
+
+    /// <summary>
+    /// When true, pressing Space in the file list sends the selected item to QuickLook.
+    /// Toggled via View → Show → QuickLook preview; persisted in AppSettings.
+    /// </summary>
+    internal static bool QuickLookEnabled { get; set; }
+
+    private NativeMethods.IExplorerBrowser? _browser;
+    private BrowserSiteImpl?               _site;
+    private string                         _currentPath;
+    private bool                           _browserWasLaunched;
+    private bool                           _showNavPane = true;
+
+    // Used by the manual double-click detector in PreFilterMessage.
+    // IExplorerBrowser child windows often lack CS_DBLCLKS, so Windows never posts
+    // WM_LBUTTONDBLCLK for them — we detect the double-click ourselves from
+    // successive WM_LBUTTONDOWN messages that fall within the system thresholds.
+    private long  _lastBlankClickTick;
+    private Point _lastBlankClickPt;
+
+    // ── Name filter ───────────────────────────────────────────────────────────
+
+    /// <summary>True while a name filter overlay is active over this host.</summary>
+    internal bool IsFiltering { get; set; }
+
+    /// <summary>Fired when a printable character is typed in the file list (not during rename).</summary>
+    internal event EventHandler<char>? FilterCharInput;
+
+    /// <summary>Fired when Backspace is pressed while the filter bar is active.</summary>
+    internal event EventHandler? FilterBackspaceTyped;
+
+    /// <summary>Fired when Escape is pressed while the filter bar is active.</summary>
+    internal event EventHandler? FilterEscapePressed;
+
+    // ── Construction ──────────────────────────────────────────────────────────
+
+    public ExplorerHost(string initialPath)
+    {
+        _currentPath = Directory.Exists(initialPath) ? initialPath : @"C:\";
+        BackColor    = SystemColors.Window;
+    }
+
+    // ── Public API ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Creates the IExplorerBrowser instance and navigates to the initial path.
+    /// Call once from MainForm.OnShown after the panel has its final dimensions.
+    /// </summary>
+    public void LaunchExplorer()
+    {
+        if (_browser != null || !IsHandleCreated || Width == 0 || Height == 0) return;
+
+        try
+        {
+            var clsid = new Guid("71F96385-DDD6-48D3-A0C1-AE06E8B055FB");
+            var type  = Type.GetTypeFromCLSID(clsid)
+                        ?? throw new InvalidOperationException("CLSID_ExplorerBrowser not found.");
+
+            _browser = (NativeMethods.IExplorerBrowser)Activator.CreateInstance(type)!;
+
+            // Set a host site before Initialize so the browser never dereferences
+            // a null/uninitialised site pointer during navigation.
+            _site = new BrowserSiteImpl();
+            if (_browser is NativeMethods.IObjectWithSite ows)
+                ows.SetSite(_site);
+
+            // EBO_SHOWFRAMES (0x0002) — navigation pane + address bar.
+            _browser.SetOptions(_showNavPane ? 0x0002u : 0u);
+
+            var rect = new NativeMethods.RECT(0, 0, Width, Height);
+            var fs   = CreateHeaderEnabledFolderSettings(FVM_DETAILS);
+
+            int hr = _browser.Initialize(Handle, ref rect, ref fs);
+            if (hr < 0)
+                throw new COMException("IExplorerBrowser.Initialize failed.", hr);
+
+            // Remember that this host had a live browser. If WinForms later
+            // recreates our HWND (for example after a DPI-related handle change),
+            // OnHandleCreated will restore the browser into the new parent HWND.
+            _browserWasLaunched = true;
+
+            BrowseTo(_currentPath);
+
+            // BrowseToIDList creates a new shell view, which can replace the
+            // settings supplied to Initialize with that folder's saved view
+            // state.  Apply them again now that the real view exists.
+            ApplyFolderSettings(FVM_DETAILS);
+
+            // Mark the browser as the active input target so that
+            // IInputObject::TranslateAcceleratorIO processes frame-level commands.
+            // UIActivateIO is normally called by the host when focus enters the embedded
+            // object, but ExplorerHost.Handle almost never receives WM_SETFOCUS because
+            // users click directly on the native file-list child window, bypassing it.
+            // Calling it here ensures the browser is always in the right state.
+            if (_browser is NativeMethods.IInputObject io)
+                io.UIActivateIO(1, IntPtr.Zero);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, nameof(LaunchExplorer));
+            DestroyBrowser();
+        }
+    }
+
+    /// <summary>Navigates to the parent of the current folder (no-op at a drive root).</summary>
+    public void NavigateUp()
+    {
+        string current = GetCurrentPath().TrimEnd(Path.DirectorySeparatorChar);
+        string? parent = Path.GetDirectoryName(current);
+        if (parent != null && Directory.Exists(parent))
+            NavigateTo(parent);
+    }
+
+    /// <summary>Navigates the browser to path (no-op if path does not exist).</summary>
+    public void NavigateTo(string path)
+    {
+        if (_browser == null) return;
+        // Directory.Exists fails for UNC paths on many network configurations; let
+        // SHParseDisplayName inside BrowseTo validate those paths instead.
+        bool isUnc = path.StartsWith(@"\\", StringComparison.Ordinal);
+        if (!isUnc && !Directory.Exists(path)) return;
+        _currentPath = path;
+        BrowseTo(path);
+    }
+
+    /// <summary>Moves Win32 keyboard focus into the shell view's file-list window.</summary>
+    public void FocusShellView()
+    {
+        if (!IsHandleCreated) return;
+        if (_browser != null)
+        {
+            IntPtr child = NativeMethods.GetWindow(Handle, GW_CHILD);
+            if (child != IntPtr.Zero) { NativeMethods.SetFocus(child); return; }
+        }
+        Focus();
+    }
+
+    /// <summary>
+    /// Returns the folder the user is currently viewing.
+    /// Queries the live browser via IFolderView → IPersistFolder2 → GetCurFolder.
+    /// Falls back to the initial path if the query fails (e.g. virtual folder).
+    /// </summary>
+    public string GetCurrentPath()
+    {
+        if (_browser != null)
+        {
+            string? live = QueryLivePath();
+            if (live != null) return live;
+        }
+        return _currentPath;
+    }
+
+    // ── Keyboard routing ──────────────────────────────────────────────────────
+
+    protected override void WndProc(ref Message m)
+    {
+        const int WM_DESTROY  = 0x0002;
+        const int WM_SETFOCUS = 0x0007;
+
+        if (m.Msg == WM_DESTROY)
+            DestroyBrowser();
+
+        base.WndProc(ref m);
+
+        if (m.Msg == WM_SETFOCUS && _browser != null)
+        {
+            // Redirect Win32 focus to the shell view's child window.
+            IntPtr child = NativeMethods.GetWindow(Handle, GW_CHILD);
+            if (child != IntPtr.Zero)
+                NativeMethods.SetFocus(child);
+
+            // Tell the browser it is the active input target.  Without this call,
+            // IExplorerBrowser stays "UI inactive" and frame-level commands such as
+            // Ctrl+Shift+N (new folder) are silently discarded even when
+            // TranslateAcceleratorIO is called.
+            if (_browser is NativeMethods.IInputObject io)
+                io.UIActivateIO(1, IntPtr.Zero);
+        }
+    }
+
+    protected override bool IsInputKey(Keys keyData)
+    {
+        // Returning true tells WinForms' PreProcessMessage that this control
+        // wants the key as raw input, so it skips ProcessCmdKey and lets
+        // DispatchMessage deliver the WM_KEYDOWN to the focused native window.
+        // This covers arrows, F2, Delete, and every other shell shortcut.
+        return _browser != null || base.IsInputKey(keyData);
+    }
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        // Belt-and-suspenders: never consume an accelerator while the browser
+        // is active — pass everything through to the native shell windows.
+        if (_browser != null) return false;
+        return base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    // ── IMessageFilter — Ctrl+A select-all ───────────────────────────────────
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        Application.AddMessageFilter(this);
+
+        // The initial handle is launched explicitly by PanelView after layout.
+        // A later handle belongs to a host that was already launched, so defer
+        // recreation until WinForms has finished constructing the new HWND.
+        if (_browserWasLaunched && _browser == null && !Disposing && !IsDisposed)
+        {
+            BeginInvoke(() =>
+            {
+                if (IsHandleCreated && !Disposing && !IsDisposed && _browser == null)
+                    LaunchExplorer();
+            });
+        }
+    }
+
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        Application.RemoveMessageFilter(this);
+        base.OnHandleDestroyed(e);
+    }
+
+    /// <summary>
+    /// Passes Ctrl+key messages through IShellView::TranslateAccelerator.
+    ///
+    /// A standard Win32 message loop calls TranslateAccelerator before DispatchMessage;
+    /// WinForms never does.  Shell accelerators like Ctrl+A (select all), Ctrl+C (copy),
+    /// and Backspace (navigate up) live in the shell view's accelerator table — they are
+    /// NOT plain WM_KEYDOWN handlers — so they silently do nothing without this call.
+    ///
+    /// Arrow keys are NOT shell accelerators, so TranslateAccelerator returns S_FALSE for
+    /// them and they continue to reach the native ListView window unmodified.
+    /// </summary>
+    public bool PreFilterMessage(ref Message m)
+    {
+        const int WM_KEYDOWN       = 0x0100;
+        const int WM_SYSKEYDOWN    = 0x0104;
+        const int WM_LBUTTONDOWN   = 0x0201;
+        const int WM_LBUTTONDBLCLK = 0x0203;
+
+        // Double-click on blank space → navigate to parent folder.
+        //
+        // We handle both WM_LBUTTONDBLCLK and WM_LBUTTONDOWN because IExplorerBrowser
+        // child windows often lack the CS_DBLCLKS class style.  Without CS_DBLCLKS the
+        // system never posts WM_LBUTTONDBLCLK — it just posts two WM_LBUTTONDOWN messages —
+        // so WM_LBUTTONDBLCLK alone never fires for those windows.  The manual detector
+        // fires on the second WM_LBUTTONDOWN that lands within the system double-click time
+        // and distance of a previous blank-area click.  When CS_DBLCLKS IS present the
+        // second press arrives as WM_LBUTTONDBLCLK (not a second WM_LBUTTONDOWN), so both
+        // paths are mutually exclusive and neither triggers twice.
+        if ((m.Msg == WM_LBUTTONDOWN || m.Msg == WM_LBUTTONDBLCLK)
+            && _browser != null
+            && Visible
+            && (m.HWnd == Handle || NativeMethods.IsChild(Handle, m.HWnd)))
+        {
+            Point cur = Cursor.Position;
+            if (m.Msg == WM_LBUTTONDBLCLK)
+            {
+                // CS_DBLCLKS path: the first click was already dispatched before
+                // this message, so IsBlankAreaClick can check selection state.
+                if (IsBlankAreaClick())
+                {
+                    _lastBlankClickTick = 0;
+                    NavigateUp();
+                    return true;
+                }
+            }
+            else // WM_LBUTTONDOWN
+            {
+                long now = Environment.TickCount64;
+                bool withinThreshold =
+                    _lastBlankClickTick > 0
+                    && (now - _lastBlankClickTick) <= SystemInformation.DoubleClickTime
+                    && Math.Abs(cur.X - _lastBlankClickPt.X) <= SystemInformation.DoubleClickSize.Width
+                    && Math.Abs(cur.Y - _lastBlankClickPt.Y) <= SystemInformation.DoubleClickSize.Height;
+
+                if (withinThreshold)
+                {
+                    // Second click: first click already dispatched → selection state is
+                    // current. IsBlankAreaClick queries IFolderView.ItemCount to decide.
+                    _lastBlankClickTick = 0;
+                    if (IsBlankAreaClick())
+                    {
+                        NavigateUp();
+                        return true;
+                    }
+                }
+                else if (IsInFileListArea(m.HWnd))
+                {
+                    // First click in the file-list area: start the double-click timer.
+                    // We record every click (item or blank) here; the blank/item
+                    // distinction is made on the second click via selection state.
+                    _lastBlankClickTick = now;
+                    _lastBlankClickPt   = cur;
+                }
+                else
+                {
+                    _lastBlankClickTick = 0;
+                }
+            }
+        }
+
+        if ((m.Msg == WM_KEYDOWN || m.Msg == WM_SYSKEYDOWN)
+            && _browser != null
+            && ContainsFocus)
+        {
+            // ── Type-to-filter key interception ──────────────────────────────
+            if (m.Msg == WM_KEYDOWN && IsInFileListArea(m.HWnd) && !IsEditControl())
+            {
+                uint vk = (uint)m.WParam.ToInt32();
+
+                if (IsFiltering)
+                {
+                    if (vk == 0x08 /* VK_BACK */ && ModifierKeys == Keys.None)
+                    {
+                        FilterBackspaceTyped?.Invoke(this, EventArgs.Empty);
+                        return true;
+                    }
+                    if (vk == 0x1B /* VK_ESCAPE */ && ModifierKeys == Keys.None)
+                    {
+                        FilterEscapePressed?.Invoke(this, EventArgs.Empty);
+                        return true;
+                    }
+                }
+
+                // Start or extend filter on any printable character with no modifiers.
+                // Space is excluded when no filter is active so it falls through to
+                // the QuickLook handler below; once filtering is active, spaces are
+                // accepted so the user can search for names with spaces.
+                if (ModifierKeys == Keys.None)
+                {
+                    char c = GetCharFromVk(m.WParam);
+                    if (c >= 0x20 && c != 0x7F && (IsFiltering || c != ' '))
+                    {
+                        FilterCharInput?.Invoke(this, c);
+                        return true;
+                    }
+                }
+            }
+            // ─────────────────────────────────────────────────────────────────
+
+            // Ctrl+Shift+N — new folder.  This is an Explorer.exe frame command, not a
+            // shell-view accelerator, so IInputObject::TranslateAcceleratorIO never handles
+            // it in an embedded browser.  Implement it directly.
+            if (m.Msg == WM_KEYDOWN
+                && m.WParam == (IntPtr)0x4E   // VK_N
+                && (ModifierKeys & (Keys.Control | Keys.Shift)) == (Keys.Control | Keys.Shift))
+            {
+                CreateNewFolder();
+                return true;
+            }
+
+            // QuickLook: Space sends the focused/selected item to QuickLook for preview.
+            if (m.Msg == WM_KEYDOWN && m.WParam == (IntPtr)0x20
+                && QuickLookEnabled && ModifierKeys == Keys.None)
+            {
+                string? sel = GetSelectedItemPath();
+                if (sel != null)
+                {
+                    InvokeQuickLook(sel);
+                    return true;
+                }
+            }
+
+            return TryShellTranslateAccelerator(ref m);
+        }
+        return false;
+    }
+
+    public void CreateNewFolder()
+    {
+        string currentPath = GetCurrentPath();
+        if (!Directory.Exists(currentPath)) return;
+
+        // Find a unique name: "New folder", "New folder (2)", …
+        string name = "New folder";
+        string path = Path.Combine(currentPath, name);
+        for (int i = 2; Directory.Exists(path) || File.Exists(path); i++)
+        {
+            name = $"New folder ({i})";
+            path = Path.Combine(currentPath, name);
+        }
+
+        try { Directory.CreateDirectory(path); }
+        catch (Exception ex) { AppLog.Warn(ex, nameof(CreateNewFolder)); return; }
+
+        // Shell change notifications that refresh the view are asynchronous.
+        // Wait one timer tick (~150 ms) before selecting the new item so the
+        // view has time to reflect the new folder before we try to rename it.
+        string capturedPath = path;
+        var t = new System.Windows.Forms.Timer { Interval = 150 };
+        t.Tick += (_, __) => { t.Stop(); t.Dispose(); SelectAndEditItem(capturedPath); };
+        t.Start();
+    }
+
+    private void SelectAndEditItem(string path)
+    {
+        if (_browser == null) return;
+        try
+        {
+            var svId = new Guid("000214E3-0000-0000-C000-000000000046"); // IShellView
+            if (_browser.GetCurrentView(ref svId, out IntPtr ppv) < 0 || ppv == IntPtr.Zero)
+                return;
+            try
+            {
+                var sv = (NativeMethods.IShellView)Marshal.GetObjectForIUnknown(ppv);
+
+                int hr = NativeMethods.SHParseDisplayName(path, IntPtr.Zero, out IntPtr pidlAbs, 0, out _);
+                if (hr < 0 || pidlAbs == IntPtr.Zero) return;
+                try
+                {
+                    // ILFindLastID returns a pointer INTO pidlAbs for the last SHITEMID.
+                    // This single-item + null-terminator slice is a valid child PIDL.
+                    // IShellView::SelectItem expects a child (relative) PIDL, not absolute.
+                    IntPtr pidlChild = NativeMethods.ILFindLastID(pidlAbs);
+                    if (pidlChild == IntPtr.Zero) return;
+
+                    // SVSI_EDIT (0x03) = select + start inline rename
+                    // SVSI_DESELECTOTHERS (0x04) = deselect everything else
+                    // SVSI_ENSUREVISIBLE (0x08) = scroll item into view
+                    sv.SelectItem(pidlChild, 0x03 | 0x04 | 0x08);
+                }
+                finally { NativeMethods.CoTaskMemFree(pidlAbs); }
+            }
+            finally { Marshal.Release(ppv); }
+        }
+        catch (Exception ex) { AppLog.Debug(ex, nameof(SelectAndEditItem)); }
+    }
+
+    private bool TryShellTranslateAccelerator(ref Message m)
+    {
+        IntPtr pMsg = IntPtr.Zero;
+        try
+        {
+            var msg = new NativeMethods.MSG
+            {
+                hwnd    = m.HWnd,
+                message = (uint)m.Msg,
+                wParam  = m.WParam,
+                lParam  = m.LParam,
+            };
+            pMsg = Marshal.AllocHGlobal(Marshal.SizeOf<NativeMethods.MSG>());
+            Marshal.StructureToPtr(msg, pMsg, false);
+
+            // Primary path: IInputObject::TranslateAcceleratorIO on the browser.
+            // IExplorerBrowser implements IInputObject and routes the message to
+            // both the navigation frame (Ctrl+Shift+N, Ctrl+F, etc.) and the inner
+            // shell view (Ctrl+A, F2, Alt+Enter, Shift+Delete, etc.).
+            if (_browser is NativeMethods.IInputObject io && io.TranslateAcceleratorIO(pMsg) == 0)
+                return true;
+
+            // Fallback: IShellView::TranslateAccelerator for view-only accelerators
+            // if the browser's IInputObject doesn't handle the key.
+            var svId = new Guid("000214E3-0000-0000-C000-000000000046");
+            if (_browser!.GetCurrentView(ref svId, out IntPtr ppv) >= 0 && ppv != IntPtr.Zero)
+            {
+                try
+                {
+                    var sv = (NativeMethods.IShellView)Marshal.GetObjectForIUnknown(ppv);
+                    return sv.TranslateAccelerator(pMsg) == 0;
+                }
+                finally { Marshal.Release(ppv); }
+            }
+            return false;
+        }
+        catch (Exception ex) { AppLog.Debug(ex, nameof(TryShellTranslateAccelerator)); return false; }
+        finally { if (pMsg != IntPtr.Zero) Marshal.FreeHGlobal(pMsg); }
+    }
+
+    // ── Resize ────────────────────────────────────────────────────────────────
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+
+        if (_browser != null && Width > 0 && Height > 0)
+            _browser.SetRect(IntPtr.Zero, new NativeMethods.RECT(0, 0, Width, Height));
+    }
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    protected override void OnVisibleChanged(EventArgs e)
+    {
+        base.OnVisibleChanged(e);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+            DestroyBrowser();
+        base.Dispose(disposing);
+    }
+
+    // ── Command bar helpers ───────────────────────────────────────────────────
+
+    /// <summary>Changes the view mode (FVM_* constant: 1=icons 2=small 3=list 4=details 5=thumbnail 6=tile).</summary>
+    public void SetViewMode(uint viewMode)
+    {
+        if (_browser == null) return;
+        try
+        {
+            var fvId = new Guid("CDE725B0-CCC9-4519-917E-325D72FAB4CE");
+            if (_browser.GetCurrentView(ref fvId, out IntPtr ppv) < 0 || ppv == IntPtr.Zero) return;
+            try   { ((NativeMethods.IFolderView)Marshal.GetObjectForIUnknown(ppv)).SetCurrentViewMode(viewMode); }
+            finally { Marshal.Release(ppv); }
+
+            // SetCurrentViewMode alone does not clear a saved
+            // FWF_NOCOLUMNHEADER flag.  SetFolderSettings does, and also makes
+            // the corrected settings the default for subsequently browsed folders.
+            if (viewMode == FVM_DETAILS)
+            {
+                ApplyFolderSettings(viewMode);
+                FixColumnHeadersOnCurrentView();
+            }
+        }
+        catch (Exception ex) { AppLog.Warn(ex, nameof(SetViewMode)); }
+    }
+
+    internal void EnsureColumnHeaders()
+    {
+        if (_browser == null) return;
+        ApplyFolderSettings(FVM_DETAILS);
+        FixColumnHeadersOnCurrentView();
+    }
+
+    private void FixColumnHeadersOnCurrentView()
+    {
+        if (_browser == null) return;
+        try
+        {
+            var fv2Id = new Guid("1AF3A467-214F-4298-908E-06B03E0B39F9");
+            if (_browser.GetCurrentView(ref fv2Id, out IntPtr ppv) >= 0 && ppv != IntPtr.Zero)
+            {
+                try
+                {
+                    var fv2 = (NativeMethods.IFolderView2)Marshal.GetObjectForIUnknown(ppv);
+                    fv2.SetCurrentFolderFlags(FWF_NOCOLUMNHEADER | FWF_NOHEADERINALLVIEWS, 0);
+                }
+                finally { Marshal.Release(ppv); }
+            }
+        }
+        catch (Exception ex) { AppLog.Debug(ex, nameof(FixColumnHeadersOnCurrentView)); }
+    }
+
+    /// <summary>Sets view mode and icon size via IFolderView2 (for Medium Icons = FVM_ICON + 48px).</summary>
+    public void SetViewModeAndIconSize(uint viewMode, int iconSize)
+    {
+        if (_browser == null) return;
+        try
+        {
+            var fv2Id = new Guid("1AF3A467-214F-4298-908E-06B03E0B39F9");
+            if (_browser.GetCurrentView(ref fv2Id, out IntPtr ppv) < 0 || ppv == IntPtr.Zero) return;
+            try { ((NativeMethods.IFolderView2)Marshal.GetObjectForIUnknown(ppv)).SetViewModeAndIconSize(viewMode, iconSize); }
+            finally { Marshal.Release(ppv); }
+        }
+        catch (Exception ex) { AppLog.Warn(ex, nameof(SetViewModeAndIconSize)); }
+    }
+
+    /// <summary>Destroys and recreates the browser to apply the new nav-pane visibility.</summary>
+    internal void ToggleNavPane()
+    {
+        _showNavPane = !_showNavPane;
+        string path = GetCurrentPath();
+        DestroyBrowser();
+        _currentPath = path;
+        if (IsHandleCreated && Width > 0 && Height > 0)
+            LaunchExplorer();
+    }
+
+    internal bool IsNavPaneVisible => _showNavPane;
+
+    // Item checkboxes are controlled by the global AutoCheckSelect registry value
+    // (HKCU\…\Explorer\Advanced\AutoCheckSelect = 0/1).  FWF_CHECKSELECT via
+    // IFolderView2::SetCurrentFolderFlags is ignored by the Windows 11 DirectUI shell.
+    internal static bool IsCheckboxesEnabled()
+    {
+        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+            @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced");
+        return key?.GetValue("AutoCheckSelect") is int v && v == 1;
+    }
+
+    internal static void ToggleCheckboxes()
+    {
+        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+            @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", writable: true);
+        if (key == null) return;
+        int current = key.GetValue("AutoCheckSelect") is int v ? v : 0;
+        key.SetValue("AutoCheckSelect", current == 0 ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
+        BroadcastShellRefresh();
+    }
+
+    /// <summary>
+    /// Returns the file-system path of the first selected item, or the focused
+    /// (arrow-keyed) item if nothing is formally selected, or null if the view
+    /// is empty or the path cannot be resolved (virtual/network shell items).
+    ///
+    /// IShellItemArray (from IFolderView2::GetSelection) is NOT used here.
+    /// On some Windows 11 builds the RCW caches a negative QI result for
+    /// IShellItemArray even when the raw COM pointer supports it, making every
+    /// managed cast throw InvalidCastException.  IFolderView2::GetSelectedItem
+    /// returns an index instead and is fully reliable.
+    /// </summary>
+    internal string? GetSelectedItemPath()
+    {
+        if (_browser == null) return null;
+        try
+        {
+            var fv2Id = new Guid("1AF3A467-214F-4298-908E-06B03E0B39F9");
+            if (_browser.GetCurrentView(ref fv2Id, out IntPtr ppv) < 0 || ppv == IntPtr.Zero) return null;
+            try
+            {
+                var fv2  = (NativeMethods.IFolderView2)Marshal.GetObjectForIUnknown(ppv);
+                var siId = new Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"); // IShellItem
+
+                // Primary: click-selected item (selection mark).
+                // GetSelectedItem(0) returns the index of the selection-mark item (-1 = none).
+                if (fv2.GetSelectedItem(0, out int selIdx) >= 0 && selIdx >= 0
+                    && fv2.GetItem(selIdx, ref siId, out IntPtr ppvSel) >= 0 && ppvSel != IntPtr.Zero)
+                {
+                    try
+                    {
+                        var item = (NativeMethods.IShellItem)Marshal.GetObjectForIUnknown(ppvSel);
+                        item.GetDisplayName(0x80058000 /*SIGDN_FILESYSPATH*/, out string p);
+                        if (!string.IsNullOrEmpty(p)) return p;
+                    }
+                    finally { Marshal.Release(ppvSel); }
+                }
+
+                // Fallback: keyboard-focused item (arrow-key navigation without a click).
+                if (fv2.GetFocusedItem(out int focusIdx) >= 0 && focusIdx >= 0)
+                {
+                    if (fv2.GetItem(focusIdx, ref siId, out IntPtr ppvItem) >= 0 && ppvItem != IntPtr.Zero)
+                    {
+                        try
+                        {
+                            var item = (NativeMethods.IShellItem)Marshal.GetObjectForIUnknown(ppvItem);
+                            item.GetDisplayName(0x80058000, out string path);
+                            if (!string.IsNullOrEmpty(path)) return path;
+                        }
+                        finally { Marshal.Release(ppvItem); }
+                    }
+                }
+
+                return null;
+            }
+            finally { Marshal.Release(ppv); }
+        }
+        catch (Exception ex) { AppLog.Debug(ex, nameof(GetSelectedItemPath)); return null; }
+    }
+
+    /// <summary>Refreshes the current shell view (used after system settings changes).</summary>
+    internal void RefreshShellView()
+    {
+        if (_browser == null) return;
+        try
+        {
+            var svId = new Guid("000214E3-0000-0000-C000-000000000046");
+            if (_browser.GetCurrentView(ref svId, out IntPtr ppv) < 0 || ppv == IntPtr.Zero) return;
+            try { ((NativeMethods.IShellView)Marshal.GetObjectForIUnknown(ppv)).Refresh(); }
+            finally { Marshal.Release(ppv); }
+        }
+        catch (Exception ex) { AppLog.Debug(ex, nameof(RefreshShellView)); }
+    }
+
+    // ── Registry-backed global shell settings ────────────────────────────────────
+
+    internal static bool IsHiddenItemsVisible()
+    {
+        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+            @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced");
+        return key?.GetValue("Hidden") is int v && v == 1;
+    }
+
+    internal static void ToggleHiddenItems()
+    {
+        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+            @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", writable: true);
+        if (key == null) return;
+        int current = key.GetValue("Hidden") is int v ? v : 2;
+        key.SetValue("Hidden", current == 1 ? 2 : 1, Microsoft.Win32.RegistryValueKind.DWord);
+        BroadcastShellRefresh();
+    }
+
+    internal static bool IsFileExtensionsVisible()
+    {
+        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+            @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced");
+        return key?.GetValue("HideFileExt") is int v && v == 0;
+    }
+
+    internal static void ToggleFileExtensions()
+    {
+        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+            @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", writable: true);
+        if (key == null) return;
+        int current = key.GetValue("HideFileExt") is int v ? v : 1;
+        key.SetValue("HideFileExt", current == 0 ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
+        BroadcastShellRefresh();
+    }
+
+    internal static bool IsCompactViewEnabled()
+    {
+        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+            @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced");
+        return key?.GetValue("UseCompactMode") is int v && v == 1;
+    }
+
+    internal static void ToggleCompactView()
+    {
+        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+            @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", writable: true);
+        if (key == null) return;
+        int current = key.GetValue("UseCompactMode") is int v ? v : 0;
+        key.SetValue("UseCompactMode", current == 0 ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
+        NativeMethods.SendNotifyMessage(NativeMethods.HWND_BROADCAST,
+            NativeMethods.WM_SETTINGCHANGE, IntPtr.Zero, "ImmersiveColorSet");
+        NativeMethods.SendNotifyMessage(NativeMethods.HWND_BROADCAST,
+            NativeMethods.WM_SETTINGCHANGE, IntPtr.Zero, null);
+    }
+
+    // Sends the file to QuickLook for preview.  Tries the named pipe first (instant,
+    // no process overhead), then falls back to spawning QuickLook.exe with the path —
+    // QuickLook's own single-instance logic forwards it to the running window.
+    private static void InvokeQuickLook(string filePath)
+    {
+        // Grant QuickLook permission to bring its window to the foreground.
+        // Windows blocks SetForegroundWindow from background processes; only the
+        // current foreground process can delegate that right via AllowSetForegroundWindow.
+        int qlPid = GetQuickLookPid();
+        if (qlPid > 0)
+            NativeMethods.AllowSetForegroundWindow(qlPid);
+
+        if (TrySendViaQuickLookPipe(filePath)) return;
+        TryLaunchQuickLookProcess(filePath);
+    }
+
+    private static int GetQuickLookPid()
+    {
+        foreach (var p in Process.GetProcessesByName("QuickLook"))
+        {
+            try   { return p.Id; }
+            finally { p.Dispose(); }
+        }
+        return 0;
+    }
+
+    // QuickLook's pipe name uses the current user's SID (not the session ID).
+    // Confirmed format: QuickLook.App.Pipe.<WindowsIdentity SID>
+    //
+    // Race condition: QuickLook rotates to a new NamedPipeServerStream after each
+    // handled request.  If Space is pressed while the previous instance is closing,
+    // pipe.Connect() succeeds (we get the tail of the closing instance) but
+    // pipe.Write() throws IOException "Pipe is broken".  One retry is enough because
+    // the server creates a fresh instance the moment the old one closes.
+    private static bool TrySendViaQuickLookPipe(string filePath)
+    {
+        string sid      = WindowsIdentity.GetCurrent().User!.Value;
+        string pipeName = $"QuickLook.App.Pipe.{sid}";
+
+        for (int attempt = 1; attempt <= 2; attempt++)
+        {
+            try
+            {
+                using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.Out);
+                pipe.Connect(1000);
+                // QuickLook v4.x pipe protocol: "PipeMessages.Toggle|path|options\n"
+                byte[] data = Encoding.UTF8.GetBytes($"QuickLook.App.PipeMessages.Toggle|{filePath}|\n");
+                pipe.Write(data, 0, data.Length);
+                return true;
+            }
+            catch (IOException) when (attempt == 1)
+            {
+                // Broken-pipe race: QuickLook rotates its pipe server after each request.
+                // The fresh instance is ready immediately — retry once.
+            }
+            catch (Exception)
+            {
+                // TimeoutException   → QuickLook isn't running → fall through to process launch
+                // UnauthorizedAccess → privilege mismatch (elevated vs non-elevated)
+                return false;
+            }
+        }
+        return false;
+    }
+
+    // Fallback: find QuickLook.exe and launch it with the file path.
+    // QuickLook's single-instance logic forwards the path to the running window.
+    private static void TryLaunchQuickLookProcess(string filePath)
+    {
+        try
+        {
+            string? exe = FindQuickLookExe();
+            if (string.IsNullOrEmpty(exe))
+            {
+                AppLog.Warn(null, "QuickLook",
+                            "Could not locate QuickLook.exe — " +
+                            "ensure QuickLook is installed and running.");
+                return;
+            }
+            Process.Start(new ProcessStartInfo
+            {
+                FileName        = exe,
+                Arguments       = $"\"{filePath}\"",
+                UseShellExecute = false,
+            });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, "QuickLook", "Failed to launch QuickLook.exe");
+        }
+    }
+
+    private static string? FindQuickLookExe()
+    {
+        // 1. Running instance — most reliable, covers non-standard install paths.
+        foreach (var p in Process.GetProcessesByName("QuickLook"))
+        {
+            try
+            {
+                string? path = p.MainModule?.FileName;
+                if (!string.IsNullOrEmpty(path)) return path;
+            }
+            catch (Exception) { } // access denied reading MainModule on some OS configs — skip
+            finally { p.Dispose(); }
+        }
+
+        // 2. Standard per-user install locations.
+        string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        foreach (string c in new[]
+        {
+            Path.Combine(local, @"Programs\QuickLook\QuickLook.exe"),    // NSIS installer
+            Path.Combine(local, @"Microsoft\WindowsApps\QuickLook.exe"), // Windows Store
+        })
+        {
+            if (File.Exists(c)) return c;
+        }
+
+        // 3. NSIS uninstall registry key (covers custom install directories).
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Uninstall\QuickLook");
+            string? dir = key?.GetValue("InstallLocation") as string;
+            if (!string.IsNullOrEmpty(dir))
+            {
+                string candidate = Path.Combine(dir, "QuickLook.exe");
+                if (File.Exists(candidate)) return candidate;
+            }
+        }
+        catch (Exception) { } // registry unavailable — non-fatal
+
+        // 4. PATH variable — covers Scoop/Chocolatey installs.
+        foreach (string segment in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
+        {
+            try
+            {
+                string candidate = Path.Combine(segment.Trim(), "QuickLook.exe");
+                if (File.Exists(candidate)) return candidate;
+            }
+            catch (Exception) { } // malformed PATH segment — skip
+        }
+
+        return null;
+    }
+
+    private static void BroadcastShellRefresh()
+    {
+        NativeMethods.SHChangeNotify(NativeMethods.SHCNE_ASSOCCHANGED,
+            NativeMethods.SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero);
+    }
+
+    private static NativeMethods.FOLDERSETTINGS CreateHeaderEnabledFolderSettings(uint viewMode)
+    {
+        return new NativeMethods.FOLDERSETTINGS
+        {
+            ViewMode = viewMode,
+            fFlags   = 0,   // No suppression flags: Vista+ default shows headers in all view modes.
+        };
+    }
+
+    private void ApplyFolderSettings(uint viewMode)
+    {
+        if (_browser == null) return;
+
+        var settings = CreateHeaderEnabledFolderSettings(viewMode);
+        int hr = _browser.SetFolderSettings(ref settings);
+    }
+
+    /// <summary>Selects all items in the current shell view.</summary>
+    public void SelectAll() => SendAccelWithCtrl(0x41); // Ctrl+A (VK_A)
+
+    /// <summary>Shows properties for the selected shell item(s).</summary>
+    public void ShowProperties()
+    {
+        // Prefer the focus-independent shell command. Some shell views do not
+        // expose IOleCommandTarget, so retain Alt+Enter as an accelerator fallback.
+        if (!OleExec(10 /* OLECMDID_PROPERTIES */))
+            SendAccelWithAlt(0x0D); // Alt+Enter (VK_RETURN)
+    }
+
+    // ── Direct shell commands (bypass SendKeys / focus issues) ──────────────────
+
+    // All four commands use the same path as a real keypress: TryShellTranslateAccelerator
+    // calls IInputObject::TranslateAcceleratorIO, which is exactly what PreFilterMessage
+    // calls when the user presses the key manually.
+    //
+    // For Ctrl+key commands the accelerator table match requires GetKeyState(VK_CONTROL)
+    // to return "pressed".  SetKeyboardState writes to the per-thread key-state table
+    // that GetKeyState reads, so we can set Ctrl pressed, fire the accelerator, then
+    // restore — all synchronously, no message-queue round-trip needed.
+
+    public void Cut()    => SendAccelWithCtrl(0x58); // Ctrl+X  (VK_X)
+    public void Copy()   => SendAccelWithCtrl(0x43); // Ctrl+C  (VK_C)
+    public void Paste()  => SendAccelWithCtrl(0x56); // Ctrl+V  (VK_V)
+
+    public void Delete()
+    {
+        var m = Message.Create(Handle, 0x0100 /*WM_KEYDOWN*/, (IntPtr)0x2E /*VK_DELETE*/, (IntPtr)1);
+        TryShellTranslateAccelerator(ref m);
+    }
+
+    // Rename: pass a synthetic VK_F2 WM_KEYDOWN through IInputObject::TranslateAcceleratorIO.
+    public void Rename()
+    {
+        var m = Message.Create(Handle, 0x0100 /*WM_KEYDOWN*/, (IntPtr)0x71 /*VK_F2*/, (IntPtr)1);
+        TryShellTranslateAccelerator(ref m);
+    }
+
+    private void SendAccelWithCtrl(int vk)
+    {
+        byte[] saved = new byte[256];
+        NativeMethods.GetKeyboardState(saved);
+
+        byte[] withCtrl = (byte[])saved.Clone();
+        withCtrl[0x11] |= 0x80; // VK_CONTROL — set high bit = key down
+        NativeMethods.SetKeyboardState(withCtrl);
+        try
+        {
+            var m = Message.Create(Handle, 0x0100 /*WM_KEYDOWN*/, (IntPtr)vk, (IntPtr)1);
+            TryShellTranslateAccelerator(ref m);
+        }
+        finally
+        {
+            NativeMethods.SetKeyboardState(saved);
+        }
+    }
+
+    private void SendAccelWithAlt(int vk)
+    {
+        byte[] saved = new byte[256];
+        NativeMethods.GetKeyboardState(saved);
+
+        byte[] withAlt = (byte[])saved.Clone();
+        withAlt[0x12] |= 0x80; // VK_MENU (Alt) - set high bit = key down
+        NativeMethods.SetKeyboardState(withAlt);
+        try
+        {
+            // Bit 29 marks a system-key message whose Alt context is active.
+            var m = Message.Create(
+                Handle, 0x0104 /* WM_SYSKEYDOWN */, (IntPtr)vk, (IntPtr)0x20000001);
+            TryShellTranslateAccelerator(ref m);
+        }
+        finally
+        {
+            NativeMethods.SetKeyboardState(saved);
+        }
+    }
+
+    /// <summary>Sends a keystroke to the shell view via SendKeys (used for Properties only).</summary>
+    public void ExecuteShellCommand(string sendKeysStr)
+    {
+        BeginInvoke(() =>
+        {
+            FocusShellView();
+            SendKeys.SendWait(sendKeysStr);
+        });
+    }
+
+    // Executes a standard OLE command on the current shell view via IOleCommandTarget.
+    private bool OleExec(uint cmdId)
+    {
+        if (_browser == null) return false;
+        try
+        {
+            var svId = new Guid("000214E3-0000-0000-C000-000000000046"); // IShellView
+            if (_browser.GetCurrentView(ref svId, out IntPtr ppv) < 0 || ppv == IntPtr.Zero)
+                return false;
+            try
+            {
+                var obj = Marshal.GetObjectForIUnknown(ppv);
+                if (obj is NativeMethods.IOleCommandTarget oct)
+                    return oct.Exec(IntPtr.Zero, cmdId, 0, IntPtr.Zero, IntPtr.Zero) >= 0;
+            }
+            finally { Marshal.Release(ppv); }
+        }
+        catch (Exception ex) { AppLog.Debug(ex, nameof(OleExec)); }
+        return false;
+    }
+
+    // Walks the window tree under 'root' depth-first to find the first window
+    // whose class matches className.  Returns IntPtr.Zero if not found.
+    private static IntPtr FindDescendant(IntPtr root, string className)
+    {
+        IntPtr child = NativeMethods.GetWindow(root, 5); // GW_CHILD
+        while (child != IntPtr.Zero)
+        {
+            var sb = new StringBuilder(64);
+            NativeMethods.GetClassName(child, sb, sb.Capacity);
+            if (sb.ToString().Equals(className, StringComparison.OrdinalIgnoreCase))
+                return child;
+            IntPtr found = FindDescendant(child, className);
+            if (found != IntPtr.Zero) return found;
+            child = NativeMethods.GetWindow(child, NativeMethods.GW_HWNDNEXT);
+        }
+        return IntPtr.Zero;
+    }
+
+    // Returns the list-view HWND inside the embedded browser, preferring the
+    // window that currently has Win32 focus (user's last interaction point).
+    private IntPtr FindListView()
+    {
+        // If something already has focus and it's within our window rect, use it.
+        IntPtr focused = NativeMethods.GetFocus();
+        if (focused != IntPtr.Zero
+            && NativeMethods.GetWindowRect(Handle,  out NativeMethods.RECT myRect)
+            && NativeMethods.GetWindowRect(focused, out NativeMethods.RECT focRect))
+        {
+            if (focRect.Left >= myRect.Left && focRect.Right  <= myRect.Right
+             && focRect.Top  >= myRect.Top  && focRect.Bottom <= myRect.Bottom)
+                return focused;
+        }
+        // Fall back: traverse the child tree.
+        IntPtr lv = FindDescendant(Handle, "SysListView32");
+        if (lv == IntPtr.Zero) lv = FindDescendant(Handle, "UIItemsView");
+        return lv;
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    private void BrowseTo(string path)
+    {
+        if (_browser == null) return;
+
+        int hr = NativeMethods.SHParseDisplayName(path, IntPtr.Zero, out IntPtr pidl, 0, out _);
+        if (hr < 0 || pidl == IntPtr.Zero) return;
+
+        try   { _browser.BrowseToIDList(pidl, 0); }
+        finally { NativeMethods.CoTaskMemFree(pidl); }
+    }
+
+    private void DestroyBrowser()
+    {
+        if (_browser == null) return;
+
+        try
+        {
+            if (_browser is NativeMethods.IObjectWithSite ows)
+                ows.SetSite(null);
+            _browser.Destroy();
+        }
+        catch { }
+
+        try   { Marshal.ReleaseComObject(_browser); }
+        catch { }
+
+        _browser = null;
+        _site    = null;
+    }
+
+    /// <summary>
+    /// Queries the current folder from the live browser without using any CCW.
+    /// Returns null if anything in the chain fails (virtual folder, error, etc.).
+    /// </summary>
+    private string? QueryLivePath()
+    {
+        try
+        {
+            // Step 1 — get IFolderView from the browser's current view.
+            var fvId = new Guid("CDE725B0-CCC9-4519-917E-325D72FAB4CE");
+            if (_browser!.GetCurrentView(ref fvId, out IntPtr ppv) < 0 || ppv == IntPtr.Zero)
+                return null;
+
+            NativeMethods.IFolderView fv;
+            try
+            {
+                // GetCurrentView already AddRef'd ppv; GetObjectForIUnknown AddRef's again.
+                // We release our explicit reference so only the RCW holds one.
+                fv = (NativeMethods.IFolderView)Marshal.GetObjectForIUnknown(ppv);
+            }
+            finally { Marshal.Release(ppv); }
+
+            // Step 2 — get IPersistFolder2 from the view.
+            var pf2Id = new Guid("1AC3D9F0-175C-11D1-95BE-00609797EA4F");
+            if (fv.GetFolder(ref pf2Id, out IntPtr pf2Ptr) < 0 || pf2Ptr == IntPtr.Zero)
+                return null;
+
+            NativeMethods.IPersistFolder2 pf2;
+            try
+            {
+                pf2 = (NativeMethods.IPersistFolder2)Marshal.GetObjectForIUnknown(pf2Ptr);
+            }
+            finally { Marshal.Release(pf2Ptr); }
+
+            // Step 3 — get the current folder as a PIDL, convert to path string.
+            if (pf2.GetCurFolder(out IntPtr pidl) < 0 || pidl == IntPtr.Zero)
+                return null;
+
+            try
+            {
+                var sb = new StringBuilder(260);
+                return NativeMethods.SHGetPathFromIDList(pidl, sb) && sb.Length > 0
+                    ? sb.ToString()
+                    : null;
+            }
+            finally { NativeMethods.CoTaskMemFree(pidl); }
+        }
+        catch (Exception ex) { AppLog.Debug(ex, nameof(QueryLivePath)); return null; }
+    }
+
+    // ── Double-click blank-area detection ────────────────────────────────────
+
+    // Returns true when the cursor double-clicked blank space (no file/folder).
+    //
+    // Primary strategy — IFolderView.ItemCount(SVGIO_SELECTION):
+    //   Called on the SECOND click, after the first click has been dispatched.
+    //   If the first click landed on blank space Explorer deselects all items →
+    //   count == 0 → blank space.  If it landed on an item that item is selected →
+    //   count > 0 → not blank space.  This works for both DirectUI (Windows 11)
+    //   and SysListView32 views because IFolderView is the shell model layer, not
+    //   the rendering layer.
+    //
+    // Fallback — LVM_HITTEST on SysListView32:
+    //   Used only when the primary strategy fails (e.g. IFolderView QI error).
+    private bool IsBlankAreaClick()
+    {
+        // Primary: check how many items are selected after the first click.
+        if (_browser != null)
+        {
+            var viewId = new Guid("CDE725B0-CCC9-4519-917E-325D72FAB4CE");
+            if (_browser.GetCurrentView(ref viewId, out IntPtr ppv) >= 0 && ppv != IntPtr.Zero)
+            {
+                int selectedCount = -1;
+                try
+                {
+                    var fv = (NativeMethods.IFolderView)Marshal.GetObjectForIUnknown(ppv);
+                    if (fv.ItemCount(1 /*SVGIO_SELECTION*/, out int cnt) >= 0)
+                        selectedCount = cnt;
+                }
+                catch (Exception ex) { AppLog.Debug(ex, nameof(IsBlankAreaClick)); }
+                finally { Marshal.Release(ppv); }
+
+                if (selectedCount >= 0)
+                    return selectedCount == 0;
+            }
+        }
+
+        // Fallback: LVM_HITTEST on SysListView32 (pre-Windows-11 shell rendering).
+        IntPtr lv = FindDescendant(Handle, "SysListView32");
+        if (lv == IntPtr.Zero) lv = FindDescendant(Handle, "UIItemsView");
+        if (lv == IntPtr.Zero) return false;
+
+        var pt = new NativeMethods.POINT(Cursor.Position.X, Cursor.Position.Y);
+        if (!NativeMethods.ScreenToClient(lv, ref pt)) return false;
+        if (!NativeMethods.GetClientRect(lv, out NativeMethods.RECT cr)) return false;
+        if (pt.x < 0 || pt.y < 0 || pt.x >= cr.Right || pt.y >= cr.Bottom) return false;
+
+        var ht   = new NativeMethods.LVHITTESTINFO { pt = pt };
+        int item = NativeMethods.SendMessage(lv, NativeMethods.LVM_HITTEST, IntPtr.Zero, ref ht);
+        return item < 0 || (ht.flags & NativeMethods.LVHT_NOWHERE) != 0;
+    }
+
+    // Converts a virtual-key code (as in m.WParam) to the Unicode character it
+    // produces with the current keyboard layout and modifier state.
+    // Returns '\0' if the key does not produce a character (arrows, F-keys, etc.).
+    private static char GetCharFromVk(IntPtr wParam)
+    {
+        uint vk       = (uint)wParam.ToInt32();
+        uint scanCode = NativeMethods.MapVirtualKey(vk, 0u); // MAPVK_VK_TO_VSC
+        var  state    = new byte[256];
+        NativeMethods.GetKeyboardState(state);
+        var sb = new StringBuilder(4);
+        int n  = NativeMethods.ToUnicode(vk, scanCode, state, sb, sb.Capacity, 0);
+        return n > 0 ? sb[0] : '\0';
+    }
+
+    // Returns true when the currently focused HWND is an Edit control — i.e. the user
+    // is in the middle of an inline rename.  We must not start filtering in that case.
+    private static bool IsEditControl()
+    {
+        IntPtr focused = NativeMethods.GetFocus();
+        if (focused == IntPtr.Zero) return false;
+        var sb = new StringBuilder(64);
+        NativeMethods.GetClassName(focused, sb, sb.Capacity);
+        string cls = sb.ToString();
+        return cls.Equals("Edit",     StringComparison.OrdinalIgnoreCase)
+            || cls.Equals("RichEdit", StringComparison.OrdinalIgnoreCase)
+            || cls.StartsWith("RichEdit", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Returns true when hwnd is part of the file-list pane (under SHELLDLL_DefView).
+    // Used to ensure first-click tracking only fires for file-list clicks, not for
+    // clicks in the address bar or navigation buttons which share the same panel bounds.
+    private bool IsInFileListArea(IntPtr hwnd)
+    {
+        for (IntPtr cur = hwnd; cur != IntPtr.Zero && cur != Handle;
+             cur = NativeMethods.GetParent(cur))
+        {
+            var sb = new StringBuilder(64);
+            NativeMethods.GetClassName(cur, sb, sb.Capacity);
+            if (sb.ToString().Equals("SHELLDLL_DefView", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    // ── Navigation pane sync ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Expands the left-hand navigation pane to show and highlight <paramref name="path"/>.
+    /// Called by PanelView.PollPath each time the active folder changes.
+    /// Fails silently — the pane sync is best-effort.
+    /// </summary>
+    internal void SyncNavigationPane(string path)
+    {
+        if (_browser == null || string.IsNullOrEmpty(path)) return;
+        try
+        {
+            // UNC paths have no drive node to locate by text. Ask the shell's
+            // namespace-tree control to resolve the path by IShellItem identity.
+            if (path.StartsWith(@"\\", StringComparison.Ordinal)
+                && TrySyncNamespaceTree(path))
+                return;
+
+            IntPtr hwndTree = FindDescendant(Handle, "SysTreeView32");
+            if (hwndTree != IntPtr.Zero)
+                SyncTreeView(hwndTree, path);
+        }
+        catch (Exception ex) { AppLog.Debug(ex, nameof(SyncNavigationPane)); }
+    }
+
+    // Resolves paths that cannot be represented as a drive-letter breadcrumb
+    // (notably UNC shares) through the shell namespace rather than display text.
+    private bool TrySyncNamespaceTree(string path)
+    {
+        if (_browser is not NativeMethods.IComServiceProvider sp) return false;
+
+        NativeMethods.INameSpaceTreeControl? tree = null;
+        NativeMethods.IShellItem? item = null;
+        try
+        {
+            tree = TryGetNameSpaceTreeControl(sp);
+            if (tree == null) return false;
+
+            var shellItemId = new Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE");
+            if (NativeMethods.SHCreateItemFromParsingName(
+                    path, IntPtr.Zero, ref shellItemId, out IntPtr itemPtr) < 0
+                || itemPtr == IntPtr.Zero)
+                return false;
+
+            try { item = (NativeMethods.IShellItem)Marshal.GetObjectForIUnknown(itemPtr); }
+            finally { Marshal.Release(itemPtr); }
+
+            if (tree.EnsureItemVisible(item) < 0) return false;
+
+            const uint NSTCIS_SELECTED = 0x0001;
+            tree.SetItemState(item, NSTCIS_SELECTED, NSTCIS_SELECTED);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(TrySyncNamespaceTree));
+            return false;
+        }
+        finally
+        {
+            if (item != null)
+            {
+                try { Marshal.ReleaseComObject(item); }
+                catch { }
+            }
+            if (tree != null)
+            {
+                try { Marshal.ReleaseComObject(tree); }
+                catch { }
+            }
+        }
+    }
+
+    private static NativeMethods.INameSpaceTreeControl? TryGetNameSpaceTreeControl(
+        NativeMethods.IComServiceProvider sp)
+    {
+        var treeId = new Guid("028212A3-B627-47E9-8855-9F598112A7AB");
+
+        // Some ExplorerBrowser versions expose the namespace tree directly.
+        if (sp.QueryService(ref treeId, ref treeId, out IntPtr treePtr) >= 0
+            && treePtr != IntPtr.Zero)
+        {
+            try
+            {
+                return (NativeMethods.INameSpaceTreeControl)Marshal.GetObjectForIUnknown(treePtr);
+            }
+            finally { Marshal.Release(treePtr); }
+        }
+
+        // Otherwise obtain the tree HWND through IShellBrowser and request its
+        // native automation object, which implements INameSpaceTreeControl.
+        var shellBrowserId = new Guid("000214E2-0000-0000-C000-000000000046");
+        if (sp.QueryService(ref shellBrowserId, ref shellBrowserId, out IntPtr browserPtr) < 0
+            || browserPtr == IntPtr.Zero)
+            return null;
+
+        NativeMethods.IShellBrowser shellBrowser;
+        try { shellBrowser = (NativeMethods.IShellBrowser)Marshal.GetObjectForIUnknown(browserPtr); }
+        finally { Marshal.Release(browserPtr); }
+
+        IntPtr treeHwnd;
+        int controlResult;
+        try { controlResult = shellBrowser.GetControlWindow(4 /* FCW_TREE */, out treeHwnd); }
+        finally { Marshal.ReleaseComObject(shellBrowser); }
+
+        if (controlResult < 0 || treeHwnd == IntPtr.Zero) return null;
+
+        const int OBJID_NATIVEOM = unchecked((int)0xFFFFFFF0);
+        if (NativeMethods.AccessibleObjectFromWindow(
+                treeHwnd, OBJID_NATIVEOM, ref treeId, out IntPtr nativeTreePtr) < 0
+            || nativeTreePtr == IntPtr.Zero)
+            return null;
+
+        try
+        {
+            return (NativeMethods.INameSpaceTreeControl)Marshal.GetObjectForIUnknown(nativeTreePtr);
+        }
+        finally { Marshal.Release(nativeTreePtr); }
+    }
+
+    // Expands the SysTreeView32 to show and select the item for the given path.
+    //
+    // IExplorerBrowser runs in-process: the SysTreeView32 belongs to our process, so
+    // TVM_* messages can use direct heap/stack pointers (no cross-process VirtualAllocEx).
+    //
+    // Algorithm:
+    //   1. Walk root items looking for a node (or child of a node) whose text matches
+    //      the drive letter — e.g. "C:" matches "Local Disk (C:)" or "OS (C:)".
+    //   2. From the drive node, walk down each path component by display name.
+    //   3. Select the deepest match and scroll it into view.
+    private void SyncTreeView(IntPtr hwndTree, string path)
+    {
+        string[] parts = path.TrimEnd(Path.DirectorySeparatorChar)
+                             .Split(Path.DirectorySeparatorChar,
+                                    StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return;
+
+        string driveLetter = parts[0];
+
+        // ── Phase 1: find the drive item ─────────────────────────────────────
+        //
+        // Windows 11 navigation pane has a single "Desktop" root; "This PC"
+        // (and its drive children) are grandchildren of that root:
+        //   root[0]="Desktop" → child[n]="This PC" → grandchild="Local Disk (C:)"
+        // We therefore search three levels deep: root, child, grandchild.
+
+        IntPtr hDrive = IntPtr.Zero;
+        IntPtr hRoot  = NativeMethods.SendMessageI(hwndTree, NativeMethods.TVM_GETNEXTITEM,
+                                                    (IntPtr)NativeMethods.TVGN_ROOT, IntPtr.Zero);
+        //int ri = 0;
+        while (hRoot != IntPtr.Zero && hDrive == IntPtr.Zero)
+        {
+            string rootText = TreeItemText(hwndTree, hRoot);
+
+            // Level 0: root is itself a drive?
+            if (IsDriveMatch(rootText, driveLetter)) { hDrive = hRoot; break; }
+
+            ExpandTreeItem(hwndTree, hRoot);
+            IntPtr hL1 = NativeMethods.SendMessageI(hwndTree, NativeMethods.TVM_GETNEXTITEM,
+                                                     (IntPtr)NativeMethods.TVGN_CHILD, hRoot);
+            //int ci = 0;
+            while (hL1 != IntPtr.Zero && hDrive == IntPtr.Zero)
+            {
+                string l1 = TreeItemText(hwndTree, hL1);
+
+                // Level 1: direct child is a drive?
+                if (IsDriveMatch(l1, driveLetter)) { hDrive = hL1; break; }
+
+                // Level 1→2: child is the "This PC" shell container?
+                // Drives live one more level down from here.
+                if (IsComputerNode(l1))
+                {
+                    ExpandTreeItem(hwndTree, hL1);
+                    IntPtr hL2 = NativeMethods.SendMessageI(hwndTree, NativeMethods.TVM_GETNEXTITEM,
+                                                             (IntPtr)NativeMethods.TVGN_CHILD, hL1);
+                    //int gi = 0;
+                    while (hL2 != IntPtr.Zero)
+                    {
+                        string l2 = TreeItemText(hwndTree, hL2);
+                        if (IsDriveMatch(l2, driveLetter)) { hDrive = hL2; break; }
+                        hL2 = NativeMethods.SendMessageI(hwndTree, NativeMethods.TVM_GETNEXTITEM,
+                                                          (IntPtr)NativeMethods.TVGN_NEXT, hL2);
+                    }
+                }
+
+                hL1 = NativeMethods.SendMessageI(hwndTree, NativeMethods.TVM_GETNEXTITEM,
+                                                  (IntPtr)NativeMethods.TVGN_NEXT, hL1);
+            }
+
+            if (hDrive == IntPtr.Zero)
+                hRoot = NativeMethods.SendMessageI(hwndTree, NativeMethods.TVM_GETNEXTITEM,
+                                                    (IntPtr)NativeMethods.TVGN_NEXT, hRoot);
+        }
+
+        if (hDrive == IntPtr.Zero) return;
+
+        // ── Phase 2: walk down remaining path components by display name ─────
+
+        IntPtr hCurrent = hDrive;
+        bool exactMatch = true;
+        for (int i = 1; i < parts.Length; i++)
+        {
+            ExpandTreeItem(hwndTree, hCurrent);
+            IntPtr hChild = NativeMethods.SendMessageI(hwndTree, NativeMethods.TVM_GETNEXTITEM,
+                                                        (IntPtr)NativeMethods.TVGN_CHILD, hCurrent);
+            bool found = false;
+            //int ci2 = 0;
+            while (hChild != IntPtr.Zero)
+            {
+                string ct = TreeItemText(hwndTree, hChild);
+                if (string.Equals(ct, parts[i], StringComparison.OrdinalIgnoreCase))
+                { hCurrent = hChild; found = true; break; }
+                hChild = NativeMethods.SendMessageI(hwndTree, NativeMethods.TVM_GETNEXTITEM,
+                                                     (IntPtr)NativeMethods.TVGN_NEXT, hChild);
+            }
+            if (!found) { exactMatch = false; break; }
+        }
+
+        // Only select on an exact match — selecting an ancestor would cause the
+        // NamespaceTreeControl to navigate the file list to the wrong folder.
+        // Also skip if the item is already the caret to avoid a redundant navigation.
+        if (exactMatch)
+        {
+            IntPtr hCaret = NativeMethods.SendMessageI(hwndTree, NativeMethods.TVM_GETNEXTITEM,
+                                                        (IntPtr)NativeMethods.TVGN_CARET, IntPtr.Zero);
+            if (hCaret != hCurrent)
+                NativeMethods.SendMessageI(hwndTree, NativeMethods.TVM_SELECTITEM,
+                                           (IntPtr)NativeMethods.TVGN_CARET, hCurrent);
+        }
+
+        NativeMethods.SendMessageI(hwndTree, NativeMethods.TVM_ENSUREVISIBLE,
+                                   IntPtr.Zero, hCurrent);
+    }
+
+    // Reads the display text of a tree item.  Caller-allocated buffer is on the heap;
+    // safe for same-process SendMessage.
+    private static string TreeItemText(IntPtr hwndTree, IntPtr hItem)
+    {
+        const int MaxChars = 512;
+        IntPtr pBuf = Marshal.AllocHGlobal(MaxChars * 2); // Unicode: 2 bytes/char
+        try
+        {
+            var tv = new NativeMethods.TVITEM
+            {
+                mask       = NativeMethods.TVIF_TEXT | NativeMethods.TVIF_HANDLE,
+                hItem      = hItem,
+                pszText    = pBuf,
+                cchTextMax = MaxChars,
+            };
+            NativeMethods.SendMessageTv(hwndTree, NativeMethods.TVM_GETITEM, IntPtr.Zero, ref tv);
+            return Marshal.PtrToStringUni(pBuf) ?? "";
+        }
+        finally { Marshal.FreeHGlobal(pBuf); }
+    }
+
+    private static void ExpandTreeItem(IntPtr hwndTree, IntPtr hItem)
+        => NativeMethods.SendMessageI(hwndTree, NativeMethods.TVM_EXPAND,
+                                       (IntPtr)NativeMethods.TVE_EXPAND, hItem);
+
+    // Returns true if a tree item's display text refers to the given drive letter.
+    // "Local Disk (C:)" / "OS (C:)" / "C:" / "C:\ " all match driveLetter "C:".
+    private static bool IsDriveMatch(string text, string driveLetter)
+    {
+        string d = driveLetter.TrimEnd(':'); // "C"
+        return text.IndexOf($"({d}:)", StringComparison.OrdinalIgnoreCase) >= 0
+            || text.StartsWith(driveLetter, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Returns true if the text is a known display name for the "This PC" shell folder
+    // ({20D04FE0-3AEA-1069-A2D8-08002B30309D}).  Covers common localisations.
+    private static bool IsComputerNode(string text)
+    {
+        string t = text.Trim();
+        return string.Equals(t, "This PC",       StringComparison.OrdinalIgnoreCase)
+            || string.Equals(t, "Computer",      StringComparison.OrdinalIgnoreCase)
+            || string.Equals(t, "My Computer",   StringComparison.OrdinalIgnoreCase)
+            || string.Equals(t, "Dieser PC",     StringComparison.OrdinalIgnoreCase)  // German
+            || string.Equals(t, "Ce PC",         StringComparison.OrdinalIgnoreCase)  // French
+            || string.Equals(t, "Este equipo",   StringComparison.OrdinalIgnoreCase)  // Spanish
+            || string.Equals(t, "Questo PC",     StringComparison.OrdinalIgnoreCase)  // Italian
+            || string.Equals(t, "Mijn computer", StringComparison.OrdinalIgnoreCase)  // Dutch
+            || string.Equals(t, "此电脑",         StringComparison.OrdinalIgnoreCase); // Chinese
+    }
+
+}
+
+// Non-nested internal class — private nested class CCW does not reliably answer
+// QueryInterface for IServiceProvider in .NET 8, so moving it here ensures the
+// browser can QI the site for IServiceProvider and reach QueryService.
+[ComVisible(true)]
+[ClassInterface(ClassInterfaceType.None)]
+internal sealed class BrowserSiteImpl : NativeMethods.IServiceProvider
+{
+    // SID == IID for IFolderViewSettings.
+    private static readonly Guid _sidFolderViewSettings =
+        new Guid("AE8C987D-8797-4ED3-BE72-2A47DD938DB0");
+
+    // Kept as a field so the object survives GC for the shell view's lifetime.
+    private readonly FolderViewSettingsImpl _fvs = new FolderViewSettingsImpl();
+
+    public int QueryService(ref Guid guidService, ref Guid riid, out IntPtr ppvObject)
+    {
+        if (guidService == _sidFolderViewSettings)
+        {
+            ppvObject = Marshal.GetComInterfaceForObject(
+                _fvs, typeof(NativeMethods.IFolderViewSettings));
+            return 0;
+        }
+        ppvObject = IntPtr.Zero;
+        return unchecked((int)0x80004001);
+    }
+}
+
+// Non-nested internal class so the CCW responds to QueryInterface correctly.
+// (Private nested classes have unreliable CCW QI in .NET 8.)
+[ComVisible(true)]
+[ClassInterface(ClassInterfaceType.None)]
+internal sealed class FolderViewSettingsImpl : NativeMethods.IFolderViewSettings
+{
+    private const int E_NOTIMPL = unchecked((int)0x80004001);
+
+    public int GetFolderFlags(out uint pfolderMask, out uint pfolderFlags)
+    { pfolderMask = 0; pfolderFlags = 0; return 0; }
+
+    public int GetViewMode(out uint puViewMode)
+    { puViewMode = 4; return 0; } // FVM_DETAILS
+
+    public int GetIconSize(out uint puIconSize)
+    {
+        puIconSize = 16;
+        return 0;
+    }
+
+    public int GetSortColumns(IntPtr rgSortColumns, uint cColumns)   { return E_NOTIMPL; }
+    public int GetGroupBy(IntPtr pkey, out int pfGroupAscending)     { pfGroupAscending = 0; return E_NOTIMPL; }
+    public int GetColumnStates(IntPtr rgKeyNames, uint cColumns)     { return E_NOTIMPL; }
+    public int GetDefaultColumnWidth(IntPtr pkey, out uint pcxColumn){ pcxColumn = 0; return E_NOTIMPL; }
+}
+

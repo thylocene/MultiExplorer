@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="MultiExplorer"
+           Manufacturer="MultiExplorer"
+           Version="$(var.Version)"
+           Scope="perUser"
+           UpgradeCode="{C1965219-E757-47A2-AA69-F84F693B94DC}">
+
+    <SummaryInformation Description="MultiExplorer dual-pane file explorer" />
+
+    <!--
+      AllowSameVersionUpgrades: removes any existing installation of the same version
+      before installing fresh, so repeated builds with the same version number always
+      deploy the latest exe.  AllowDowngrades remains no (default), so installing an
+      older version still shows the DowngradeErrorMessage.
+      Schedule afterInstallInitialize (default): old product is removed before new
+      files are written, so there is never a mix of old and new files on disk.
+    -->
+    <MajorUpgrade
+      AllowSameVersionUpgrades="yes"
+      DowngradeErrorMessage="A newer version of MultiExplorer is already installed." />
+
+    <!--
+      Send WM_CLOSE to any running instance before installing or uninstalling.
+      Without this, Windows Installer cannot replace the locked exe and silently
+      leaves it on disk (and schedules a delayed delete that requires a reboot).
+    -->
+    <util:CloseApplication Id="CloseMultiExplorer"
+                           Target="MultiExplorer.exe"
+                           CloseMessage="yes"
+                           RebootPrompt="no" />
+
+    <!--
+      Read the install path persisted by the MainExe component's registry KeyPath.
+      util:RemoveFolderEx needs a populated property during uninstall; directory
+      properties such as INSTALLFOLDER may not be re-evaluated in the uninstall
+      sequence, so we retrieve the value from the registry instead.
+    -->
+    <Property Id="INSTALLPATH">
+      <RegistrySearch Id="InstallPathSearch"
+                      Root="HKCU"
+                      Key="Software\MultiExplorer"
+                      Name="InstallPath"
+                      Type="raw" />
+    </Property>
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- App icon displayed in Add/Remove Programs -->
+    <Icon Id="AppIcon" SourceFile="$(var.SourceDir)file-explorer.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+
+    <!-- ── Install directory: %LocalAppData%\Programs\MultiExplorer ── -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="LocalProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="MultiExplorer">
+
+          <Component Id="MainExe" Guid="{802E9B3B-9AAA-41A8-AF21-CB895645D4C1}">
+            <File Id="MultiExplorerExe"
+                  Source="$(var.PublishDir)MultiExplorer.exe" />
+            <File Id="LicenseFile"
+                  Source="$(var.SourceDir)LICENSE.txt"
+                  Name="LICENSE.txt" />
+            <File Id="ReadmeFile"
+                  Source="$(var.SourceDir)README.md"
+                  Name="README.md" />
+            <!--
+              ICE38: per-user installs require an HKCU registry value as KeyPath.
+              ICE64: user-profile directories must have RemoveFolder entries
+                     (Windows Installer only removes them if empty at uninstall time).
+            -->
+            <!--
+              Recursively delete everything under the install directory on uninstall.
+              This covers any files not tracked by the MSI (e.g. from a failed upgrade
+              that left orphaned files) and ensures the directory itself is removed.
+              Falls back gracefully if INSTALLPATH is empty (property not found).
+            -->
+            <util:RemoveFolderEx Id="RemoveInstallFolderEx" On="uninstall" Property="INSTALLPATH" />
+            <RemoveFolder Id="RemoveInstallFolder"    Directory="INSTALLFOLDER"    On="uninstall" />
+            <RemoveFolder Id="RemoveLocalProgramsDir" Directory="LocalProgramsDir" On="uninstall" />
+            <RegistryValue Root="HKCU"
+                           Key="Software\MultiExplorer"
+                           Name="InstallPath"
+                           Type="string"
+                           Value="[INSTALLFOLDER]"
+                           KeyPath="yes" />
+          </Component>
+
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- ── Desktop shortcut ─────────────────────────────────────────── -->
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="{7E1663C1-F591-4819-9EE9-D57CDD64609D}">
+        <Shortcut Id="DesktopSC"
+                  Name="MultiExplorer"
+                  Description="Dual-pane file explorer"
+                  Icon="AppIcon" IconIndex="0"
+                  Target="[INSTALLFOLDER]MultiExplorer.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\MultiExplorer"
+                       Name="DesktopShortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <!-- ── Start Menu shortcut ──────────────────────────────────────── -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppMenuFolder" Name="MultiExplorer">
+        <Component Id="StartMenuShortcut" Guid="{F454644F-1F8B-4629-8203-4443A1B3B1BF}">
+          <Shortcut Id="StartMenuSC"
+                    Name="MultiExplorer"
+                    Description="Dual-pane file explorer"
+                    Icon="AppIcon" IconIndex="0"
+                    Target="[INSTALLFOLDER]MultiExplorer.exe"
+                    WorkingDirectory="INSTALLFOLDER" />
+          <RemoveFolder Id="RemoveAppMenuFolder" On="uninstall" />
+          <RegistryValue Root="HKCU"
+                         Key="Software\MultiExplorer"
+                         Name="StartMenuShortcut"
+                         Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main">
+      <ComponentRef Id="MainExe" />
+      <ComponentRef Id="DesktopShortcut" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         UI  —  WixUI_InstallDir dialog sequence:
+           1. WelcomeDlg       — welcome + what will be installed
+           2. InstallDirDlg    — destination folder (default per-user path)
+           3. VerifyReadyDlg   — ready to install
+           4. ProgressDlg      — progress (automatic)
+           5. ExitDialog       — success/failure + optional launch checkbox
+         ════════════════════════════════════════════════════════════════ -->
+
+    <!-- RTF file shown in the LicenseAgreementDlg -->
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+
+    <!-- Tell InstallDirDlg which property holds the install path -->
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+    <!-- Exit dialog: "Launch MultiExplorer" checkbox, checked by default -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch MultiExplorer" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX"     Value="1" />
+
+    <!--
+      Async launch custom action — runs the installed exe as fire-and-forget.
+      FileRef + ExeCommand is the WiX v4 way to execute an installed file;
+      Return="asyncNoWait" is valid on this action type.
+    -->
+    <CustomAction Id="LaunchApp"
+                  FileRef="MultiExplorerExe"
+                  ExeCommand=""
+                  Execute="immediate"
+                  Return="asyncNoWait" />
+
+    <UI>
+      <!--
+        WixUI_InstallDir in WiX v4 already includes LicenseAgreementDlg in its
+        built-in dialog flow (Welcome → License → InstallDir → Verify → Exit).
+        No navigation overrides needed — just provide WixUILicenseRtf above.
+
+        Wire Finish button → LaunchApp when the checkbox is ticked.
+        Condition attribute replaces WiX v3 inner text on <Publish>.
+        "NOT Installed" confines the launch to fresh installs.
+      -->
+      <Publish Dialog="ExitDialog"
+               Control="Finish"
+               Event="DoAction"
+               Value="LaunchApp"
+               Order="1"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
+    </UI>
+
+    <!-- Load the built-in InstallDir dialog set from WixToolset.UI.wixext -->
+    <ui:WixUI Id="WixUI_InstallDir" />
+
+  </Package>
+</Wix>

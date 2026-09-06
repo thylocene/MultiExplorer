@@ -1,0 +1,49 @@
+<Project Sdk="WixToolset.Sdk/4.0.5">
+
+  <PropertyGroup>
+    <OutputName>MultiExplorer-Setup</OutputName>
+    <!-- ICE91: per-user files not copied to all profiles on per-machine install —
+         not applicable; Scope="perUser" is fixed. -->
+    <SuppressIces>ICE91;ICE61</SuppressIces>
+  </PropertyGroup>
+
+  <!--
+    Build each preprocessor variable as its own MSBuild property first, then
+    combine into DefineConstants on a single line with no extra whitespace.
+    A multiline DefineConstants value embeds newlines/spaces into variable names,
+    causing $(var.PublishDir) to resolve as undefined and the exe to be skipped.
+  -->
+  <PropertyGroup>
+    <_PublishDir>$(MSBuildThisFileDirectory)..\bin\Release\net8.0-windows\win-x64\publish\</_PublishDir>
+    <_SourceDir>$(MSBuildThisFileDirectory)..\</_SourceDir>
+    <DefineConstants>PublishDir=$(_PublishDir);SourceDir=$(_SourceDir);Version=$(Version)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Built-in installer UI dialogs (WelcomeDlg, LicenseAgreementDlg, InstallDirDlg, etc.) -->
+    <PackageReference Include="WixToolset.UI.wixext"   Version="4.0.5" />
+    <!-- util:CloseApplication + util:RemoveFolderEx -->
+    <PackageReference Include="WixToolset.Util.wixext" Version="4.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Track License.rtf as a build input so MSBuild rebuilds the MSI when it changes.
+         Without this, WiX's incremental build only watches .wxs files and ignores edits
+         to external files referenced within them. -->
+    <Content Include="License.rtf" />
+  </ItemGroup>
+
+  <!--
+    Always publish the main app before assembling the MSI so the installer never
+    embeds a stale executable.  This fires whether you build from Visual Studio,
+    the command line, or the Build-Installer.ps1 script.
+
+    Build-Installer.ps1 passes -p:SkipAppPublish=true so the publish step is not
+    duplicated (the script already runs dotnet publish in its own step 1).
+  -->
+  <Target Name="PublishMainApp" BeforeTargets="Build" Condition="'$(SkipAppPublish)' != 'true'">
+    <Message Text="Publishing MultiExplorer (Release) before building installer..." Importance="high" />
+    <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\MultiExplorer.csproj&quot; -c Release" />
+  </Target>
+
+</Project>
