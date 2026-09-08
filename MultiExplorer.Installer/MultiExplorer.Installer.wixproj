@@ -2,6 +2,8 @@
 
   <PropertyGroup>
     <OutputName>MultiExplorer-Setup</OutputName>
+    <!-- Direct project builds use today's date; Build-Installer.ps1 can override it. -->
+    <BuildDate Condition="'$(BuildDate)' == ''">$([System.DateTime]::Today.ToString('yyyy-MM-dd'))</BuildDate>
     <!-- ICE91: per-user files not copied to all profiles on per-machine install —
          not applicable; Scope="perUser" is fixed. -->
     <SuppressIces>ICE91;ICE61</SuppressIces>
@@ -16,7 +18,7 @@
   <PropertyGroup>
     <_PublishDir>$(MSBuildThisFileDirectory)..\bin\Release\net8.0-windows\win-x64\publish\</_PublishDir>
     <_SourceDir>$(MSBuildThisFileDirectory)..\</_SourceDir>
-    <DefineConstants>PublishDir=$(_PublishDir);SourceDir=$(_SourceDir);Version=$(Version)</DefineConstants>
+    <DefineConstants>PublishDir=$(_PublishDir);SourceDir=$(_SourceDir);Version=$(Version);BuildDate=$(BuildDate)</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -31,6 +33,10 @@
          Without this, WiX's incremental build only watches .wxs files and ignores edits
          to external files referenced within them. -->
     <Content Include="License.rtf" />
+    <Content Include="Assets\InstallerBanner.bmp" />
+    <Content Include="Assets\InstallerDialog.bmp" />
+    <Content Include="Assets\MultiExplorer-Installer.ico" />
+    <Compile Include="$(IntermediateOutputPath)PublishedFiles.wxs" />
   </ItemGroup>
 
   <!--
@@ -43,7 +49,18 @@
   -->
   <Target Name="PublishMainApp" BeforeTargets="Build" Condition="'$(SkipAppPublish)' != 'true'">
     <Message Text="Publishing MultiExplorer (Release) before building installer..." Importance="high" />
+    <RemoveDir Directories="$(_PublishDir)" />
     <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\MultiExplorer.csproj&quot; -c Release" />
+  </Target>
+
+  <!-- WiX 4 has no built-in Files element. Generate a deterministic component
+       manifest from the clean self-contained publish output before compilation. -->
+  <Target Name="GeneratePublishedFileManifest"
+          BeforeTargets="CoreCompile"
+          DependsOnTargets="PublishMainApp">
+    <!-- The trailing dot prevents _PublishDir's trailing backslash from escaping
+         the closing quote in Windows command-line argument parsing. -->
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)Generate-PublishedFiles.ps1&quot; -PublishDir &quot;$(_PublishDir).&quot; -OutputPath &quot;$(IntermediateOutputPath)PublishedFiles.wxs&quot;" />
   </Target>
 
 </Project>

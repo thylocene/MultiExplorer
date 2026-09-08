@@ -62,6 +62,11 @@ public sealed class AppSettings
     /// <summary>When true, pressing Space sends the selected item to QuickLook for preview.</summary>
     public bool QuickLookEnabled { get; set; } = false;
 
+    // ── Appearance ───────────────────────────────────────────────────────────
+
+    /// <summary>"Light" or "Dark". Stored as text for forward-compatible settings files.</summary>
+    public string ApplicationTheme { get; set; } = "Light";
+
     // ── Global show-window hotkey ─────────────────────────────────────────────
 
     /// <summary>MOD_WIN/MOD_CONTROL/MOD_ALT/MOD_SHIFT flags (without MOD_NOREPEAT).</summary>

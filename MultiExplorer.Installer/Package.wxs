@@ -11,26 +11,38 @@
 
     <SummaryInformation Description="MultiExplorer dual-pane file explorer" />
 
+    <!-- Expose the build date as MSI metadata as well as showing it in the UI. -->
+    <Property Id="BUILD_DATE" Value="$(var.BuildDate)" />
+
     <!--
       AllowSameVersionUpgrades: removes any existing installation of the same version
       before installing fresh, so repeated builds with the same version number always
       deploy the latest exe.  AllowDowngrades remains no (default), so installing an
       older version still shows the DowngradeErrorMessage.
-      Schedule afterInstallInitialize (default): old product is removed before new
-      files are written, so there is never a mix of old and new files on disk.
+      Schedule afterInstallExecute: the CloseApplication actions run while the old
+      product is still registered, then Windows Installer replaces it transactionally
+      after the new files have been installed.
     -->
     <MajorUpgrade
       AllowSameVersionUpgrades="yes"
+      Schedule="afterInstallExecute"
       DowngradeErrorMessage="A newer version of MultiExplorer is already installed." />
 
     <!--
-      Send WM_CLOSE to any running instance before installing or uninstalling.
-      Without this, Windows Installer cannot replace the locked exe and silently
-      leaves it on disk (and schedules a delayed delete that requires a reboot).
+      MultiExplorer can intentionally remain alive in the notification area when
+      its window is closed, so terminate every instance before files are changed.
+      Use WiX's in-process native custom action: launching powershell.exe here creates
+      a console window, and same-version upgrades can run that action once for the
+      incoming MSI and again while uninstalling the previous MSI.
     -->
     <util:CloseApplication Id="CloseMultiExplorer"
                            Target="MultiExplorer.exe"
-                           CloseMessage="yes"
+                           CloseMessage="no"
+                           EndSessionMessage="no"
+                           ElevatedCloseMessage="no"
+                           ElevatedEndSessionMessage="no"
+                           Timeout="1"
+                           TerminateProcess="0"
                            RebootPrompt="no" />
 
     <!--
@@ -39,7 +51,7 @@
       properties such as INSTALLFOLDER may not be re-evaluated in the uninstall
       sequence, so we retrieve the value from the registry instead.
     -->
-    <Property Id="INSTALLPATH">
+    <Property Id="PREVIOUSINSTALLPATH" Secure="yes">
       <RegistrySearch Id="InstallPathSearch"
                       Root="HKCU"
                       Key="Software\MultiExplorer"
@@ -47,10 +59,20 @@
                       Type="raw" />
     </Property>
 
+    <!--
+      Use the previous installation directory as the default in both full-UI
+      and silent installs. If no previous path is registered, INSTALLFOLDER
+      retains its normal default under LocalAppDataFolder.
+    -->
+    <SetDirectory Id="INSTALLFOLDER"
+                  Value="[PREVIOUSINSTALLPATH]"
+                  Condition="PREVIOUSINSTALLPATH"
+                  Sequence="both" />
+
     <MediaTemplate EmbedCab="yes" />
 
     <!-- App icon displayed in Add/Remove Programs -->
-    <Icon Id="AppIcon" SourceFile="$(var.SourceDir)file-explorer.ico" />
+    <Icon Id="AppIcon" SourceFile="Assets\MultiExplorer-Installer.ico" />
     <Property Id="ARPPRODUCTICON" Value="AppIcon" />
 
     <!-- ── Install directory: %LocalAppData%\Programs\MultiExplorer ── -->
@@ -76,9 +98,9 @@
               Recursively delete everything under the install directory on uninstall.
               This covers any files not tracked by the MSI (e.g. from a failed upgrade
               that left orphaned files) and ensures the directory itself is removed.
-              Falls back gracefully if INSTALLPATH is empty (property not found).
+              Falls back gracefully if PREVIOUSINSTALLPATH is empty (property not found).
             -->
-            <util:RemoveFolderEx Id="RemoveInstallFolderEx" On="uninstall" Property="INSTALLPATH" />
+            <util:RemoveFolderEx Id="RemoveInstallFolderEx" On="uninstall" Property="PREVIOUSINSTALLPATH" />
             <RemoveFolder Id="RemoveInstallFolder"    Directory="INSTALLFOLDER"    On="uninstall" />
             <RemoveFolder Id="RemoveLocalProgramsDir" Directory="LocalProgramsDir" On="uninstall" />
             <RegistryValue Root="HKCU"
@@ -88,6 +110,22 @@
                            Value="[INSTALLFOLDER]"
                            KeyPath="yes" />
           </Component>
+
+          <!-- Satellite-resource directories used by the self-contained runtime.
+               Generate-PublishedFiles.ps1 validates this list while harvesting. -->
+          <Directory Id="PublishedDir_cs" Name="cs" />
+          <Directory Id="PublishedDir_de" Name="de" />
+          <Directory Id="PublishedDir_es" Name="es" />
+          <Directory Id="PublishedDir_fr" Name="fr" />
+          <Directory Id="PublishedDir_it" Name="it" />
+          <Directory Id="PublishedDir_ja" Name="ja" />
+          <Directory Id="PublishedDir_ko" Name="ko" />
+          <Directory Id="PublishedDir_pl" Name="pl" />
+          <Directory Id="PublishedDir_pt_BR" Name="pt-BR" />
+          <Directory Id="PublishedDir_ru" Name="ru" />
+          <Directory Id="PublishedDir_tr" Name="tr" />
+          <Directory Id="PublishedDir_zh_Hans" Name="zh-Hans" />
+          <Directory Id="PublishedDir_zh_Hant" Name="zh-Hant" />
 
         </Directory>
       </Directory>
@@ -130,6 +168,7 @@
 
     <Feature Id="Main">
       <ComponentRef Id="MainExe" />
+      <ComponentGroupRef Id="PublishedRuntimeFiles" />
       <ComponentRef Id="DesktopShortcut" />
       <ComponentRef Id="StartMenuShortcut" />
     </Feature>
@@ -145,24 +184,29 @@
 
     <!-- RTF file shown in the LicenseAgreementDlg -->
     <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+    <WixVariable Id="WixUIBannerBmp" Value="Assets\InstallerBanner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="Assets\InstallerDialog.bmp" />
 
     <!-- Tell InstallDirDlg which property holds the install path -->
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
 
-    <!-- Exit dialog: "Launch MultiExplorer" checkbox, checked by default -->
+    <!--
+      Exit dialog: set expectations for the initial cold start, then offer to
+      launch MultiExplorer immediately with the checkbox checked by default.
+    -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT"
+              Value="The first launch may take a little longer than usual while Windows prepares the application. Subsequent launches will be faster." />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch MultiExplorer" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX"     Value="1" />
 
     <!--
-      Async launch custom action — runs the installed exe as fire-and-forget.
-      FileRef + ExeCommand is the WiX v4 way to execute an installed file;
-      Return="asyncNoWait" is valid on this action type.
+      Launch through WiX's in-process ShellExecute helper. An EXE custom action
+      makes Windows Installer create a separate custom-action process and can
+      briefly display a console host even when the target itself is a WinExe.
+      ShellExecute also starts the application in the interactive user's context.
     -->
-    <CustomAction Id="LaunchApp"
-                  FileRef="MultiExplorerExe"
-                  ExeCommand=""
-                  Execute="immediate"
-                  Return="asyncNoWait" />
+    <Property Id="WixShellExecTarget" Value="[#MultiExplorerExe]" />
+    <CustomActionRef Id="Wix4ShellExec_X86" />
 
     <UI>
       <!--
@@ -170,14 +214,14 @@
         built-in dialog flow (Welcome → License → InstallDir → Verify → Exit).
         No navigation overrides needed — just provide WixUILicenseRtf above.
 
-        Wire Finish button → LaunchApp when the checkbox is ticked.
+        Wire Finish button → native ShellExecute action when the checkbox is ticked.
         Condition attribute replaces WiX v3 inner text on <Publish>.
         "NOT Installed" confines the launch to fresh installs.
       -->
       <Publish Dialog="ExitDialog"
                Control="Finish"
                Event="DoAction"
-               Value="LaunchApp"
+               Value="Wix4ShellExec_X86"
                Order="1"
                Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
     </UI>

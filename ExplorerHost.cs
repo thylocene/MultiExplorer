@@ -19,11 +19,6 @@ namespace MultiExplorer;
 ///
 /// Path tracking
 /// -------------
-/// We do NOT use IExplorerBrowserEvents (the COM callback interface).  In .NET 8
-/// the CLR's COM Callable Wrapper (CCW) for a private nested class implementing a
-/// non-[ComImport] interface does not reliably respond to QueryInterface; the browser
-/// stores a null sink pointer and dereferences it during user navigation → AV.
-///
 /// Instead, GetCurrentPath() queries the live folder on demand via the chain:
 ///   IExplorerBrowser.GetCurrentView(IFolderView) → IFolderView.GetFolder(IPersistFolder2)
 ///   → IPersistFolder2.GetCurFolder(pidl) → SHGetPathFromIDList
@@ -46,6 +41,8 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
     private NativeMethods.IExplorerBrowser? _browser;
     private BrowserSiteImpl?               _site;
+    private ExplorerBrowserEventsImpl?     _events;
+    private uint                           _eventsCookie;
     private string                         _currentPath;
     private bool                           _browserWasLaunched;
     private bool                           _showNavPane = true;
@@ -76,7 +73,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
     public ExplorerHost(string initialPath)
     {
         _currentPath = Directory.Exists(initialPath) ? initialPath : @"C:\";
-        BackColor    = SystemColors.Window;
+        BackColor    = ThemeManager.Window;
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -106,12 +103,25 @@ public sealed class ExplorerHost : Control, IMessageFilter
             // EBO_SHOWFRAMES (0x0002) — navigation pane + address bar.
             _browser.SetOptions(_showNavPane ? 0x0002u : 0u);
 
-            var rect = new NativeMethods.RECT(0, 0, Width, Height);
+            var rect = BrowserBounds();
             var fs   = CreateHeaderEnabledFolderSettings(FVM_DETAILS);
 
             int hr = _browser.Initialize(Handle, ref rect, ref fs);
             if (hr < 0)
                 throw new COMException("IExplorerBrowser.Initialize failed.", hr);
+
+            // Subscribe before the first navigation. The callback implementation is
+            // deliberately non-nested so its .NET 8 CCW answers QueryInterface reliably.
+            _events = new ExplorerBrowserEventsImpl(this);
+            IntPtr eventsPtr = Marshal.GetComInterfaceForObject(
+                _events, typeof(NativeMethods.IExplorerBrowserEvents));
+            try
+            {
+                hr = _browser.Advise(eventsPtr, out _eventsCookie);
+                if (hr < 0)
+                    throw new COMException("IExplorerBrowser.Advise failed.", hr);
+            }
+            finally { Marshal.Release(eventsPtr); }
 
             // Remember that this host had a live browser. If WinForms later
             // recreates our HWND (for example after a DPI-related handle change),
@@ -119,20 +129,6 @@ public sealed class ExplorerHost : Control, IMessageFilter
             _browserWasLaunched = true;
 
             BrowseTo(_currentPath);
-
-            // BrowseToIDList creates a new shell view, which can replace the
-            // settings supplied to Initialize with that folder's saved view
-            // state.  Apply them again now that the real view exists.
-            ApplyFolderSettings(FVM_DETAILS);
-
-            // Mark the browser as the active input target so that
-            // IInputObject::TranslateAcceleratorIO processes frame-level commands.
-            // UIActivateIO is normally called by the host when focus enters the embedded
-            // object, but ExplorerHost.Handle almost never receives WM_SETFOCUS because
-            // users click directly on the native file-list child window, bypassing it.
-            // Calling it here ensures the browser is always in the right state.
-            if (_browser is NativeMethods.IInputObject io)
-                io.UIActivateIO(1, IntPtr.Zero);
         }
         catch (Exception ex)
         {
@@ -162,16 +158,121 @@ public sealed class ExplorerHost : Control, IMessageFilter
         BrowseTo(path);
     }
 
+    /// <summary>Applies the current palette to this host and every native shell child.</summary>
+    public void ApplyTheme()
+    {
+        BackColor = ThemeManager.Window;
+        ForeColor = ThemeManager.Text;
+        if (!IsHandleCreated) return;
+
+        if (_browser != null && Width > 0 && Height > 0)
+            _browser.SetRect(IntPtr.Zero, BrowserBounds());
+
+        ThemeManager.ApplyNativeWindow(Handle);
+        // Shell navigation creates parts of the view asynchronously. Re-apply after
+        // the current message has completed so newly-created DirectUI/list/tree HWNDs
+        // cannot retain the previous theme.
+        if (!Disposing && !IsDisposed)
+            BeginInvoke(() =>
+            {
+                if (IsHandleCreated && !Disposing && !IsDisposed)
+                    ThemeManager.ApplyNativeWindow(Handle);
+            });
+    }
+
+    /// <summary>
+    /// Recreates the native ExplorerBrowser after an application-theme change.
+    /// DirectUI shell views choose their light/dark resources when they are created
+    /// and do not reliably replace those resources in response to WM_THEMECHANGED.
+    /// </summary>
+    internal void RecreateForTheme()
+    {
+        BackColor = ThemeManager.Window;
+        ForeColor = ThemeManager.Text;
+
+        // Tabs that have never been activated do not have a browser yet. Their
+        // first LaunchExplorer call will automatically use the current theme.
+        if (_browser == null) return;
+
+        string path = GetCurrentPath();
+        string? selectedPath = GetSelectedItemPath();
+        bool restoreFocus = ContainsFocus;
+
+        DestroyBrowser();
+        _currentPath = path;
+        if (!IsHandleCreated || Width <= 0 || Height <= 0) return;
+
+        LaunchExplorer();
+
+        // The folder contents arrive asynchronously after BrowseToIDList. Restore
+        // the selection on a later message so switching appearance does not make
+        // the user's current item appear to have been deselected.
+        if (selectedPath != null || restoreFocus)
+        {
+            var timer = new System.Windows.Forms.Timer { Interval = 200 };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                timer.Dispose();
+                if (IsDisposed || Disposing || _browser == null) return;
+                if (selectedPath != null) SelectItem(selectedPath, edit: false);
+                if (restoreFocus) FocusShellView();
+            };
+            timer.Start();
+        }
+    }
+
     /// <summary>Moves Win32 keyboard focus into the shell view's file-list window.</summary>
     public void FocusShellView()
     {
         if (!IsHandleCreated) return;
-        if (_browser != null)
-        {
-            IntPtr child = NativeMethods.GetWindow(Handle, GW_CHILD);
-            if (child != IntPtr.Zero) { NativeMethods.SetFocus(child); return; }
-        }
+        if (_browser != null && ActivateShellView(takeFocus: true)) return;
         Focus();
+    }
+
+    /// <summary>
+    /// Activates both layers of the embedded browser. IInputObject activates the
+    /// Explorer frame; IShellView activates the actual file list and controls its
+    /// focus/selection painting state.
+    /// </summary>
+    private bool ActivateShellView(bool takeFocus)
+    {
+        if (_browser == null) return false;
+
+        try
+        {
+            if (_browser is NativeMethods.IInputObject io)
+                io.UIActivateIO(1, IntPtr.Zero);
+
+            var svId = new Guid("000214E3-0000-0000-C000-000000000046");
+            if (_browser.GetCurrentView(ref svId, out IntPtr ppv) < 0 || ppv == IntPtr.Zero)
+                return false;
+            try
+            {
+                var view = (NativeMethods.IShellView)Marshal.GetObjectForIUnknown(ppv);
+                // SVUIA_ACTIVATE_NOFOCUS = 1; SVUIA_ACTIVATE_FOCUS = 2.
+                bool activated = view.UIActivate(takeFocus ? 2u : 1u) >= 0;
+                if (activated && takeFocus)
+                {
+                    // UIActivate(FOCUS) does not consistently move Win32 focus to
+                    // the DirectUI item surface when IExplorerBrowser is embedded.
+                    // Focus it explicitly; otherwise items are selected in the shell
+                    // model but Windows paints no selection background.
+                    IntPtr defView = FindDescendant(Handle, "SHELLDLL_DefView");
+                    IntPtr itemView = defView == IntPtr.Zero
+                        ? IntPtr.Zero
+                        : FindDescendant(defView, "DirectUIHWND");
+                    NativeMethods.SetFocus(itemView != IntPtr.Zero ? itemView : defView);
+                }
+                return activated;
+            }
+            finally { Marshal.Release(ppv); }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(ActivateShellView));
+            return false;
+        }
     }
 
     /// <summary>
@@ -203,17 +304,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
         if (m.Msg == WM_SETFOCUS && _browser != null)
         {
-            // Redirect Win32 focus to the shell view's child window.
-            IntPtr child = NativeMethods.GetWindow(Handle, GW_CHILD);
-            if (child != IntPtr.Zero)
-                NativeMethods.SetFocus(child);
-
-            // Tell the browser it is the active input target.  Without this call,
-            // IExplorerBrowser stays "UI inactive" and frame-level commands such as
-            // Ctrl+Shift+N (new folder) are silently discarded even when
-            // TranslateAcceleratorIO is called.
-            if (_browser is NativeMethods.IInputObject io)
-                io.UIActivateIO(1, IntPtr.Zero);
+            ActivateShellView(takeFocus: true);
         }
     }
 
@@ -239,6 +330,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        ThemeManager.ApplyNativeWindow(Handle, includeChildren: false);
         Application.AddMessageFilter(this);
 
         // The initial handle is launched explicitly by PanelView after layout.
@@ -429,11 +521,11 @@ public sealed class ExplorerHost : Control, IMessageFilter
         // view has time to reflect the new folder before we try to rename it.
         string capturedPath = path;
         var t = new System.Windows.Forms.Timer { Interval = 150 };
-        t.Tick += (_, __) => { t.Stop(); t.Dispose(); SelectAndEditItem(capturedPath); };
+        t.Tick += (_, __) => { t.Stop(); t.Dispose(); SelectItem(capturedPath, edit: true); };
         t.Start();
     }
 
-    private void SelectAndEditItem(string path)
+    private void SelectItem(string path, bool edit)
     {
         if (_browser == null) return;
         try
@@ -455,16 +547,28 @@ public sealed class ExplorerHost : Control, IMessageFilter
                     IntPtr pidlChild = NativeMethods.ILFindLastID(pidlAbs);
                     if (pidlChild == IntPtr.Zero) return;
 
-                    // SVSI_EDIT (0x03) = select + start inline rename
-                    // SVSI_DESELECTOTHERS (0x04) = deselect everything else
-                    // SVSI_ENSUREVISIBLE (0x08) = scroll item into view
-                    sv.SelectItem(pidlChild, 0x03 | 0x04 | 0x08);
+                    // A normal restored selection also receives keyboard focus and
+                    // the selection mark, which makes its highlight unambiguous in
+                    // both active and inactive panes. New folders additionally enter
+                    // inline rename mode.
+                    const uint SVSI_SELECT          = 0x01;
+                    const uint SVSI_EDIT            = 0x03;
+                    const uint SVSI_DESELECTOTHERS  = 0x04;
+                    const uint SVSI_ENSUREVISIBLE   = 0x08;
+                    const uint SVSI_FOCUSED         = 0x10;
+                    const uint SVSI_SELECTIONMARK   = 0x40;
+                    uint flags = (edit ? SVSI_EDIT : SVSI_SELECT)
+                               | SVSI_DESELECTOTHERS
+                               | SVSI_ENSUREVISIBLE
+                               | SVSI_FOCUSED
+                               | SVSI_SELECTIONMARK;
+                    sv.SelectItem(pidlChild, flags);
                 }
                 finally { NativeMethods.CoTaskMemFree(pidlAbs); }
             }
             finally { Marshal.Release(ppv); }
         }
-        catch (Exception ex) { AppLog.Debug(ex, nameof(SelectAndEditItem)); }
+        catch (Exception ex) { AppLog.Debug(ex, nameof(SelectItem)); }
     }
 
     private bool TryShellTranslateAccelerator(ref Message m)
@@ -514,7 +618,19 @@ public sealed class ExplorerHost : Control, IMessageFilter
         base.OnResize(e);
 
         if (_browser != null && Width > 0 && Height > 0)
-            _browser.SetRect(IntPtr.Zero, new NativeMethods.RECT(0, 0, Width, Height));
+            _browser.SetRect(IntPtr.Zero, BrowserBounds());
+    }
+
+    private NativeMethods.RECT BrowserBounds()
+    {
+        // Windows' legacy ExplorerBrowser command strip does not expose a dark
+        // background on current Windows 11: its text turns light while its canvas
+        // remains white. MultiExplorer already provides the complete command bar
+        // immediately above it, so clip that redundant strip in dark mode instead
+        // of presenting unreadable controls. The shell navigation tree and folder
+        // view move up to use the reclaimed space.
+        int top = ThemeManager.IsDark ? -LogicalToDeviceUnits(39) : 0;
+        return new NativeMethods.RECT(0, top, Width, Height);
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -808,15 +924,28 @@ public sealed class ExplorerHost : Control, IMessageFilter
                 pipe.Write(data, 0, data.Length);
                 return true;
             }
-            catch (IOException) when (attempt == 1)
+            catch (IOException ex) when (attempt == 1)
             {
                 // Broken-pipe race: QuickLook rotates its pipe server after each request.
                 // The fresh instance is ready immediately — retry once.
+                AppLog.Debug(ex, nameof(TrySendViaQuickLookPipe),
+                    "QuickLook pipe closed during the request; retrying once.");
             }
-            catch (Exception)
+            catch (Exception ex) when (
+                ex is TimeoutException or
+                IOException or
+                UnauthorizedAccessException)
             {
                 // TimeoutException   → QuickLook isn't running → fall through to process launch
                 // UnauthorizedAccess → privilege mismatch (elevated vs non-elevated)
+                AppLog.Debug(ex, nameof(TrySendViaQuickLookPipe),
+                    "QuickLook pipe was unavailable; falling back to process launch.");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn(ex, nameof(TrySendViaQuickLookPipe),
+                    "Unexpected failure communicating with QuickLook.");
                 return false;
             }
         }
@@ -860,7 +989,19 @@ public sealed class ExplorerHost : Control, IMessageFilter
                 string? path = p.MainModule?.FileName;
                 if (!string.IsNullOrEmpty(path)) return path;
             }
-            catch (Exception) { } // access denied reading MainModule on some OS configs — skip
+            catch (Exception ex) when (
+                ex is System.ComponentModel.Win32Exception or
+                InvalidOperationException or
+                NotSupportedException)
+            {
+                AppLog.Debug(ex, nameof(FindQuickLookExe),
+                    "Could not inspect a running QuickLook process; continuing discovery.");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn(ex, nameof(FindQuickLookExe),
+                    "Unexpected failure while inspecting a running QuickLook process.");
+            }
             finally { p.Dispose(); }
         }
 
@@ -887,7 +1028,19 @@ public sealed class ExplorerHost : Control, IMessageFilter
                 if (File.Exists(candidate)) return candidate;
             }
         }
-        catch (Exception) { } // registry unavailable — non-fatal
+        catch (Exception ex) when (
+            ex is UnauthorizedAccessException or
+            System.Security.SecurityException or
+            IOException)
+        {
+            AppLog.Debug(ex, nameof(FindQuickLookExe),
+                "Could not inspect the QuickLook registry entry; continuing discovery.");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, nameof(FindQuickLookExe),
+                "Unexpected failure while reading the QuickLook registry entry.");
+        }
 
         // 4. PATH variable — covers Scoop/Chocolatey installs.
         foreach (string segment in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
@@ -897,7 +1050,18 @@ public sealed class ExplorerHost : Control, IMessageFilter
                 string candidate = Path.Combine(segment.Trim(), "QuickLook.exe");
                 if (File.Exists(candidate)) return candidate;
             }
-            catch (Exception) { } // malformed PATH segment — skip
+            catch (Exception ex) when (
+                ex is ArgumentException or
+                NotSupportedException)
+            {
+                AppLog.Debug(ex, nameof(FindQuickLookExe),
+                    $"Skipping malformed PATH entry \"{segment}\".");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn(ex, nameof(FindQuickLookExe),
+                    $"Unexpected failure inspecting PATH entry \"{segment}\".");
+            }
         }
 
         return null;
@@ -952,6 +1116,74 @@ public sealed class ExplorerHost : Control, IMessageFilter
     public void Cut()    => SendAccelWithCtrl(0x58); // Ctrl+X  (VK_X)
     public void Copy()   => SendAccelWithCtrl(0x43); // Ctrl+C  (VK_C)
     public void Paste()  => SendAccelWithCtrl(0x56); // Ctrl+V  (VK_V)
+
+    /// <summary>
+    /// Copies every selected file-system path to the clipboard, one per line.
+    /// Virtual shell items without a file-system path are skipped.
+    /// </summary>
+    public void CopySelectedPaths()
+    {
+        if (_browser == null) return;
+
+        try
+        {
+            var fv2Id = new Guid("1AF3A467-214F-4298-908E-06B03E0B39F9");
+            if (_browser.GetCurrentView(ref fv2Id, out IntPtr ppv) < 0 || ppv == IntPtr.Zero)
+                return;
+
+            try
+            {
+                var fv2 = (NativeMethods.IFolderView2)Marshal.GetObjectForIUnknown(ppv);
+                var paths = new List<string>();
+
+                // GetSelectedItem is useful for locating one selected item, but
+                // cannot reliably enumerate a multi-selection by advancing the
+                // returned view index. GetSelection returns one stable snapshot
+                // containing every selected item.
+                if (fv2.GetSelection(0, out IntPtr ppvSelection) < 0
+                    || ppvSelection == IntPtr.Zero)
+                    return;
+
+                try
+                {
+                    if (NativeMethods.ShellItemArrayGetCount(ppvSelection, out uint count) < 0)
+                        return;
+
+                    for (uint index = 0; index < count; index++)
+                    {
+                        if (NativeMethods.ShellItemArrayGetItemAt(
+                                ppvSelection, index, out IntPtr ppvItem) < 0
+                            || ppvItem == IntPtr.Zero)
+                            continue;
+
+                        try
+                        {
+                            var item = (NativeMethods.IShellItem)Marshal.GetObjectForIUnknown(ppvItem);
+                            if (item.GetDisplayName(0x80058000 /*SIGDN_FILESYSPATH*/, out string path) >= 0
+                                && !string.IsNullOrEmpty(path))
+                                paths.Add(path);
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLog.Debug(ex, nameof(CopySelectedPaths),
+                                $"Could not resolve selected shell item {index} to a file-system path.");
+                        }
+                        finally { Marshal.Release(ppvItem); }
+                    }
+                }
+                finally { Marshal.Release(ppvSelection); }
+
+                if (paths.Count > 0)
+                    Clipboard.SetText(string.Join(Environment.NewLine, paths));
+            }
+            finally { Marshal.Release(ppv); }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, nameof(CopySelectedPaths),
+                "Could not copy the selected item paths to the clipboard.");
+        }
+    }
 
     public void Delete()
     {
@@ -1077,14 +1309,18 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private void BrowseTo(string path)
+    private void BrowseTo(string path, uint flags = 0)
     {
         if (_browser == null) return;
 
         int hr = NativeMethods.SHParseDisplayName(path, IntPtr.Zero, out IntPtr pidl, 0, out _);
         if (hr < 0 || pidl == IntPtr.Zero) return;
 
-        try   { _browser.BrowseToIDList(pidl, 0); }
+        try
+        {
+            _browser.BrowseToIDList(pidl, flags);
+            ApplyTheme();
+        }
         finally { NativeMethods.CoTaskMemFree(pidl); }
     }
 
@@ -1094,17 +1330,46 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
         try
         {
+            if (_eventsCookie != 0)
+                _browser.Unadvise(_eventsCookie);
+            _eventsCookie = 0;
+            _events = null;
             if (_browser is NativeMethods.IObjectWithSite ows)
                 ows.SetSite(null);
             _browser.Destroy();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(DestroyBrowser),
+                "The native Explorer browser failed during teardown.");
+        }
 
         try   { Marshal.ReleaseComObject(_browser); }
-        catch { }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(DestroyBrowser),
+                "Could not release the Explorer browser COM object.");
+        }
 
         _browser = null;
         _site    = null;
+        _events = null;
+        _eventsCookie = 0;
+    }
+
+    // Called by ExplorerBrowserEventsImpl on this control's UI thread.
+    internal void BrowserNavigationCompleted(bool succeeded)
+    {
+        if (_browser == null || IsDisposed || Disposing) return;
+        if (!succeeded)
+            AppLog.Debug(nameof(BrowserNavigationCompleted),
+                "The shell reported a failed navigation; continuing initial-view setup.");
+
+        // A completed BrowseToIDList has installed the final view. Folder state can
+        // replace Initialize's settings, and DirectUI children now exist to be themed.
+        ApplyFolderSettings(FVM_DETAILS);
+        ActivateShellView(takeFocus: false);
+        ApplyTheme();
     }
 
     /// <summary>
@@ -1316,12 +1581,20 @@ public sealed class ExplorerHost : Control, IMessageFilter
             if (item != null)
             {
                 try { Marshal.ReleaseComObject(item); }
-                catch { }
+                catch (Exception ex)
+                {
+                    AppLog.Debug(ex, nameof(TrySyncNamespaceTree),
+                        "Could not release the navigation Shell item COM object.");
+                }
             }
             if (tree != null)
             {
                 try { Marshal.ReleaseComObject(tree); }
-                catch { }
+                catch (Exception ex)
+                {
+                    AppLog.Debug(ex, nameof(TrySyncNamespaceTree),
+                        "Could not release the namespace-tree COM object.");
+                }
             }
         }
     }
@@ -1566,6 +1839,43 @@ internal sealed class BrowserSiteImpl : NativeMethods.IServiceProvider
     }
 }
 
+// Non-nested for the same reason as BrowserSiteImpl: private nested callback classes
+// do not reliably expose their requested COM interface from a .NET 8 CCW.
+[ComVisible(true)]
+[ClassInterface(ClassInterfaceType.None)]
+internal sealed class ExplorerBrowserEventsImpl : NativeMethods.IExplorerBrowserEvents
+{
+    private readonly WeakReference<ExplorerHost> _owner;
+
+    internal ExplorerBrowserEventsImpl(ExplorerHost owner)
+        => _owner = new WeakReference<ExplorerHost>(owner);
+
+    public int OnNavigationPending(IntPtr pidlFolder) => 0;
+    public int OnViewCreated(IntPtr psv) => 0;
+
+    public int OnNavigationComplete(IntPtr pidlFolder)
+    {
+        try
+        {
+            if (_owner.TryGetTarget(out ExplorerHost? owner))
+                owner.BrowserNavigationCompleted(succeeded: true);
+        }
+        catch (Exception ex) { AppLog.Debug(ex, nameof(OnNavigationComplete)); }
+        return 0;
+    }
+
+    public int OnNavigationFailed(IntPtr pidlFolder)
+    {
+        try
+        {
+            if (_owner.TryGetTarget(out ExplorerHost? owner))
+                owner.BrowserNavigationCompleted(succeeded: false);
+        }
+        catch (Exception ex) { AppLog.Debug(ex, nameof(OnNavigationFailed)); }
+        return 0;
+    }
+}
+
 // Non-nested internal class so the CCW responds to QueryInterface correctly.
 // (Private nested classes have unreliable CCW QI in .NET 8.)
 [ComVisible(true)]
@@ -1591,4 +1901,3 @@ internal sealed class FolderViewSettingsImpl : NativeMethods.IFolderViewSettings
     public int GetColumnStates(IntPtr rgKeyNames, uint cColumns)     { return E_NOTIMPL; }
     public int GetDefaultColumnWidth(IntPtr pkey, out uint pcxColumn){ pcxColumn = 0; return E_NOTIMPL; }
 }
-

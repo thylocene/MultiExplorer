@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>MultiExplorer</AssemblyName>
     <RootNamespace>MultiExplorer</RootNamespace>
-    <ApplicationIcon>file-explorer.ico</ApplicationIcon>
+    <ApplicationIcon>MultiExplorer-Installer.ico</ApplicationIcon>
     <!-- PerMonitorV2 matches Windows Explorer's own DPI awareness context.
          Using SystemAware causes the embedded Explorer content to be rendered
          at the wrong scale because the two processes' DPI contexts don't agree. -->
@@ -17,17 +17,22 @@
     <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
     <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
 
-    <!-- Publish produces a single self-contained .exe — no runtimeconfig.json or deps.json needed.
+    <!-- Publish produces a self-contained app — no separate .NET runtime is needed.
+         Keep the runtime as separate files so Windows does not have to scan one
+         160+ MB executable before a newly installed copy can start.
          Run: dotnet publish -c Release
-         Output: bin\Release\net8.0-windows\win-x64\publish\MultiExplorer.exe (standalone) -->
+         Output: bin\Release\net8.0-windows\win-x64\publish\ -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <PublishSingleFile>false</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
+    <!-- Precompile managed assemblies so a newly installed copy does not have to
+         JIT most of WinForms and the application before displaying its window. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="file-explorer.ico" />
+    <EmbeddedResource Include="MultiExplorer-Installer.ico" />
   </ItemGroup>
 
   <ItemGroup>
@@ -36,4 +41,7 @@
     <None Remove="MultiExplorer.Tests\**" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="MultiExplorer-Installer.ico" />
+  </ItemGroup>
 </Project>

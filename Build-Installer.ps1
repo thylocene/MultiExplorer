@@ -4,7 +4,8 @@
     Builds and signs the MultiExplorer MSI installer.
 
 .DESCRIPTION
-    1. Publishes MultiExplorer as a self-contained single-file exe.
+    1. Publishes MultiExplorer as a self-contained ReadyToRun app. Runtime files
+       remain separate so first-launch security scanning does not gate one huge exe.
     2. Builds the WiX 4 installer project (downloads WixToolset.Sdk from NuGet
        automatically on first run — internet access required once).
     3. Signs the MSI with a self-signed code-signing certificate stored in
@@ -12,7 +13,11 @@
        reused on subsequent runs.
 
 .PARAMETER Version
-    Product version embedded in the MSI (default: 1.0.0).
+    Product version embedded in both the application and MSI. Defaults to the
+    version in Directory.Build.props.
+
+.PARAMETER BuildDate
+    Build date displayed by the setup wizard (default: today's date, yyyy-MM-dd).
 
 .PARAMETER SkipPublish
     Skip the dotnet publish step.  A staleness check compares the published
@@ -32,7 +37,8 @@
     .\Build-Installer.ps1 -SkipPublish -Force
 #>
 param(
-    [string]$Version    = "1.0.0",
+    [string]$Version,
+    [string]$BuildDate  = (Get-Date -Format "yyyy-MM-dd"),
     [switch]$SkipPublish,
     [switch]$SkipSigning,
     [switch]$Force        # bypass the staleness check when -SkipPublish is set
@@ -43,11 +49,25 @@ $ErrorActionPreference = "Stop"
 
 $Root             = $PSScriptRoot
 $MainCsproj       = Join-Path $Root "MultiExplorer.csproj"
+$BuildProps       = Join-Path $Root "Directory.Build.props"
 $InstallerProject = Join-Path $Root "MultiExplorer.Installer\MultiExplorer.Installer.wixproj"
-$MsiPath          = Join-Path $Root "MultiExplorer.Installer\bin\Release\MultiExplorer-Setup.msi"
+$MsiPath          = Join-Path $Root "MultiExplorer.Installer\bin\Release\en-US\MultiExplorer-Setup.msi"
+
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    [xml]$props = Get-Content -LiteralPath $BuildProps
+    $Version = [string]$props.Project.PropertyGroup.Version
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        throw "No Version was supplied and Directory.Build.props does not define one."
+    }
+}
+
+Write-Host "`n>> Package metadata" -ForegroundColor Cyan
+Write-Host "   Version    : $Version"
+Write-Host "   Build date : $BuildDate"
 
 # ── 1. Publish the application ────────────────────────────────────────────────
-$PublishExe = Join-Path $Root "bin\Release\net8.0-windows\win-x64\publish\MultiExplorer.exe"
+$PublishDir = Join-Path $Root "bin\Release\net8.0-windows\win-x64\publish"
+$PublishExe = Join-Path $PublishDir "MultiExplorer.exe"
 
 if (-not $SkipPublish) {
     # Check for a running instance — Windows Installer cannot replace a locked exe.
@@ -58,11 +78,18 @@ if (-not $SkipPublish) {
 
     Write-Host "`n>> Publishing MultiExplorer..." -ForegroundColor Cyan
 
-    # Delete the previous publish output so MSBuild cannot skip recompilation via
-    # incremental build even when source-file timestamps have not changed.
-    Remove-Item $PublishExe -ErrorAction SilentlyContinue
+    # Start from an empty, validated publish directory so WiX cannot harvest stale
+    # files left by an older packaging layout or a diagnostic run.
+    $publishFull = [IO.Path]::GetFullPath($PublishDir)
+    $expectedParent = [IO.Path]::GetFullPath((Join-Path $Root "bin\Release\net8.0-windows\win-x64"))
+    if ([IO.Path]::GetDirectoryName($publishFull) -ne $expectedParent) {
+        throw "Refusing to clean unexpected publish directory: $publishFull"
+    }
+    if (Test-Path -LiteralPath $publishFull) {
+        Remove-Item -LiteralPath $publishFull -Recurse -Force
+    }
 
-    dotnet publish $MainCsproj -c Release
+    dotnet publish $MainCsproj -c Release "-p:Version=$Version"
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed (exit $LASTEXITCODE)." }
 
     if (-not (Test-Path $PublishExe)) {
@@ -82,7 +109,7 @@ else {
 
     $exeTime = (Get-Item $PublishExe).LastWriteTime
 
-    $newerFile = Get-ChildItem $Root -Recurse -Include "*.cs","*.csproj" -ErrorAction SilentlyContinue |
+    $newerFile = Get-ChildItem $Root -Recurse -Include "*.cs","*.csproj","*.props" -ErrorAction SilentlyContinue |
         Where-Object {
             $_.FullName -notmatch '\\obj\\'                   -and
             $_.FullName -notmatch '\\bin\\'                   -and
@@ -121,7 +148,7 @@ Write-Host "`n>> Building installer (WiX 4)..." -ForegroundColor Cyan
 Write-Host "   (First run downloads WixToolset.Sdk from NuGet — may take a moment)"
 # --no-incremental forces WiX to repackage the MSI from the freshly-published exe
 # rather than reusing a cached MSI from a prior build.
-dotnet build $InstallerProject -c Release --no-incremental -p:Version=$Version -p:SkipAppPublish=true
+dotnet build $InstallerProject -c Release --no-incremental "-p:Version=$Version" "-p:BuildDate=$BuildDate" -p:SkipAppPublish=true
 if ($LASTEXITCODE -ne 0) { throw "WiX build failed (exit $LASTEXITCODE)." }
 
 if (-not (Test-Path $MsiPath)) {

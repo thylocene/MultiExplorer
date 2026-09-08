@@ -18,7 +18,7 @@ internal sealed class DetailsPanel : Panel
     public DetailsPanel()
     {
         Height      = 120;
-        BackColor   = SystemColors.Window;
+        BackColor   = ThemeManager.Window;
         BorderStyle = BorderStyle.None;
         Padding     = new Padding(8, 6, 8, 6);
     }
@@ -36,7 +36,7 @@ internal sealed class DetailsPanel : Panel
         var g = e.Graphics;
 
         // Top separator line
-        using var pen = new Pen(SystemColors.ControlLight);
+        using var pen = new Pen(ThemeManager.Border);
         g.DrawLine(pen, 0, 0, Width, 0);
 
         if (string.IsNullOrEmpty(_filePath)
@@ -63,11 +63,11 @@ internal sealed class DetailsPanel : Panel
         string name = Path.GetFileName(_filePath.TrimEnd(Path.DirectorySeparatorChar));
         if (string.IsNullOrEmpty(name)) name = _filePath;
         using var boldFont = new Font(Font.FontFamily, Font.Size + 1, FontStyle.Bold);
-        using var textBrush = new SolidBrush(SystemColors.WindowText);
+        using var textBrush = new SolidBrush(ThemeManager.Text);
         g.DrawString(name, boldFont, textBrush, textX, y);
         y += (int)boldFont.GetHeight(g) + 2;
 
-        using var grayBrush = new SolidBrush(SystemColors.GrayText);
+        using var grayBrush = new SolidBrush(ThemeManager.MutedText);
 
         // Type
         string type = isDir ? "File folder" : GetFileType(_filePath);
@@ -100,7 +100,7 @@ internal sealed class DetailsPanel : Panel
 
     private void DrawPlaceholder(Graphics g)
     {
-        using var brush = new SolidBrush(SystemColors.GrayText);
+        using var brush = new SolidBrush(ThemeManager.MutedText);
         var sf = new StringFormat
         {
             Alignment     = StringAlignment.Center,

@@ -19,12 +19,10 @@ internal sealed class PreviewPane : Panel
     private const string HandlerShellexKey = "{8895b1c6-b41f-4c1c-a562-0d564250836f}";
 
     private readonly Font _placeholderFont = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point);
-    private static readonly Color ColPlaceholder = Color.FromArgb(0x80, 0x80, 0x80);
-
     public PreviewPane()
     {
         Width       = 300;
-        BackColor   = SystemColors.Window;
+        BackColor   = ThemeManager.Window;
         BorderStyle = BorderStyle.None;
     }
 
@@ -84,6 +82,7 @@ internal sealed class PreviewPane : Panel
             handler.SetRect(ref rc);
             handler.DoPreview();
             _handler = handler;
+            ThemeManager.ApplyNativeWindow(Handle);
         }
         catch (Exception ex)
         {
@@ -119,7 +118,7 @@ internal sealed class PreviewPane : Panel
         if (_handler != null) return; // handler owns the child window content
 
         // Left border separator
-        using var pen = new Pen(SystemColors.ControlLight);
+        using var pen = new Pen(ThemeManager.Border);
         e.Graphics.DrawLine(pen, 0, 0, 0, Height);
 
         string msg = string.IsNullOrEmpty(_currentPath) || !File.Exists(_currentPath)
@@ -128,7 +127,7 @@ internal sealed class PreviewPane : Panel
 
         // TextRenderer uses GDI/ClearType — sharper and heavier than DrawString's GDI+.
         TextRenderer.DrawText(
-            e.Graphics, msg, _placeholderFont, ClientRectangle, ColPlaceholder,
+            e.Graphics, msg, _placeholderFont, ClientRectangle, ThemeManager.MutedText,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak);
     }
 
@@ -138,8 +137,18 @@ internal sealed class PreviewPane : Panel
     private void ReleaseHandler()
     {
         if (_handler == null) return;
-        try { _handler.Unload(); }   catch { }
-        try { Marshal.ReleaseComObject(_handler); } catch { }
+        try { _handler.Unload(); }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(ReleaseHandler),
+                "The preview handler failed during unload.");
+        }
+        try { Marshal.ReleaseComObject(_handler); }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(ReleaseHandler),
+                "Could not release the preview-handler COM object.");
+        }
         _handler = null;
     }
 

@@ -3,7 +3,7 @@
 A dual-pane Windows file explorer built on the native Windows Shell (`IExplorerBrowser` COM interface), written in C# .NET 8.0 WinForms.
 
 **Author:** David Piscopo  
-**License:** [CC0 1.0 Universal Public Domain Dedication](https://creativecommons.org/publicdomain/zero/1.0/) — no restrictions, no attribution required.  
+**License:** [CC0 1.0 Universal Public Domain Dedication](https://creativecommons.org/publicdomain/zero/1.0/). No restrictions, no attribution required.  
 **Platform:** Windows 10 / Windows 11 (x64)
 
 ---
@@ -12,7 +12,7 @@ A dual-pane Windows file explorer built on the native Windows Shell (`IExplorerB
 
 ### Dual-pane layout
 
-Two independent explorer panels sit side-by-side, separated by a draggable splitter. Each panel is a fully native Windows Shell view — the same rendering engine as File Explorer — so shell extensions, thumbnails, file icons, and context menus all work exactly as they would in Explorer.
+Two independent explorer panels sit side-by-side, separated by a draggable splitter. Each panel is a fully native Windows Shell view. The same rendering engine as File Explorer so shell extensions, thumbnails, file icons, and context menus all work exactly as they would in Explorer.
 
 Each panel can be **collapsed** to a thin bar using the arrow buttons on the splitter, giving the remaining panel the full window width. Clicking the arrow again restores the previous split.
 
@@ -20,9 +20,9 @@ Each panel can be **collapsed** to a thin bar using the arrow buttons on the spl
 
 Each pane supports multiple tabs. Tabs can be:
 
-- **Added** — click the **+** button at the end of the tab bar.
-- **Closed** — click the **×** on any tab (a pane always keeps at least one tab open).
-- **Switched** — click any tab label.
+- **Added**: click the **+** button at the end of the tab bar.
+- **Closed**: click the **×** on any tab (a pane always keeps at least one tab open).
+- **Switched**: click any tab label.
 
 Hovering a tab shows a tooltip with the full folder path. All open tab paths are saved and restored between sessions.
 
@@ -30,9 +30,9 @@ Hovering a tab shows a tooltip with the full folder path. All open tab paths are
 
 The path bar beneath the tab bar renders the current folder path as clickable breadcrumb segments separated by **›** chevrons.
 
-- **Click a segment** — navigate directly to that ancestor folder.
-- **Click a chevron** — open a dropdown menu listing the immediate sub-folders of the folder to its left.
-- **Click blank space, press F4, or press Enter** — switch to a plain text editor for typing or pasting any path. Environment variables (e.g. `%USERPROFILE%`) are expanded on Enter. UNC paths (e.g. `\\server\share`) are supported. Press **Escape** to cancel.
+- **Click a segment**: navigate directly to that ancestor folder.
+- **Click a chevron**: open a dropdown menu listing the immediate sub-folders of the folder to its left.
+- **Click blank space, press F4, or press Enter**: switch to a plain text editor for typing or pasting any path. Environment variables (e.g. `%USERPROFILE%`) are expanded on Enter. UNC paths (e.g. `\\server\share`) are supported. Press **Escape** to cancel.
 
 ### Toolbar (command bar)
 
@@ -41,13 +41,42 @@ The path bar beneath the tab bar renders the current folder path as clickable br
 | New folder | Ctrl+Shift+N | Create a new folder and immediately start renaming it |
 | Cut | Ctrl+X | Cut selected item(s) |
 | Copy | Ctrl+C | Copy selected item(s) |
+| Copy full paths | — | Copy the full paths of all selected files and folders, one per line |
 | Paste | Ctrl+V | Paste from clipboard |
 | Rename | F2 | Rename the selected item |
 | Delete | Del | Delete the selected item(s) |
 | View ▾ | — | Change view mode and toggle panes (see below) |
 | ↑ (Go up) | — | Navigate to the parent folder |
 | ⇄ (Mirror) | — | Navigate the **opposite** pane to the same folder as the active pane |
-| **… ▾** | — | Options, log viewer, hotkey settings, About, Exit |
+| **… ▾** | — | Options, light/dark appearance, log viewer, hotkey settings, About, Exit |
+
+### Application appearance
+
+MultiExplorer provides complete light and dark application modes. To change the appearance from either pane:
+
+1. Click **… ▾** at the far right of the toolbar.
+2. Open **Appearance**.
+3. Choose **Light application mode** or **Dark application mode**.
+
+The selected mode applies to the entire application, including:
+
+- Both panes and every open tab.
+- Toolbars, menus, status bars, path bars, and the splitter.
+- Dialogs, filtering results, details, and preview panes.
+- Embedded Windows Explorer folder views, navigation trees, scrollbars, and selection highlighting.
+
+The change takes effect without restarting MultiExplorer. The embedded Explorer views briefly reload so Windows can apply the new native theme correctly; their current folders and selected items are preserved where possible.
+
+The selected mode is stored as `ApplicationTheme` in `%APPDATA%\MultiExplorer\settings.json` and is restored on the next launch. Light mode is used by default for a new installation.
+
+For testing or screenshot automation, the persisted selection can be overridden for one launch from the command line:
+
+```powershell
+MultiExplorer.exe --theme=light
+MultiExplorer.exe --theme=dark
+```
+
+The command-line override is not saved and does not change the mode selected in the settings file.
 
 ### Type-to-filter
 
@@ -56,10 +85,10 @@ Start typing any printable character while the file list has focus to instantly 
 A yellow **Contains:** bar appears at the bottom of the panel showing the current filter text, and a results list overlays the shell view:
 
 - Results show **Name**, **Type**, **Size**, and **Date modified** columns. Folders are listed first (alphabetically), followed by files (alphabetically).
-- **Double-click or Enter** — navigate into the matched folder, or open the matched file with its default application.
-- **Right-click** — shows the full Windows shell context menu for the item (copy, delete, properties, open with, etc.).
-- **Backspace** — removes the last character from the filter.
-- **Escape** or click **×** — clears the filter and returns focus to the shell view.
+- **Double-click or Enter**: navigate into the matched folder, or open the matched file with its default application.
+- **Right-click**: shows the full Windows shell context menu for the item (copy, delete, properties, open with, etc.).
+- **Backspace**: removes the last character from the filter.
+- **Escape** or click **×**: clears the filter and returns focus to the shell view.
 - Typing continues to refine the filter while the results list is open.
 
 ### View modes
@@ -80,11 +109,11 @@ Accessible from the **View** dropdown on the toolbar:
 
 Toggles for shell view options. **Navigation pane**, **Compact view** and **QuickLook** are per-session; the remaining options write to the same Windows Registry keys used by File Explorer and take effect globally:
 
-- **Navigation pane** — left-side folder tree
-- **Compact view** — reduced row height in Details mode
-- **Item check boxes** — selection checkboxes on every item
-- **File name extensions** — show/hide file extensions
-- **Hidden items** — show/hide hidden and system files
+- **Navigation pane**: left-side folder tree
+- **Compact view**: reduced row height in Details mode
+- **Item check boxes**: selection checkboxes on every item
+- **File name extensions**: show/hide file extensions
+- **Hidden items**: show/hide hidden and system files
 
 ### Panes
 
@@ -118,11 +147,11 @@ If the configured hotkey is claimed by another application, MultiExplorer silent
 
 When **Minimize to tray on close** is enabled (the default), closing the main window hides it to the system tray rather than exiting. The tray icon provides:
 
-- **Left-click** or **Open MultiExplorer** — restore the window
-- **Minimize to tray on close** — toggle the behaviour
-- **View log** — open the application log in the default text editor
-- **About MultiExplorer** — version and licence information
-- **Exit** — fully quit the application
+- **Left-click** or **Open MultiExplorer**: restore the window
+- **Minimize to tray on close**: toggle the behaviour
+- **View log**: open the application log in the default text editor
+- **About MultiExplorer**: version and licence information
+- **Exit**: fully quit the application
 
 ### Single-instance enforcement
 
@@ -159,19 +188,21 @@ All standard Windows Explorer keyboard shortcuts (Backspace to go up, Alt+Left/R
 Download `MultiExplorer-Setup.msi` from the Releases page and run it. The installer:
 
 - Installs to `%LocalAppData%\Programs\MultiExplorer\` (no administrator rights required)
+- Reuses the existing installation directory when upgrading a previous version
 - Creates a **Desktop shortcut** and a **Start Menu** entry
 - Registers in **Apps & features** so it can be fully uninstalled from there
-- Closes any running instance automatically before updating
+- Closes any running instance automatically before installing, updating, or uninstalling
+- Removes the previous version automatically during an upgrade
 
 To uninstall, go to **Settings → Apps → Apps & features**, find MultiExplorer, and click Uninstall.
 
-### Using the standalone executable
+### Using the standalone app
 
-If you prefer not to use the installer, `MultiExplorer.exe` is a fully self-contained executable that runs without installation or a separate .NET runtime.
-
-1. Download `MultiExplorer.exe` from the Releases page.
-2. Place it anywhere (e.g. `C:\Tools\MultiExplorer\`).
-3. Run it. Settings and the log file are created automatically on first launch.
+If you prefer not to use the installer, copy the complete publish folder. It is
+fully self-contained and runs without installation or a separate .NET runtime.
+Keep every published file and language subfolder beside `MultiExplorer.exe`.
+The small entry executable avoids the long first-launch scan incurred by a
+single 160+ MB executable.
 
 To launch MultiExplorer at login without the installer, place a shortcut in `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`.
 
@@ -190,15 +221,16 @@ To launch MultiExplorer at login without the installer, place a shortcut in `%AP
 dotnet build
 ```
 
-**Release — single self-contained executable**
+**Release — self-contained ReadyToRun folder**
 
 ```bat
 dotnet publish -c Release
 ```
 
-Output: `bin\Release\net8.0-windows\win-x64\publish\MultiExplorer.exe`
+Output: `bin\Release\net8.0-windows\win-x64\publish\`
 
-The resulting `.exe` is fully self-contained and runs on any x64 Windows 10/11 machine without a separate .NET installation.
+Copy the complete output folder. It runs on any x64 Windows 10/11 machine
+without a separate .NET installation.
 
 **MSI installer**
 
@@ -212,12 +244,13 @@ Options:
 
 | Flag | Description |
 |------|-------------|
-| `-Version x.y.z` | Version number embedded in the MSI (default: `1.0.0`) |
-| `-SkipPublish` | Skip `dotnet publish`; use the existing exe (includes a staleness check) |
+| `-Version x.y.z` | Version embedded in the app and MSI (defaults to `Directory.Build.props`) |
+| `-BuildDate yyyy-MM-dd` | Build date shown in setup (defaults to today's date) |
+| `-SkipPublish` | Skip `dotnet publish`; use the existing publish folder (includes a staleness check) |
 | `-SkipSigning` | Produce the MSI without code-signing it |
 | `-Force` | With `-SkipPublish`, bypass the staleness check |
 
-The script publishes the app, builds the MSI with WiX, and signs it with a self-signed certificate created automatically on first run (requires the Windows 10/11 SDK for `signtool.exe`). Output: `MultiExplorer.Installer\bin\Release\MultiExplorer-Setup.msi`.
+The script publishes the app, builds the MSI with WiX, and signs it with a self-signed certificate created automatically on first run (requires the Windows 10/11 SDK for `signtool.exe`). Output: `MultiExplorer.Installer\bin\Release\en-US\MultiExplorer-Setup.msi`.
 
 ---
 
@@ -241,6 +274,7 @@ The script publishes the app, builds the MSI with WiX, and signs it with a self-
 | `LeftPanelTabs` / `RightPanelTabs` | string[] | `["C:\\"]` | Folder path for every open tab in each panel |
 | `MinimizeToTray` | bool | `true` | Whether closing the window hides to tray |
 | `QuickLookEnabled` | bool | auto-detected | Whether Space triggers QuickLook preview |
+| `ApplicationTheme` | string | `"Light"` | Selected `Light` or `Dark` application appearance |
 | `ShowWindowModifiers` | int | `0x000B` | Modifier flags for the global hotkey (Win\|Ctrl\|Alt) |
 | `ShowWindowVk` | int | `0x4D` | Virtual-key code for the global hotkey (`0x4D` = M) |
 
@@ -264,6 +298,7 @@ Warnings and errors appear in the status bar at the bottom of the window and are
 | `DetailsPanel` | `DetailsPanel.cs` | Bottom pane showing shell icon and file metadata |
 | `PreviewPane` | `PreviewPane.cs` | Right pane hosting the `IPreviewHandler` shell extension |
 | `HotkeyDialog` | `HotkeyDialog.cs` | Modal dialog for choosing a global hotkey combination |
+| `ThemeManager` | `ThemeManager.cs` | Shared palette, menu renderer, and native Windows/Explorer theming |
 | `AppSettings` | `AppSettings.cs` | Settings data model |
 | `SettingsManager` | `SettingsManager.cs` | JSON serialisation to `%APPDATA%\MultiExplorer\settings.json` |
 | `AppLog` | `AppLog.cs` | Static logger; Debug → file only; Warn/Error → file + status bar |

@@ -16,12 +16,6 @@ public sealed class TabBar : UserControl
     private int MaxW   => LogicalToDeviceUnits(250);
     private int Radius => LogicalToDeviceUnits(7);
 
-    private static readonly Color ColActive   = SystemColors.Window;
-    private static readonly Color ColInactive = Color.FromArgb(0xE8, 0xE8, 0xE8);
-    private static readonly Color ColHover    = Color.FromArgb(0xDE, 0xDE, 0xDE);
-    private static readonly Color ColBorder   = Color.FromArgb(0xC0, 0xC0, 0xC0);
-    private static readonly Color ColAccent   = Color.FromArgb(0x00, 0x78, 0xD4);
-
     private readonly Font         _font;
     private readonly ToolTip      _tabTip = new ToolTip { AutomaticDelay = 400, ShowAlways = true };
     private readonly List<string> _labels   = new();
@@ -43,7 +37,7 @@ public sealed class TabBar : UserControl
     {
         _font     = new Font("Segoe UI", 9.5f);
         Height    = LogicalToDeviceUnits(42);
-        BackColor = Color.FromArgb(0xF0, 0xF0, 0xF0);
+        BackColor = ThemeManager.Background;
         SetStyle(ControlStyles.OptimizedDoubleBuffer |
                  ControlStyles.AllPaintingInWmPaint  |
                  ControlStyles.ResizeRedraw, true);
@@ -144,19 +138,19 @@ public sealed class TabBar : UserControl
 
             // Background fill with rounded top corners
             using (var path = TopRoundedRect(tabR, Radius))
-            using (var br   = new SolidBrush(isActive ? ColActive : (isHovered ? ColHover : ColInactive)))
+            using (var br   = new SolidBrush(isActive ? ThemeManager.Window : (isHovered ? ThemeManager.Hover : ThemeManager.Surface)))
                 g.FillPath(br, path);
 
             // Accent bar across top of active tab
             if (isActive)
             {
                 var accentR = new Rectangle(tabR.X + Radius, tabR.Y + 1, tabR.Width - Radius * 2, 3);
-                using var br = new SolidBrush(ColAccent);
+                using var br = new SolidBrush(ThemeManager.Accent);
                 g.FillRectangle(br, accentR);
             }
 
             // Border: left side, top arc, right side (no bottom on active tab)
-            using var pen = new Pen(ColBorder);
+            using var pen = new Pen(ThemeManager.Border);
             if (isActive)
             {
                 using var borderPath = TopRoundedRectBorder(tabR, Radius);
@@ -170,20 +164,20 @@ public sealed class TabBar : UserControl
 
             // Label
             var labelR = new Rectangle(tabR.X + PadH, tabR.Y + 2, textW + 4, tabH - 4);
-            TextRenderer.DrawText(g, _labels[i], _font, labelR, SystemColors.ControlText, DrawTff);
+            TextRenderer.DrawText(g, _labels[i], _font, labelR, ThemeManager.Text, DrawTff);
 
             // Close button (active tab always; inactive tab on hover)
             if (isActive || isHovered)
             {
                 bool cHov = i == _hovClose;
                 if (cHov)
-                    using (var br = new SolidBrush(Color.FromArgb(0xC0, 0xC0, 0xC0)))
+                    using (var br = new SolidBrush(ThemeManager.Pressed))
                         g.FillEllipse(br, closeR.X + 1, closeR.Y + 1, closeR.Width - 2, closeR.Height - 2);
 
                 int cx = closeR.X + closeR.Width  / 2;
                 int cy = closeR.Y + closeR.Height / 2;
                 using var cp = new Pen(
-                    cHov ? Color.FromArgb(0x20, 0x20, 0x20) : Color.FromArgb(0x70, 0x70, 0x70), 1.5f);
+                    cHov ? ThemeManager.Text : ThemeManager.MutedText, 1.5f);
                 g.DrawLine(cp, cx - 4, cy - 4, cx + 4, cy + 4);
                 g.DrawLine(cp, cx + 4, cy - 4, cx - 4, cy + 4);
             }
@@ -195,17 +189,17 @@ public sealed class TabBar : UserControl
         int addY = (tabH - AddW) / 2;
         _addHit = new Rectangle(x + 2, addY, AddW, AddW);
         if (_hovAdd)
-            using (var br = new SolidBrush(Color.FromArgb(0xD8, 0xD8, 0xD8)))
+            using (var br = new SolidBrush(ThemeManager.Hover))
                 g.FillRectangle(br, _addHit);
 
         int ax = _addHit.X + AddW / 2;
         int ay = _addHit.Y + AddW / 2;
-        using var ap = new Pen(Color.FromArgb(0x50, 0x50, 0x50), 1.5f);
+        using var ap = new Pen(ThemeManager.Text, 1.5f);
         g.DrawLine(ap, ax - 5, ay,     ax + 5, ay);
         g.DrawLine(ap, ax,     ay - 5, ax,     ay + 5);
 
         // Bottom separator line
-        using var bp = new Pen(ColBorder);
+        using var bp = new Pen(ThemeManager.Border);
         g.DrawLine(bp, 0, ClientSize.Height - 1, ClientSize.Width, ClientSize.Height - 1);
     }
 

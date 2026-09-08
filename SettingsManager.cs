@@ -34,7 +34,11 @@ public static class SettingsManager
                 return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
             }
         }
-        catch { /* fall through to default */ }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(Load),
+                "Could not load settings; default settings will be used.");
+        }
 
         return new AppSettings();
     }
@@ -54,6 +58,10 @@ public static class SettingsManager
             string json = JsonSerializer.Serialize(settings, SerializerOptions);
             File.WriteAllText(SettingsPath, json);
         }
-        catch { /* best-effort */ }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, nameof(Save),
+                "Could not save application settings.");
+        }
     }
 }

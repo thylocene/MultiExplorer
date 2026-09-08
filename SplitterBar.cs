@@ -20,10 +20,6 @@ internal sealed class SplitterBar : Control
     private const int BtnHalfH = 10;
     private const int BtnGap   = 6;
 
-    private static readonly Color ArrowNormal = Color.FromArgb(70,  70,  70);
-    private static readonly Color ArrowHot    = Color.FromArgb(10,  10,  10);
-    private static readonly Color ArrowHotBg  = Color.FromArgb(210, 210, 210);
-
     private readonly ToolTip _tooltip = new ToolTip { AutomaticDelay = 400, ReshowDelay = 200 };
 
     private bool _dragging;
@@ -79,19 +75,19 @@ internal sealed class SplitterBar : Control
         int cx = Width / 2;
         int cy = Height / 2;
 
-        g.Clear(SystemColors.Control);
+        g.Clear(ThemeManager.Background);
 
         // Raised-edge borders
-        using (var hi = new Pen(SystemColors.ControlLightLight))
+        using (var hi = new Pen(ThemeManager.Border))
             g.DrawLine(hi, 0, 0, 0, Height - 1);
-        using (var sh = new Pen(SystemColors.ControlDark))
+        using (var sh = new Pen(ThemeManager.Border))
             g.DrawLine(sh, Width - 1, 0, Width - 1, Height - 1);
 
         // Grip dots, skipping the button zone
         int btnZoneTop    = cy - BtnGap / 2 - BtnHalfH * 2 - 10;
         int btnZoneBottom = cy + BtnGap / 2 + BtnHalfH * 2 + 10;
 
-        using (var dot = new SolidBrush(SystemColors.ControlDark))
+        using (var dot = new SolidBrush(ThemeManager.MutedText))
         {
             for (int y = 6; y < Height - 6; y += 4)
             {
@@ -118,7 +114,7 @@ internal sealed class SplitterBar : Control
 
         if (hot)
         {
-            using var bg = new SolidBrush(ArrowHotBg);
+            using var bg = new SolidBrush(ThemeManager.Hover);
             g.FillRectangle(bg, cx - al - 3, cy - aw - 3, (al + 3) * 2, (aw + 3) * 2);
         }
 
@@ -126,7 +122,7 @@ internal sealed class SplitterBar : Control
             ? new[] { new Point(cx - al, cy), new Point(cx + al, cy - aw), new Point(cx + al, cy + aw) }
             : new[] { new Point(cx + al, cy), new Point(cx - al, cy - aw), new Point(cx - al, cy + aw) };
 
-        using var brush = new SolidBrush(hot ? ArrowHot : ArrowNormal);
+        using var brush = new SolidBrush(hot ? ThemeManager.Text : ThemeManager.MutedText);
         g.FillPolygon(brush, pts);
     }
 

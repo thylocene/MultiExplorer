@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Shared by the application and installer so their displayed versions cannot drift. -->
+    <Version>1.2.0</Version>
+  </PropertyGroup>
+</Project>

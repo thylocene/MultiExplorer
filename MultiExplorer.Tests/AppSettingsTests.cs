@@ -24,4 +24,10 @@ public class AppSettingsTests
         var settings = new AppSettings();
         Assert.False(settings.QuickLookEnabled);
     }
+
+    [Fact]
+    public void DefaultApplicationTheme_IsLight()
+    {
+        Assert.Equal("Light", new AppSettings().ApplicationTheme);
+    }
 }

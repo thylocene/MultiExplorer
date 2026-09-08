@@ -7,7 +7,10 @@ using System.Text;
 
 namespace MultiExplorer;
 
-internal static class NativeMethods
+// This type must be public because the managed COM callback interfaces nested
+// below are passed to Marshal.GetComInterfaceForObject. A public nested type is
+// not COM-visible when its declaring type is internal (Type.IsVisible is false).
+public static class NativeMethods
 {
     // ── Structs ───────────────────────────────────────────────────────────────
 
@@ -88,6 +91,20 @@ internal static class NativeMethods
         [PreserveSig] int FillFromObject([MarshalAs(UnmanagedType.IUnknown)] object punk, int dwFlags);
         [PreserveSig] int RemoveAll();
         [PreserveSig] int GetCurrentView(ref Guid riid, out IntPtr ppv);
+    }
+
+    // Implemented by the host and passed to IExplorerBrowser::Advise.  Navigation
+    // is asynchronous, so these callbacks are the only reliable way to know that
+    // the shell has finished constructing a replacement folder view.
+    [ComVisible(true)]
+    [Guid("361BBDC7-E6EE-4E13-BE58-58E2240C810F")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IExplorerBrowserEvents
+    {
+        [PreserveSig] int OnNavigationPending(IntPtr pidlFolder);
+        [PreserveSig] int OnViewCreated(IntPtr psv);
+        [PreserveSig] int OnNavigationComplete(IntPtr pidlFolder);
+        [PreserveSig] int OnNavigationFailed(IntPtr pidlFolder);
     }
 
     // ── IObjectWithSite — called by us on the browser (Runtime Callable Wrapper) ─
@@ -464,6 +481,22 @@ internal static class NativeMethods
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     public static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
 
+    public delegate bool EnumChildProc(IntPtr hwnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumChildWindows(IntPtr hwndParent, EnumChildProc callback, IntPtr lParam);
+
+    [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
+    public static extern int SetWindowTheme(IntPtr hwnd, string? subAppName, string? subIdList);
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool RedrawWindow(IntPtr hwnd, IntPtr updateRect, IntPtr updateRegion, uint flags);
+
     /// <summary>Sends LVM_HITTEST to a SysListView32 to find the item under a point.</summary>
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     public static extern int SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, ref LVHITTESTINFO lParam);
@@ -754,6 +787,33 @@ internal static class NativeMethods
         [PreserveSig] int GetCount(out uint pdwNumItems);
         [PreserveSig] int GetItemAt(uint dwIndex, out IShellItem ppsi);
         [PreserveSig] int EnumItems(out IntPtr ppenumShellItems);
+    }
+
+    // Invoke these two IShellItemArray methods from the raw interface pointer.
+    // Some Windows 11 shell views expose the interface correctly but .NET can
+    // cache a failed QueryInterface on the RCW, making a managed cast unreliable.
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int ShellItemArrayGetCountDelegate(IntPtr self, out uint count);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int ShellItemArrayGetItemAtDelegate(
+        IntPtr self, uint index, out IntPtr shellItem);
+
+    internal static int ShellItemArrayGetCount(IntPtr shellItemArray, out uint count)
+    {
+        IntPtr vtable = Marshal.ReadIntPtr(shellItemArray);
+        IntPtr method = Marshal.ReadIntPtr(vtable, 7 * IntPtr.Size);
+        return Marshal.GetDelegateForFunctionPointer<ShellItemArrayGetCountDelegate>(method)(
+            shellItemArray, out count);
+    }
+
+    internal static int ShellItemArrayGetItemAt(
+        IntPtr shellItemArray, uint index, out IntPtr shellItem)
+    {
+        IntPtr vtable = Marshal.ReadIntPtr(shellItemArray);
+        IntPtr method = Marshal.ReadIntPtr(vtable, 8 * IntPtr.Size);
+        return Marshal.GetDelegateForFunctionPointer<ShellItemArrayGetItemAtDelegate>(method)(
+            shellItemArray, index, out shellItem);
     }
 
     // ── IPreviewHandler — hosted in PreviewPane to render file previews ───────────

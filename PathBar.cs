@@ -17,16 +17,12 @@ public sealed class PathBar : UserControl
     private int SepGap  => LogicalToDeviceUnits(5);
     private int LeftMgn => LogicalToDeviceUnits(8);
 
-    private static readonly Color ColHover  = Color.FromArgb(0xE0, 0xE0, 0xE0);
-    private static readonly Color ColSep    = Color.FromArgb(0x99, 0x99, 0x99);
-    private static readonly Color ColBorder = Color.FromArgb(0xAB, 0xAB, 0xAB);
-    private static readonly Color ColAccent = Color.FromArgb(0x00, 0x78, 0xD4);
-
     private readonly TextBox _editor;
     private readonly Font    _font;
 
     private bool   _editing;
     private bool   _editorFocused;
+    private bool   _autoCompleteInitialized;
     private string _path       = "";
     private int    _hovered    = -1;
     private int    _hoveredSep = -1;
@@ -47,10 +43,10 @@ public sealed class PathBar : UserControl
 
     public PathBar()
     {
-        _font = new Font("Segoe UI", 10f);
+        _font = new Font("Segoe UI Semibold", 10f);
 
         Height      = LogicalToDeviceUnits(32);
-        BackColor   = SystemColors.Window;
+        BackColor   = ThemeManager.Surface;
         BorderStyle = BorderStyle.None;
         SetStyle(ControlStyles.OptimizedDoubleBuffer |
                  ControlStyles.AllPaintingInWmPaint  |
@@ -58,11 +54,10 @@ public sealed class PathBar : UserControl
 
         _editor = new TextBox
         {
-            Font               = new Font("Segoe UI", 10f),
-            AutoCompleteMode   = AutoCompleteMode.SuggestAppend,
-            AutoCompleteSource = AutoCompleteSource.FileSystemDirectories,
+            Font               = new Font("Segoe UI Semibold", 10f),
             BorderStyle        = BorderStyle.None,
-            BackColor          = SystemColors.Window,
+            BackColor          = ThemeManager.Surface,
+            ForeColor          = ThemeManager.Text,
             Visible            = false,
         };
         _editor.KeyDown   += OnEditorKeyDown;
@@ -117,7 +112,9 @@ public sealed class PathBar : UserControl
         base.OnPaint(e);
         var g = e.Graphics;
 
-        using (var pen = new Pen((_editing && _editorFocused) ? ColAccent : ColBorder))
+        using (var pen = new Pen((_editing && _editorFocused)
+            ? ThemeManager.Accent
+            : ThemeManager.NavigationBorder))
             g.DrawRectangle(pen, 0, 0, ClientSize.Width - 1, ClientSize.Height - 1);
 
         if (_editing || string.IsNullOrEmpty(_path)) return;
@@ -147,13 +144,16 @@ public sealed class PathBar : UserControl
             if (i == _hovered)
             {
                 var pill = new Rectangle(hit.X, SegPadV, hit.Width, hit.Height - SegPadV * 2);
-                using var segBrush = new SolidBrush(ColHover);
+                using var segBrush = new SolidBrush(ThemeManager.AccentHover);
                 using var segPath  = MakeRoundRect(pill, HoverR);
                 g.FillPath(segBrush, segPath);
             }
 
+            Color textColor = i == _hovered || i == raw.Count - 1
+                ? ThemeManager.AccentText
+                : ThemeManager.Text;
             TextRenderer.DrawText(g, display, _font, new Point(hit.X + SegPadH, textY),
-                SystemColors.ControlText, TFF);
+                textColor, TFF);
 
             x = hit.Right + SepGap;
 
@@ -166,15 +166,25 @@ public sealed class PathBar : UserControl
                 if (sepIdx == _hoveredSep)
                 {
                     var pill = new Rectangle(sepHit.X, SegPadV, sepHit.Width, sepHit.Height - SegPadV * 2);
-                    using var sepBrush = new SolidBrush(ColHover);
+                    using var sepBrush = new SolidBrush(ThemeManager.AccentHover);
                     using var sepPath  = MakeRoundRect(pill, HoverR);
                     g.FillPath(sepBrush, sepPath);
                 }
 
-                TextRenderer.DrawText(g, Sep, _font, new Point(x, textY), ColSep, TFF);
+                Color sepColor = sepIdx == _hoveredSep ? ThemeManager.AccentText : ThemeManager.MutedText;
+                TextRenderer.DrawText(g, Sep, _font, new Point(x, textY), sepColor, TFF);
                 x += sepW + SepGap;
             }
         }
+    }
+
+    public void ApplyTheme()
+    {
+        BackColor = ThemeManager.Surface;
+        ForeColor = ThemeManager.Text;
+        _editor.BackColor = ThemeManager.Surface;
+        _editor.ForeColor = ThemeManager.Text;
+        Invalidate(true);
     }
 
     private static GraphicsPath MakeRoundRect(Rectangle r, int radius)
@@ -228,6 +238,16 @@ public sealed class PathBar : UserControl
 
     private void SwitchToEdit()
     {
+        // File-system autocomplete initializes Windows shell services when the
+        // TextBox handle is created. Defer that cold-start cost until the user
+        // actually opens the address editor.
+        if (!_autoCompleteInitialized)
+        {
+            _editor.AutoCompleteSource = AutoCompleteSource.FileSystemDirectories;
+            _editor.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+            _autoCompleteInitialized = true;
+        }
+
         _editing        = true;
         _editor.Text    = _path;
         _editor.Visible = true;
@@ -274,7 +294,18 @@ public sealed class PathBar : UserControl
         string parentPath = _segs[segIdx].FullPath;
         string[] dirs;
         try { dirs = Directory.GetDirectories(parentPath); }
-        catch { return; }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            AppLog.Debug(ex, nameof(ShowSeparatorMenu),
+                $"Could not enumerate \"{parentPath}\" for the breadcrumb menu.");
+            return;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, nameof(ShowSeparatorMenu),
+                $"Could not build the breadcrumb menu for \"{parentPath}\".");
+            return;
+        }
 
         if (dirs.Length == 0) return;
 
@@ -290,6 +321,8 @@ public sealed class PathBar : UserControl
             menu.Items.Add(name, null, (_, _) => BeginInvoke(() => Navigate?.Invoke(this, navTarget)));
         }
         if (menu.Items.Count == 0) { menu.Dispose(); return; }
+
+        ThemeManager.ApplyToolStrip(menu);
 
         menu.Show(this, new Point(_seps[sepIndex].Hit.Left, Height));
     }
@@ -314,7 +347,20 @@ public sealed class PathBar : UserControl
                 path = parent;
             }
         }
-        catch { /* invalid path */ }
+        catch (Exception ex) when (
+            ex is ArgumentException or
+            NotSupportedException or
+            IOException or
+            UnauthorizedAccessException)
+        {
+            AppLog.Debug(ex, nameof(BuildSegments),
+                $"Could not construct breadcrumbs for \"{rawPath}\".");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, nameof(BuildSegments),
+                $"Unexpected failure constructing breadcrumbs for \"{rawPath}\".");
+        }
         return result;
     }
 }

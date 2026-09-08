@@ -165,6 +165,8 @@ internal sealed class HotkeyDialog : Form
         _cboKey.SelectedIndexChanged += (_, _) => UpdatePreview();
 
         UpdatePreview();
+        ThemeManager.ApplyTo(this);
+        Shown += (_, _) => ThemeManager.ApplyNativeWindow(Handle);
     }
 
     private void UpdatePreview()

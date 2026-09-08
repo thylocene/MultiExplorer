@@ -32,6 +32,7 @@ public class SettingsManagerTests : IDisposable
             RightPanelPath       = @"D:\Bar",
             MinimizeToTray       = false,
             QuickLookEnabled     = false,
+            ApplicationTheme     = "Dark",
             ShowWindowModifiers  = NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT,
             ShowWindowVk         = 0x48, // H
         };
@@ -50,6 +51,7 @@ public class SettingsManagerTests : IDisposable
         Assert.Equal(original.RightPanelPath,      loaded.RightPanelPath);
         Assert.Equal(original.MinimizeToTray,      loaded.MinimizeToTray);
         Assert.Equal(original.QuickLookEnabled,    loaded.QuickLookEnabled);
+        Assert.Equal(original.ApplicationTheme,    loaded.ApplicationTheme);
         Assert.Equal(original.ShowWindowModifiers, loaded.ShowWindowModifiers);
         Assert.Equal(original.ShowWindowVk,        loaded.ShowWindowVk);
     }

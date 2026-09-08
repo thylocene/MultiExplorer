@@ -10,6 +10,10 @@ namespace MultiExplorer;
 
 public class MainForm : Form, IMessageFilter
 {
+    private const int MinimumPanelWidth = 100;
+    private const string ApplicationIconResourceName =
+        "MultiExplorer.MultiExplorer-Installer.ico";
+
     private readonly Panel       _layoutPanel;
     private readonly SplitterBar _splitterBar;
     private readonly PanelView   _leftPanel;
@@ -30,6 +34,7 @@ public class MainForm : Form, IMessageFilter
 
     private readonly NotifyIcon          _trayIcon;
     private readonly ToolStripMenuItem   _miMinimizeToTray;
+    private readonly ContextMenuStrip    _trayMenu;
     private bool _forceClose;
 
     // Arbitrary unique ID for the global show-window hotkey
@@ -39,16 +44,20 @@ public class MainForm : Form, IMessageFilter
     private int _registeredModifiers;
     private int _registeredVk;
 
-    public MainForm()
+    public MainForm() : this(SettingsManager.Load()) { }
+
+    internal MainForm(AppSettings settings)
     {
-        _settings = SettingsManager.Load();
+        _settings = settings;
 
         Text = "MultiExplorer";
-        var iconStream = GetType().Assembly.GetManifestResourceStream("MultiExplorer.file-explorer.ico");
+        using var iconStream = GetType().Assembly.GetManifestResourceStream(ApplicationIconResourceName);
         if (iconStream != null)
         {
-            Icon = new Icon(iconStream);
-            iconStream.Dispose();
+            // Icon(Stream) can retain the stream, so clone it before the embedded
+            // resource stream is disposed. The form icon is also used by the taskbar.
+            using var embeddedIcon = new Icon(iconStream);
+            Icon = (Icon)embeddedIcon.Clone();
         }
         MinimumSize = new Size(800, 600);
 
@@ -79,6 +88,9 @@ public class MainForm : Form, IMessageFilter
         _leftPanel.SetHotkeyRequested  += (_, _) => OnSetHotkeyRequested();
         _rightPanel.SetHotkeyRequested += (_, _) => OnSetHotkeyRequested();
 
+        _leftPanel.ThemeSelected  += (_, theme) => ChangeTheme(theme);
+        _rightPanel.ThemeSelected += (_, theme) => ChangeTheme(theme);
+
         // Exit: command bar button or Ctrl+Q
         _leftPanel.ExitRequested  += (_, _) => ExitApplication();
         _rightPanel.ExitRequested += (_, _) => ExitApplication();
@@ -89,13 +101,13 @@ public class MainForm : Form, IMessageFilter
         {
             AutoSize  = false,
             Width     = 20,
-            ForeColor = SystemColors.GrayText,
+            ForeColor = ThemeManager.MutedText,
         };
         _statusMessage = new ToolStripStatusLabel("Ready")
         {
             Spring      = true,
             TextAlign   = ContentAlignment.MiddleLeft,
-            ForeColor   = SystemColors.GrayText,
+            ForeColor   = ThemeManager.MutedText,
             ToolTipText = "Click to open log file",
         };
         _statusMessage.Click += (_, _) => AppLog.OpenLogFile();
@@ -147,26 +159,59 @@ public class MainForm : Form, IMessageFilter
         var viewLogItem = new ToolStripMenuItem("View log");
         viewLogItem.Click += (_, _) => AppLog.OpenLogFile();
 
-        var trayMenu = new ContextMenuStrip();
-        trayMenu.Items.Add(openItem);
-        trayMenu.Items.Add(new ToolStripSeparator());
-        trayMenu.Items.Add(_miMinimizeToTray);
-        trayMenu.Items.Add(new ToolStripSeparator());
-        trayMenu.Items.Add(aboutItem);
-        trayMenu.Items.Add(viewLogItem);
-        trayMenu.Items.Add(new ToolStripSeparator());
-        trayMenu.Items.Add(exitItem);
+        _trayMenu = new ContextMenuStrip();
+        _trayMenu.Items.Add(openItem);
+        _trayMenu.Items.Add(new ToolStripSeparator());
+        _trayMenu.Items.Add(_miMinimizeToTray);
+        _trayMenu.Items.Add(new ToolStripSeparator());
+        _trayMenu.Items.Add(aboutItem);
+        _trayMenu.Items.Add(viewLogItem);
+        _trayMenu.Items.Add(new ToolStripSeparator());
+        _trayMenu.Items.Add(exitItem);
 
         _trayIcon = new NotifyIcon
         {
+            // Keep the notification-area icon in sync with the taskbar icon.
             Icon             = this.Icon,
             Text             = "MultiExplorer",
-            ContextMenuStrip = trayMenu,
+            ContextMenuStrip = _trayMenu,
             Visible          = false,
         };
         _trayIcon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowMainWindow(); };
 
         RestoreWindowState();
+        ApplyApplicationTheme();
+    }
+
+    private void ChangeTheme(ApplicationTheme theme)
+    {
+        if (theme == ThemeManager.Current) return;
+        ThemeManager.SetCurrent(theme);
+        _settings.ApplicationTheme = theme.ToString();
+        SettingsManager.Save(_settings);
+
+        // Explorer's DirectUI file and folder views bind to their theme when
+        // created. Recreate them after changing the process preference so the
+        // entire view, including selection visuals, changes immediately.
+        _leftPanel.RecreateShellViewsForTheme();
+        _rightPanel.RecreateShellViewsForTheme();
+        ApplyApplicationTheme();
+    }
+
+    private void ApplyApplicationTheme()
+    {
+        SuspendLayout();
+        ThemeManager.ApplyTo(this);
+        _leftPanel.ApplyTheme();
+        _rightPanel.ApplyTheme();
+        ThemeManager.ApplyToolStrip(_statusBar);
+        ThemeManager.ApplyToolStrip(_trayMenu);
+        BackColor = ThemeManager.Background;
+        ForeColor = ThemeManager.Text;
+        ClearStatus();
+        if (IsHandleCreated) ThemeManager.ApplyNativeWindow(Handle);
+        ResumeLayout(true);
+        Refresh();
     }
 
     private void OnLoad(object? sender, EventArgs e) => Shown += OnShown;
@@ -280,6 +325,7 @@ public class MainForm : Form, IMessageFilter
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        ThemeManager.ApplyNativeWindow(Handle, includeChildren: false);
         RegisterHotKeyFromSettings();
     }
 
@@ -403,6 +449,13 @@ public class MainForm : Form, IMessageFilter
         int th = _layoutPanel.Height;
         int bw = SplitterBar.BarWidth;
 
+        // Minimizing a WinForms window can briefly resize docked controls to
+        // zero (or another unusably small width).  Do not let that transient
+        // size clamp and overwrite the divider position we need on restore.
+        if (!_leftCollapsed && !_rightCollapsed
+            && !CanLayoutExpandedPanels(tw))
+            return;
+
         _splitterBar.LeftCollapsed  = _leftCollapsed;
         _splitterBar.RightCollapsed = _rightCollapsed;
 
@@ -423,9 +476,7 @@ public class MainForm : Form, IMessageFilter
         }
         else
         {
-            const int minPanel = 100;
-            int maxLeft = Math.Max(minPanel, tw - bw - minPanel);
-            _splitterLeft = Math.Clamp(_splitterLeft, minPanel, maxLeft);
+            _splitterLeft = ConstrainSplitterLeft(_splitterLeft, tw);
 
             _leftPanel.Visible  = true;
             _leftPanel.Bounds   = new Rectangle(0, 0, _splitterLeft, th);
@@ -437,6 +488,15 @@ public class MainForm : Form, IMessageFilter
 
         _splitterBar.Invalidate();
     }
+
+    internal static int ConstrainSplitterLeft(int splitterLeft, int layoutWidth)
+    {
+        int maxLeft = layoutWidth - SplitterBar.BarWidth - MinimumPanelWidth;
+        return Math.Clamp(splitterLeft, MinimumPanelWidth, maxLeft);
+    }
+
+    internal static bool CanLayoutExpandedPanels(int layoutWidth) =>
+        layoutWidth >= MinimumPanelWidth * 2 + SplitterBar.BarWidth;
 
     private void ToggleCollapseLeft()
     {
@@ -481,9 +541,9 @@ public class MainForm : Form, IMessageFilter
 
         _statusClearTimer.Stop();
         _statusIcon.Text      = entry.Severity == LogSeverity.Error ? "✕" : "⚠";
-        _statusIcon.ForeColor = entry.Severity == LogSeverity.Error ? Color.Crimson : Color.DarkOrange;
+        _statusIcon.ForeColor = entry.Severity == LogSeverity.Error ? ThemeManager.Error : ThemeManager.Warning;
         _statusMessage.Text      = entry.ShortMessage;
-        _statusMessage.ForeColor = SystemColors.ControlText;
+        _statusMessage.ForeColor = ThemeManager.Text;
         _statusMessage.IsLink    = true;
         _statusDismiss.Visible   = true;
 
@@ -501,9 +561,9 @@ public class MainForm : Form, IMessageFilter
     {
         _statusClearTimer.Stop();
         _statusIcon.Text         = "✓";
-        _statusIcon.ForeColor    = SystemColors.GrayText;
+        _statusIcon.ForeColor    = ThemeManager.MutedText;
         _statusMessage.Text      = "Ready";
-        _statusMessage.ForeColor = SystemColors.GrayText;
+        _statusMessage.ForeColor = ThemeManager.MutedText;
         _statusMessage.IsLink    = false;
         _statusDismiss.Visible   = false;
     }

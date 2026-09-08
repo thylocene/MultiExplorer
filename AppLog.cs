@@ -90,7 +90,11 @@ public static class AppLog
             if (File.Exists(_logPath))
                 Process.Start(new ProcessStartInfo(_logPath) { UseShellExecute = true });
         }
-        catch { /* opening the log must never crash the app */ }
+        catch (Exception ex)
+        {
+            Warn(ex, nameof(OpenLogFile),
+                "Could not open the application log.");
+        }
     }
 
     // ── Internal ──────────────────────────────────────────────────────────────
@@ -117,7 +121,11 @@ public static class AppLog
 
             File.AppendAllText(_logPath, entry + Environment.NewLine);
         }
-        catch { }
+        catch (Exception ioEx)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"AppLog file write failed: {ioEx}");
+        }
 
         // Notify UI subscribers for Warn and above
         if (severity >= LogSeverity.Warn)

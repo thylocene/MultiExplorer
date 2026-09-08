@@ -13,7 +13,7 @@ public sealed class CommandBar : ToolStrip
     public enum Cmd
     {
         NewFolder,
-        Cut, Copy, Paste,
+        Cut, Copy, CopyPaths, Paste,
         Rename, Delete,
         ViewDetails, ViewList, ViewTiles, ViewIcons, ViewMediumIcons, ViewSmallIcons, ViewContent,
         ToggleDetailsPane, TogglePreviewPane,
@@ -25,6 +25,7 @@ public sealed class CommandBar : ToolStrip
     }
 
     public event EventHandler<Cmd>?  CommandIssued;
+    public event EventHandler<ApplicationTheme>? ThemeSelected;
     /// <summary>Fires just before the View dropdown opens so the caller can refresh checkmarks.</summary>
     public event EventHandler?       ViewDropDownOpening;
 
@@ -32,6 +33,7 @@ public sealed class CommandBar : ToolStrip
     private const char GlyphNewFolder = (char)0xE948;
     private const char GlyphCut       = (char)0xE8C6;
     private const char GlyphCopy      = (char)0xE8C8;
+    private const char GlyphCopyPaths = (char)0xE71B;
     private const char GlyphPaste     = (char)0xE77F;
     private const char GlyphRename    = (char)0xE8AC;
     private const char GlyphDelete    = (char)0xE74D;
@@ -60,16 +62,14 @@ public sealed class CommandBar : ToolStrip
     private const char GlyphHidden    = (char)0xED1A;
     private const char GlyphQuickLook = (char)0xE71E;
 
-    private static readonly string _iconFont = PickIconFont();
-
-    private static string PickIconFont()
-    {
-        using var col = new InstalledFontCollection();
-        foreach (var f in col.Families)
-            if (f.Name.Equals("Segoe Fluent Icons", StringComparison.OrdinalIgnoreCase))
-                return f.Name;
-        return "Segoe MDL2 Assets";
-    }
+    // Avoid enumerating every installed font during cold start. Windows 11 ships
+    // Segoe Fluent Icons, while supported Windows 10 versions ship Segoe MDL2
+    // Assets. Selecting from the OS version is deterministic and avoids warming
+    // the system font catalogue before the first window can be displayed.
+    private static readonly string _iconFont =
+        OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
+            ? "Segoe Fluent Icons"
+            : "Segoe MDL2 Assets";
 
     private readonly List<Image> _ownedImages = new();
     private readonly Font        _moreButtonFont;
@@ -95,6 +95,8 @@ public sealed class CommandBar : ToolStrip
     private readonly ToolStripMenuItem _miFileExtensions;
     private readonly ToolStripMenuItem _miHiddenItems;
     private readonly ToolStripMenuItem _miQuickLook;
+    private readonly ToolStripMenuItem _miLightTheme;
+    private readonly ToolStripMenuItem _miDarkTheme;
 
     public CommandBar()
     {
@@ -118,6 +120,7 @@ public sealed class CommandBar : ToolStrip
         // Clipboard: icon only
         IconBtn(GlyphCut,   "Cut (Ctrl+X)",   Cmd.Cut);
         IconBtn(GlyphCopy,  "Copy (Ctrl+C)",  Cmd.Copy);
+        IconBtn(GlyphCopyPaths, "Copy full paths", Cmd.CopyPaths);
         IconBtn(GlyphPaste, "Paste (Ctrl+V)", Cmd.Paste);
         Items.Add(new ToolStripSeparator());
 
@@ -197,6 +200,23 @@ public sealed class CommandBar : ToolStrip
         };
         DropItem(_more, "Options",                Cmd.FolderOptions);
         _more.DropDownItems.Add(new ToolStripSeparator());
+        var appearance = new ToolStripMenuItem("Appearance") { Font = Font };
+        _miLightTheme = new ToolStripMenuItem("Light application mode")
+        {
+            Font = Font,
+            CheckOnClick = false,
+        };
+        _miDarkTheme = new ToolStripMenuItem("Dark application mode")
+        {
+            Font = Font,
+            CheckOnClick = false,
+        };
+        _miLightTheme.Click += (_, _) => ThemeSelected?.Invoke(this, ApplicationTheme.Light);
+        _miDarkTheme.Click  += (_, _) => ThemeSelected?.Invoke(this, ApplicationTheme.Dark);
+        appearance.DropDownItems.Add(_miLightTheme);
+        appearance.DropDownItems.Add(_miDarkTheme);
+        _more.DropDownItems.Add(appearance);
+        _more.DropDownItems.Add(new ToolStripSeparator());
         DropItem(_more, "View log",                Cmd.ViewLog);
         DropItem(_more, "Set show-window hotkey…", Cmd.SetHotkey);
         _more.DropDownItems.Add(new ToolStripSeparator());
@@ -204,6 +224,20 @@ public sealed class CommandBar : ToolStrip
         _more.DropDownItems.Add(new ToolStripSeparator());
         DropItem(_more, "Exit  (Ctrl+Q)",          Cmd.Exit);
         Items.Add(_more);
+        SetThemeSelection(ThemeManager.Current);
+    }
+
+    public void SetThemeSelection(ApplicationTheme theme)
+    {
+        _miLightTheme.Checked = theme == ApplicationTheme.Light;
+        _miDarkTheme.Checked  = theme == ApplicationTheme.Dark;
+    }
+
+    public void ApplyTheme()
+    {
+        ThemeManager.ApplyToolStrip(this);
+        RecreateGlyphs();
+        Invalidate(true);
     }
 
     /// <summary>Syncs the checkmark state of all toggleable View menu items.</summary>
@@ -348,7 +382,7 @@ public sealed class CommandBar : ToolStrip
             try
             {
                 using var font  = new Font(_iconFont, _iconPx * 0.78f, GraphicsUnit.Pixel);
-                using var brush = new SolidBrush(SystemColors.ControlText);
+                using var brush = new SolidBrush(ThemeManager.Text);
                 var fmt = new StringFormat
                 {
                     Alignment     = StringAlignment.Center,
@@ -358,7 +392,11 @@ public sealed class CommandBar : ToolStrip
                 g.DrawString(code.ToString(), font, brush,
                              new RectangleF(0, 0, _iconPx, _iconPx), fmt);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                AppLog.Debug(ex, nameof(MakeGlyph),
+                    $"Could not render toolbar glyph U+{(int)code:X4}.");
+            }
         }
         _ownedImages.Add(bmp);
         return bmp;

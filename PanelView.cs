@@ -38,6 +38,9 @@ public sealed class PanelView : UserControl
     /// <summary>Raised when the user chooses "Set show-window hotkey…" from the command bar.</summary>
     public event EventHandler? SetHotkeyRequested;
 
+    /// <summary>Raised when either panel's Appearance menu selects a theme.</summary>
+    public event EventHandler<ApplicationTheme>? ThemeSelected;
+
     // ── Filter bar ────────────────────────────────────────────────────────────
     private readonly Panel    _filterBar;
     private readonly Label    _filterPrefix;
@@ -56,7 +59,7 @@ public sealed class PanelView : UserControl
         _tabBar     = new TabBar     { Dock = DockStyle.Top };
         _pathBar    = new PathBar    { Dock = DockStyle.Top };
         _commandBar = new CommandBar { Dock = DockStyle.Top };
-        _content    = new Panel      { Dock = DockStyle.None, BackColor = SystemColors.Window };
+        _content    = new Panel      { Dock = DockStyle.None, BackColor = ThemeManager.Window };
 
         // WinForms places the LAST-added DockStyle.Top control at the TOP of the
         // visual stack.  Desired order: TabBar → PathBar → CommandBar → Content.
@@ -72,7 +75,7 @@ public sealed class PanelView : UserControl
             Dock      = DockStyle.Bottom,
             Height    = 28,   // placeholder; recalculated in ScaleFilterControls
             Visible   = false,
-            BackColor = SystemColors.Info,
+            BackColor = ThemeManager.Filter,
         };
 
         _filterPrefix = new Label
@@ -83,14 +86,15 @@ public sealed class PanelView : UserControl
             Dock      = DockStyle.Left,
             TextAlign = ContentAlignment.MiddleLeft,
             Padding   = new Padding(6, 0, 0, 0),
-            ForeColor = SystemColors.GrayText,
+            ForeColor = ThemeManager.MutedText,
         };
 
         _filterTextBox = new TextBox
         {
             Dock        = DockStyle.Fill,
             BorderStyle = BorderStyle.None,
-            BackColor   = SystemColors.Info,
+            BackColor   = ThemeManager.Filter,
+            ForeColor   = ThemeManager.Text,
         };
         _filterTextBox.TextChanged += OnFilterTextBoxChanged;
         _filterTextBox.KeyDown     += OnFilterTextBoxKeyDown;
@@ -143,7 +147,7 @@ public sealed class PanelView : UserControl
         // inside _hostContainer can never paint over it regardless of z-order.
         _detailsPanel  = new DetailsPanel { Dock = DockStyle.Bottom, Visible = false };
         _previewPanel  = new PreviewPane  { Dock = DockStyle.Right,  Visible = false };
-        _hostContainer = new Panel        { Dock = DockStyle.Fill, BackColor = SystemColors.Window };
+        _hostContainer = new Panel        { Dock = DockStyle.Fill, BackColor = ThemeManager.Window };
         _content.Controls.Add(_detailsPanel);
         _content.Controls.Add(_filterBar);      // DockStyle.Bottom, hidden; sits above _detailsPanel
         _content.Controls.Add(_previewPanel);
@@ -167,6 +171,41 @@ public sealed class PanelView : UserControl
 
         _commandBar.CommandIssued     += OnCommandIssued;
         _commandBar.ViewDropDownOpening += (_, _) => UpdateCommandBarToggles();
+        _commandBar.ThemeSelected += (_, theme) => ThemeSelected?.Invoke(this, theme);
+    }
+
+    public void ApplyTheme()
+    {
+        BackColor = ThemeManager.Background;
+        ForeColor = ThemeManager.Text;
+        _tabBar.BackColor = ThemeManager.Background;
+        _pathBar.ApplyTheme();
+        _content.BackColor = ThemeManager.Window;
+        _hostContainer.BackColor = ThemeManager.Window;
+        _detailsPanel.BackColor = ThemeManager.Window;
+        _detailsPanel.ForeColor = ThemeManager.Text;
+        _previewPanel.BackColor = ThemeManager.Window;
+        _previewPanel.ForeColor = ThemeManager.Text;
+        _filterBar.BackColor = ThemeManager.Filter;
+        _filterPrefix.BackColor = ThemeManager.Filter;
+        _filterPrefix.ForeColor = ThemeManager.MutedText;
+        _filterTextBox.BackColor = ThemeManager.Filter;
+        _filterTextBox.ForeColor = ThemeManager.Text;
+        _clearBtn.BackColor = ThemeManager.Filter;
+        _clearBtn.ForeColor = ThemeManager.Text;
+        _filterListView.BackColor = ThemeManager.Window;
+        _filterListView.ForeColor = ThemeManager.Text;
+        _commandBar.SetThemeSelection(ThemeManager.Current);
+        _commandBar.ApplyTheme();
+        foreach (var host in _hosts) host.ApplyTheme();
+        Invalidate(true);
+    }
+
+    /// <summary>Recreates already-open native shell views for a live theme change.</summary>
+    public void RecreateShellViewsForTheme()
+    {
+        foreach (var host in _hosts)
+            host.RecreateForTheme();
     }
 
     // ── Layout ───────────────────────────────────────────────────────────────
@@ -259,6 +298,7 @@ public sealed class PanelView : UserControl
         host.FilterEscapePressed  += (_, _) => ClearFilter();
         _hostContainer.Controls.Add(host);
         _hosts.Add(host);
+        host.ApplyTheme();
     }
 
     private void CloseTab(int index)
@@ -440,7 +480,11 @@ public sealed class PanelView : UserControl
         else if (File.Exists(path))
         {
             try { Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true }); }
-            catch { }
+            catch (Exception ex)
+            {
+                AppLog.Warn(ex, "Open file",
+                    $"Could not open \"{Path.GetFileName(path)}\".");
+            }
         }
     }
 
@@ -499,7 +543,11 @@ public sealed class PanelView : UserControl
                 ctxMenu.InvokeCommand(ref ici);
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, nameof(ShowShellContextMenu),
+                $"Could not complete the context-menu action for \"{Path.GetFileName(path)}\".");
+        }
         finally
         {
             if (menu    != IntPtr.Zero)  NativeMethods.DestroyMenu(menu);
@@ -586,7 +634,16 @@ public sealed class PanelView : UserControl
                 _filterListView.Items.Add(item);
             }
         }
-        catch { /* permission denied or path changed */ }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            AppLog.Debug(ex, nameof(PopulateFilterList),
+                $"Could not enumerate \"{folder}\" while filtering.");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, nameof(PopulateFilterList),
+                $"Filtering failed for \"{folder}\".");
+        }
         _filterListView.EndUpdate();
     }
 
@@ -636,6 +693,7 @@ public sealed class PanelView : UserControl
             case CommandBar.Cmd.NewFolder:      host?.CreateNewFolder();  break;
             case CommandBar.Cmd.Cut:            host?.Cut();              break;
             case CommandBar.Cmd.Copy:           host?.Copy();             break;
+            case CommandBar.Cmd.CopyPaths:      host?.CopySelectedPaths(); break;
             case CommandBar.Cmd.Paste:          host?.Paste();            break;
             case CommandBar.Cmd.Rename:         host?.Rename();           break;
             case CommandBar.Cmd.Delete:         host?.Delete();           break;
@@ -714,7 +772,11 @@ public sealed class PanelView : UserControl
     private static void OpenFolderOptions()
     {
         try { Process.Start("rundll32.exe", "shell32.dll,Options_RunDLL 0"); }
-        catch { }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, nameof(OpenFolderOptions),
+                "Could not open Windows Folder Options.");
+        }
     }
 
     private void ShowAbout() => ShowAboutDialog(this);
@@ -728,23 +790,122 @@ public sealed class PanelView : UserControl
         DateTime buildDate = string.IsNullOrEmpty(exePath) ? DateTime.Now
                                  : File.GetLastWriteTime(exePath);
 
-        string message =
-            "MultiExplorer is public domain software. It is released under the " +
-            "Creative Commons CC0 1.0 Universal Public Domain Dedication. You can " +
-            "copy, modify, distribute, and perform the work, even for commercial " +
-            "purposes, all without asking permission.\n\n" +
-            "Privacy Notice: Your privacy is fully respected. This application " +
-            "operates entirely offline, features no advertisements, and collects " +
-            "absolutely no user data, analytics, or personal information.\n\n" +
-            $"Version: {version}\n" +
-            $"Last build: {buildDate:d MMMM yyyy, h:mm tt}\n" +
-            "Author: David Piscopo";
+        using var dialog = new Form
+        {
+            Text            = "About MultiExplorer",
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox     = false,
+            MinimizeBox     = false,
+            ShowInTaskbar   = false,
+            StartPosition   = FormStartPosition.CenterParent,
+            ClientSize      = new Size(600, 470),
+            Font            = SystemFonts.MessageBoxFont ?? new Font("Segoe UI", 9f),
+        };
 
-        MessageBox.Show(
-            owner,
-            message,
-            "About MultiExplorer",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Information);
+        var content = new RichTextBox
+        {
+            Dock           = DockStyle.Fill,
+            BorderStyle    = BorderStyle.None,
+            ReadOnly       = true,
+            DetectUrls     = false,
+            HideSelection  = false,
+            ShortcutsEnabled = true,
+            ScrollBars     = RichTextBoxScrollBars.Vertical,
+            WordWrap       = true,
+            Margin         = Padding.Empty,
+        };
+
+        using var titleFont   = new Font(dialog.Font.FontFamily, 16f, FontStyle.Bold);
+        using var sectionFont = new Font(dialog.Font, FontStyle.Bold);
+
+        using var copyMenu = new ContextMenuStrip();
+        var copyItem = new ToolStripMenuItem("Copy");
+        copyItem.Click += (_, _) => content.Copy();
+        var selectAllItem = new ToolStripMenuItem("Select all");
+        selectAllItem.Click += (_, _) => content.SelectAll();
+        copyMenu.Items.AddRange([copyItem, selectAllItem]);
+        copyMenu.Opening += (_, _) => copyItem.Enabled = content.SelectionLength > 0;
+        content.ContextMenuStrip = copyMenu;
+
+        var okButton = new Button
+        {
+            Text         = "OK",
+            DialogResult = DialogResult.OK,
+            AutoSize     = true,
+            MinimumSize  = new Size(88, 30),
+            Anchor       = AnchorStyles.Right,
+            Margin       = new Padding(0, 16, 0, 0),
+        };
+
+        var layout = new TableLayoutPanel
+        {
+            Dock        = DockStyle.Fill,
+            Padding     = new Padding(24),
+            ColumnCount = 1,
+            RowCount    = 2,
+        };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.Controls.Add(content, 0, 0);
+        layout.Controls.Add(okButton, 0, 1);
+
+        dialog.AcceptButton = okButton;
+        dialog.CancelButton = okButton;
+        dialog.Controls.Add(layout);
+
+        // This dialog is built entirely in code, so establish the logical design
+        // DPI after its control tree exists.  WinForms can then scale the window,
+        // wrapping widths, padding and button size together on the owner's monitor.
+        dialog.AutoScaleDimensions = new SizeF(96f, 96f);
+        dialog.AutoScaleMode       = AutoScaleMode.Dpi;
+
+        ThemeManager.ApplyTo(dialog);
+        ThemeManager.ApplyToolStrip(copyMenu);
+
+        // A single read-only rich edit control keeps all About text selectable while
+        // retaining the hierarchy that the former collection of labels provided.
+        // Populate it after applying the theme so inserted text uses the correct
+        // foreground colour in both light and dark modes.
+        content.BackColor = ThemeManager.Background;
+        void Append(string value, Font font)
+        {
+            content.SelectionStart  = content.TextLength;
+            content.SelectionLength = 0;
+            content.SelectionFont   = font;
+            content.SelectionColor  = ThemeManager.Text;
+            content.AppendText(value);
+        }
+
+        void AppendDetail(string name, string value)
+        {
+            Append(name.PadRight(13), sectionFont);
+            Append(value + Environment.NewLine, dialog.Font);
+        }
+
+        Append("MultiExplorer" + Environment.NewLine, titleFont);
+        Append("A dual-pane file explorer for Windows" + Environment.NewLine + Environment.NewLine,
+               dialog.Font);
+        Append("Licence" + Environment.NewLine, sectionFont);
+        Append(
+            "MultiExplorer is public domain software, released under the Creative " +
+            "Commons CC0 1.0 Universal Public Domain Dedication. You may copy, " +
+            "modify, distribute, and use it commercially without asking permission." +
+            Environment.NewLine + Environment.NewLine,
+            dialog.Font);
+        Append("Privacy" + Environment.NewLine, sectionFont);
+        Append(
+            "MultiExplorer operates entirely offline, contains no advertisements, " +
+            "and collects no user data, analytics, or personal information." +
+            Environment.NewLine + Environment.NewLine,
+            dialog.Font);
+        Append("Build information" + Environment.NewLine, sectionFont);
+        AppendDetail("Version", version);
+        AppendDetail("Last build", $"{buildDate:d MMMM yyyy, h:mm tt}");
+        AppendDetail("Author", "David Piscopo");
+        content.Select(0, 0);
+
+        dialog.Shown += (_, _) => ThemeManager.ApplyNativeWindow(dialog.Handle);
+        dialog.ShowDialog(owner);
     }
 }
