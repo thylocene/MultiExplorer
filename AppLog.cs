@@ -55,6 +55,11 @@ public static class AppLog
 
     private static readonly string _logPath = Path.Combine(_logDir, "app.log");
 
+    // Serialises all file access. The logger is documented as callable from any
+    // thread, so the read-trim-append sequence below must be atomic to avoid
+    // concurrent writers truncating or interleaving each other's output.
+    private static readonly object _fileLock = new();
+
     /// <summary>
     /// Raised for Warn/Error entries only.
     /// Fired on whichever thread called the log method — subscribers must
@@ -109,17 +114,20 @@ public static class AppLog
         // Append to the rolling log file — best-effort; file I/O must never propagate
         try
         {
-            Directory.CreateDirectory(_logDir);
-
-            // Cap the file at ~512 KB by dropping the first half once exceeded
-            var fi = new FileInfo(_logPath);
-            if (fi.Exists && fi.Length > 512 * 1024)
+            lock (_fileLock)
             {
-                var lines = File.ReadAllLines(_logPath);
-                File.WriteAllLines(_logPath, lines[(lines.Length / 2)..]);
-            }
+                Directory.CreateDirectory(_logDir);
 
-            File.AppendAllText(_logPath, entry + Environment.NewLine);
+                // Cap the file at ~512 KB by dropping the first half once exceeded
+                var fi = new FileInfo(_logPath);
+                if (fi.Exists && fi.Length > 512 * 1024)
+                {
+                    var lines = File.ReadAllLines(_logPath);
+                    File.WriteAllLines(_logPath, lines[(lines.Length / 2)..]);
+                }
+
+                File.AppendAllText(_logPath, entry + Environment.NewLine);
+            }
         }
         catch (Exception ioEx)
         {

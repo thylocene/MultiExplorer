@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
-     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
   <Package Name="MultiExplorer"
@@ -15,18 +14,25 @@
     <Property Id="BUILD_DATE" Value="$(var.BuildDate)" />
 
     <!--
-      AllowSameVersionUpgrades: removes any existing installation of the same version
-      before installing fresh, so repeated builds with the same version number always
-      deploy the latest exe.  AllowDowngrades remains no (default), so installing an
-      older version still shows the DowngradeErrorMessage.
-      Schedule afterInstallExecute: the CloseApplication actions run while the old
-      product is still registered, then Windows Installer replaces it transactionally
-      after the new files have been installed.
+      Treat every related product as replaceable so WiX does not abort in
+      LaunchConditions before our version-choice dialog can be displayed. A separate
+      detect-only Upgrade row distinguishes newer products so the dialog can warn
+      that continuing will install an older version.
+      Schedule afterInstallInitialize so a downgrade removes the newer files before
+      Windows Installer applies its file-version rules to the older payload. Because
+      removal happens after InstallInitialize, Windows Installer can roll it back if
+      installing the selected version fails.
     -->
     <MajorUpgrade
-      AllowSameVersionUpgrades="yes"
-      Schedule="afterInstallExecute"
-      DowngradeErrorMessage="A newer version of MultiExplorer is already installed." />
+      AllowDowngrades="yes"
+      Schedule="afterInstallInitialize" />
+
+    <Upgrade Id="{C1965219-E757-47A2-AA69-F84F693B94DC}">
+      <UpgradeVersion Minimum="$(var.Version)"
+                      IncludeMinimum="no"
+                      OnlyDetect="yes"
+                      Property="NEWER_VERSION_DETECTED" />
+    </Upgrade>
 
     <!--
       MultiExplorer can intentionally remain alive in the notification area when
@@ -111,22 +117,6 @@
                            KeyPath="yes" />
           </Component>
 
-          <!-- Satellite-resource directories used by the self-contained runtime.
-               Generate-PublishedFiles.ps1 validates this list while harvesting. -->
-          <Directory Id="PublishedDir_cs" Name="cs" />
-          <Directory Id="PublishedDir_de" Name="de" />
-          <Directory Id="PublishedDir_es" Name="es" />
-          <Directory Id="PublishedDir_fr" Name="fr" />
-          <Directory Id="PublishedDir_it" Name="it" />
-          <Directory Id="PublishedDir_ja" Name="ja" />
-          <Directory Id="PublishedDir_ko" Name="ko" />
-          <Directory Id="PublishedDir_pl" Name="pl" />
-          <Directory Id="PublishedDir_pt_BR" Name="pt-BR" />
-          <Directory Id="PublishedDir_ru" Name="ru" />
-          <Directory Id="PublishedDir_tr" Name="tr" />
-          <Directory Id="PublishedDir_zh_Hans" Name="zh-Hans" />
-          <Directory Id="PublishedDir_zh_Hant" Name="zh-Hant" />
-
         </Directory>
       </Directory>
     </StandardDirectory>
@@ -209,11 +199,231 @@
     <CustomActionRef Id="Wix4ShellExec_X86" />
 
     <UI>
-      <!--
-        WixUI_InstallDir in WiX v4 already includes LicenseAgreementDlg in its
-        built-in dialog flow (Welcome → License → InstallDir → Verify → Exit).
-        No navigation overrides needed — just provide WixUILicenseRtf above.
+      <!-- Match the typography supplied by the stock WixUI_InstallDir UI. -->
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
 
+      <!-- Ask before replacing an older installation or reinstalling this product. -->
+      <Dialog Id="ExistingVersionDlg"
+              Width="370"
+              Height="270"
+              Title="MultiExplorer Setup">
+        <Control Id="BannerBitmap"
+                 Type="Bitmap"
+                 X="0" Y="0" Width="370" Height="44"
+                 TabSkip="no"
+                 Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="BannerLine"
+                 Type="Line"
+                 X="0" Y="44" Width="370" Height="0" />
+        <Control Id="Title"
+                 Type="Text"
+                 X="15" Y="6" Width="340" Height="15"
+                 Transparent="yes"
+                 NoPrefix="yes"
+                 Text="Existing version detected" />
+        <Control Id="Description"
+                 Type="Text"
+                 X="25" Y="23" Width="340" Height="20"
+                 Transparent="yes"
+                 NoPrefix="yes"
+                 Text="Choose whether to replace the existing installation." />
+        <Control Id="ReplaceMessage"
+                 Type="Text"
+                 X="25" Y="75" Width="320" Height="70"
+                 Hidden="yes"
+                 NoPrefix="yes"
+                 Text="The installed version of MultiExplorer is the same as or older than this setup package. Continuing will replace the existing installation with this version. Your application settings will be preserved."
+                 ShowCondition="NOT NEWER_VERSION_DETECTED" />
+        <Control Id="NewerMessage"
+                 Type="Text"
+                 X="25" Y="75" Width="320" Height="70"
+                 Hidden="yes"
+                 NoPrefix="yes"
+                 Text="A newer version of MultiExplorer is installed. Continuing will replace it with the older version in this setup package. Your application settings will be preserved."
+                 ShowCondition="NEWER_VERSION_DETECTED" />
+        <Control Id="BottomLine"
+                 Type="Line"
+                 X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Continue"
+                 Type="PushButton"
+                 X="212" Y="243" Width="80" Height="17"
+                 Default="yes"
+                 Text="Continue">
+          <!-- A different product code follows the normal major-upgrade flow. -->
+          <Publish Event="NewDialog"
+                   Value="LicenseAgreementDlg"
+                   Order="1"
+                   Condition="NOT Installed" />
+          <!-- The same product code requires an explicit full reinstall. -->
+          <Publish Event="ReinstallMode"
+                   Value="amus"
+                   Order="1"
+                   Condition="Installed" />
+          <Publish Event="Reinstall"
+                   Value="All"
+                   Order="2"
+                   Condition="Installed" />
+          <Publish Event="EndDialog"
+                   Value="Return"
+                   Order="3"
+                   Condition="Installed" />
+        </Control>
+        <Control Id="Cancel"
+                 Type="PushButton"
+                 X="304" Y="243" Width="56" Height="17"
+                 Cancel="yes"
+                 Text="Cancel">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+      </Dialog>
+
+      <!--
+        This project owns the WixUI_InstallDir navigation so an existing product can
+        be routed through ExistingVersionDlg from both major-upgrade and maintenance
+        entry points. The dialog definitions themselves still come from WixToolset.UI.
+      -->
+      <DialogRef Id="BrowseDlg" />
+      <DialogRef Id="DiskCostDlg" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+
+      <Publish Dialog="ExitDialog"
+               Control="Finish"
+               Event="EndDialog"
+               Value="Return"
+               Order="999" />
+
+      <Publish Dialog="WelcomeDlg"
+               Control="Next"
+               Event="NewDialog"
+               Value="ExistingVersionDlg"
+               Condition="(WIX_UPGRADE_DETECTED OR NEWER_VERSION_DETECTED) AND NOT Installed" />
+      <Publish Dialog="WelcomeDlg"
+               Control="Next"
+               Event="NewDialog"
+               Value="LicenseAgreementDlg"
+               Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED AND NOT NEWER_VERSION_DETECTED" />
+      <Publish Dialog="WelcomeDlg"
+               Control="Next"
+               Event="NewDialog"
+               Value="VerifyReadyDlg"
+               Condition="Installed AND PATCH" />
+
+      <Publish Dialog="LicenseAgreementDlg"
+               Control="Print"
+               Event="DoAction"
+               Value="WixUIPrintEula_X86" />
+      <Publish Dialog="LicenseAgreementDlg"
+               Control="Back"
+               Event="NewDialog"
+               Value="WelcomeDlg" />
+      <Publish Dialog="LicenseAgreementDlg"
+               Control="Next"
+               Event="NewDialog"
+               Value="InstallDirDlg"
+               Condition="LicenseAccepted = &quot;1&quot;" />
+
+      <Publish Dialog="BrowseDlg"
+               Control="OK"
+               Event="DoAction"
+               Value="WixUIValidatePath_X86"
+               Order="3"
+               Condition="NOT WIXUI_DONTVALIDATEPATH" />
+      <Publish Dialog="BrowseDlg"
+               Control="OK"
+               Event="SpawnDialog"
+               Value="InvalidDirDlg"
+               Order="4"
+               Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
+
+      <Publish Dialog="InstallDirDlg"
+               Control="Back"
+               Event="NewDialog"
+               Value="LicenseAgreementDlg" />
+      <Publish Dialog="InstallDirDlg"
+               Control="Next"
+               Event="SetTargetPath"
+               Value="[WIXUI_INSTALLDIR]"
+               Order="1" />
+      <Publish Dialog="InstallDirDlg"
+               Control="Next"
+               Event="DoAction"
+               Value="WixUIValidatePath_X86"
+               Order="2"
+               Condition="NOT WIXUI_DONTVALIDATEPATH" />
+      <Publish Dialog="InstallDirDlg"
+               Control="Next"
+               Event="SpawnDialog"
+               Value="InvalidDirDlg"
+               Order="3"
+               Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg"
+               Control="Next"
+               Event="NewDialog"
+               Value="VerifyReadyDlg"
+               Order="4"
+               Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg"
+               Control="ChangeFolder"
+               Property="_BrowseProperty"
+               Value="[WIXUI_INSTALLDIR]"
+               Order="1" />
+      <Publish Dialog="InstallDirDlg"
+               Control="ChangeFolder"
+               Event="SpawnDialog"
+               Value="BrowseDlg"
+               Order="2" />
+
+      <Publish Dialog="VerifyReadyDlg"
+               Control="Back"
+               Event="NewDialog"
+               Value="InstallDirDlg"
+               Order="1"
+               Condition="NOT Installed" />
+      <Publish Dialog="VerifyReadyDlg"
+               Control="Back"
+               Event="NewDialog"
+               Value="MaintenanceTypeDlg"
+               Order="2"
+               Condition="Installed AND NOT PATCH" />
+      <Publish Dialog="VerifyReadyDlg"
+               Control="Back"
+               Event="NewDialog"
+               Value="WelcomeDlg"
+               Order="2"
+               Condition="Installed AND PATCH" />
+
+      <Publish Dialog="MaintenanceWelcomeDlg"
+               Control="Next"
+               Event="NewDialog"
+               Value="ExistingVersionDlg"
+               Order="2" />
+
+      <Publish Dialog="MaintenanceTypeDlg"
+               Control="RepairButton"
+               Event="NewDialog"
+               Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg"
+               Control="RemoveButton"
+               Event="NewDialog"
+               Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg"
+               Control="Back"
+               Event="NewDialog"
+               Value="MaintenanceWelcomeDlg" />
+
+      <Property Id="ARPNOMODIFY" Value="1" />
+
+      <!--
         Wire Finish button → native ShellExecute action when the checkbox is ticked.
         Condition attribute replaces WiX v3 inner text on <Publish>.
         "NOT Installed" confines the launch to fresh installs.
@@ -226,8 +436,7 @@
                Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
     </UI>
 
-    <!-- Load the built-in InstallDir dialog set from WixToolset.UI.wixext -->
-    <ui:WixUI Id="WixUI_InstallDir" />
+    <UIRef Id="WixUI_Common" />
 
   </Package>
 </Wix>

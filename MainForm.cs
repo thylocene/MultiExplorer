@@ -36,6 +36,10 @@ public class MainForm : Form, IMessageFilter
     private readonly ToolStripMenuItem   _miMinimizeToTray;
     private readonly ContextMenuStrip    _trayMenu;
     private bool _forceClose;
+    private bool _skipOperationPrompt;
+    private bool _exitWhenOperationsComplete;
+    private int  _lastActiveOperationCount;
+    private readonly OperationManager _operations;
 
     // Arbitrary unique ID for the global show-window hotkey
     private const int HotkeyShowWindow = 0x3001;
@@ -49,6 +53,7 @@ public class MainForm : Form, IMessageFilter
     internal MainForm(AppSettings settings)
     {
         _settings = settings;
+        _operations = new OperationManager();
 
         Text = "MultiExplorer";
         using var iconStream = GetType().Assembly.GetManifestResourceStream(ApplicationIconResourceName);
@@ -179,6 +184,11 @@ public class MainForm : Form, IMessageFilter
         };
         _trayIcon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowMainWindow(); };
 
+        _operations.OperationsChanged += OnOperationsChanged;
+        _operations.OperationsBecameIdle += OnOperationsBecameIdle;
+        _lastActiveOperationCount = _operations.ActiveCount;
+        UpdateOperationTrayStatus();
+
         RestoreWindowState();
         ApplyApplicationTheme();
     }
@@ -243,8 +253,20 @@ public class MainForm : Form, IMessageFilter
         var rightPaths = _settings.RightPanelTabs.Count > 0 ? _settings.RightPanelTabs
                        : new List<string> { _settings.RightPanelPath };
 
+        // ExplorerBrowser's two navigation trees share Shell image-list state.
+        // Initializing both on separate STA threads at exactly the same time can
+        // leave either tree with blank icon slots until that browser is recreated.
+        // Start the second pane once the first navigation has finished; the two
+        // browser threads remain fully independent after startup.
+        EventHandler? launchRightPanel = null;
+        launchRightPanel = (_, _) =>
+        {
+            _leftPanel.InitialBrowserReady -= launchRightPanel;
+            if (!IsDisposed && !Disposing)
+                _rightPanel.Launch(rightPaths);
+        };
+        _leftPanel.InitialBrowserReady += launchRightPanel;
         _leftPanel.Launch(leftPaths);
-        _rightPanel.Launch(rightPaths);
 
         _leftCollapsed  = savedLc;
         _rightCollapsed = savedRc;
@@ -262,6 +284,44 @@ public class MainForm : Form, IMessageFilter
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
+        bool userRequestedExit = _forceClose
+            || e.CloseReason == CloseReason.ApplicationExitCall
+            || (e.CloseReason == CloseReason.UserClosing && !_settings.MinimizeToTray);
+        if (!_skipOperationPrompt && _operations.ActiveCount > 0 && userRequestedExit)
+        {
+            using var dialog = new OperationExitDialog(
+                _operations.ActiveCount, _operations.DescribeActiveOperations());
+            dialog.ShowDialog(this);
+            switch (dialog.Choice)
+            {
+                case OperationExitChoice.ExitAndContinue:
+                    break;
+                case OperationExitChoice.WaitInTray:
+                    e.Cancel = true;
+                    _forceClose = false;
+                    _exitWhenOperationsComplete = true;
+                    SaveSettings();
+                    _pathPollTimer.Stop();
+                    _trayIcon.Visible = true;
+                    Hide();
+                    return;
+                case OperationExitChoice.CancelAndExit:
+                    e.Cancel = true;
+                    _forceClose = false;
+                    _exitWhenOperationsComplete = true;
+                    _operations.CancelAll();
+                    SaveSettings();
+                    _pathPollTimer.Stop();
+                    _trayIcon.Visible = true;
+                    Hide();
+                    return;
+                default:
+                    e.Cancel = true;
+                    _forceClose = false;
+                    return;
+            }
+        }
+
         if (!_forceClose && e.CloseReason == CloseReason.UserClosing && _settings.MinimizeToTray)
         {
             e.Cancel = true;
@@ -280,8 +340,22 @@ public class MainForm : Form, IMessageFilter
         _statusClearTimer.Stop();
         _statusClearTimer.Dispose();
         AppLog.MessageLogged -= OnLogMessage;
+        _operations.OperationsChanged -= OnOperationsChanged;
+        _operations.OperationsBecameIdle -= OnOperationsBecameIdle;
+        _operations.Dispose();
 
         SaveSettings();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _operations.OperationsChanged -= OnOperationsChanged;
+            _operations.OperationsBecameIdle -= OnOperationsBecameIdle;
+            _operations.Dispose();
+        }
+        base.Dispose(disposing);
     }
 
     private void SaveSettings()
@@ -322,6 +396,42 @@ public class MainForm : Form, IMessageFilter
         Close();
     }
 
+    private void OnOperationsChanged(object? sender, EventArgs e)
+    {
+        if (InvokeRequired)
+        {
+            try { BeginInvoke(() => OnOperationsChanged(sender, e)); }
+            catch (InvalidOperationException) { }
+            return;
+        }
+
+        int active = _operations.ActiveCount;
+        if (active < _lastActiveOperationCount)
+        {
+            _leftPanel.RefreshCurrentFolder();
+            _rightPanel.RefreshCurrentFolder();
+        }
+        _lastActiveOperationCount = active;
+        UpdateOperationTrayStatus();
+    }
+
+    private void OnOperationsBecameIdle(object? sender, EventArgs e)
+    {
+        if (!_exitWhenOperationsComplete) return;
+        _exitWhenOperationsComplete = false;
+        _skipOperationPrompt = true;
+        _forceClose = true;
+        Close();
+    }
+
+    private void UpdateOperationTrayStatus()
+    {
+        int active = _operations.ActiveCount;
+        _trayIcon.Text = active == 0
+            ? "MultiExplorer"
+            : $"MultiExplorer — {active} file operation(s) active";
+    }
+
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
@@ -356,8 +466,8 @@ public class MainForm : Form, IMessageFilter
 
         _registeredModifiers = 0;
         _registeredVk        = 0;
-        AppLog.Debug("GlobalHotkey",
-            $"{HotkeyDialog.Describe(mods, vk)} could not be registered; use the tray icon to restore the window");
+        AppLog.Warn(null, "GlobalHotkey",
+            $"{HotkeyDialog.Describe(mods, vk)} could not be registered; use the tray icon to restore the window.");
     }
 
     private void OnSetHotkeyRequested()
@@ -418,17 +528,37 @@ public class MainForm : Form, IMessageFilter
 
     public bool PreFilterMessage(ref Message m)
     {
-        const int WM_KEYDOWN = 0x0100;
-        if (m.Msg == WM_KEYDOWN
-            && m.WParam == (IntPtr)0x51 // VK_Q
-            && (Control.ModifierKeys & Keys.Control) != 0
-            && (Control.ModifierKeys & (Keys.Alt | Keys.Shift)) == 0)
+        // Do not treat these as process-global hotkeys while the main window is
+        // hidden in the notification area. ExplorerHost separately forwards the
+        // shortcuts from native browser STAs while the window is visible.
+        CommandBar.Cmd? shortcut = GetApplicationShortcut(
+            m.Msg, m.WParam, Control.ModifierKeys);
+        if (Visible && shortcut.HasValue)
         {
-            ExitApplication();
+            _leftPanel.ExecuteCommand(shortcut.Value);
             return true;
         }
         return false;
     }
+
+    internal static CommandBar.Cmd? GetApplicationShortcut(
+        int message, IntPtr virtualKey, Keys modifiers)
+    {
+        const int WM_KEYDOWN = 0x0100;
+        if (message != WM_KEYDOWN || modifiers != Keys.Control)
+            return null;
+
+        return virtualKey.ToInt32() switch
+        {
+            0x4F => CommandBar.Cmd.FolderOptions, // O
+            0x4C => CommandBar.Cmd.ViewLog,       // L
+            0x51 => CommandBar.Cmd.Exit,          // Q
+            _    => null,
+        };
+    }
+
+    internal static bool IsQuitShortcut(int message, IntPtr virtualKey, Keys modifiers)
+        => GetApplicationShortcut(message, virtualKey, modifiers) == CommandBar.Cmd.Exit;
 
     private static bool IsQuickLookAvailable()
     {
@@ -537,7 +667,12 @@ public class MainForm : Form, IMessageFilter
 
     private void OnLogMessage(LogEntry entry)
     {
-        if (InvokeRequired) { Invoke(() => OnLogMessage(entry)); return; }
+        if (InvokeRequired)
+        {
+            try { BeginInvoke(() => OnLogMessage(entry)); }
+            catch (InvalidOperationException) { }
+            return;
+        }
 
         _statusClearTimer.Stop();
         _statusIcon.Text      = entry.Severity == LogSeverity.Error ? "✕" : "⚠";

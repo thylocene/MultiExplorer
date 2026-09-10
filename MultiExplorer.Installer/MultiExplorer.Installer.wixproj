@@ -50,7 +50,7 @@
   <Target Name="PublishMainApp" BeforeTargets="Build" Condition="'$(SkipAppPublish)' != 'true'">
     <Message Text="Publishing MultiExplorer (Release) before building installer..." Importance="high" />
     <RemoveDir Directories="$(_PublishDir)" />
-    <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\MultiExplorer.csproj&quot; -c Release" />
+    <Exec Command="set DOTNET_CLI_TELEMETRY_OPTOUT=1&amp;&amp; dotnet publish &quot;$(MSBuildThisFileDirectory)..\MultiExplorer.csproj&quot; -c Release" />
   </Target>
 
   <!-- WiX 4 has no built-in Files element. Generate a deterministic component

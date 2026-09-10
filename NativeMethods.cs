@@ -2,6 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Runtime.InteropServices.ComTypes;
 
 [assembly: InternalsVisibleTo("MultiExplorer.Tests")]
 
@@ -19,6 +20,42 @@ public static class NativeMethods
     {
         public int x, y;
         public POINT(int x, int y) { this.x = x; this.y = y; }
+    }
+
+    // OLE IDropTarget uses POINTL (signed screen coordinates). It is layout-
+    // compatible with POINT but kept distinct to match the COM signature.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINTL
+    {
+        public int x, y;
+    }
+
+    [ComVisible(true)]
+    [Guid("00000122-0000-0000-C000-000000000046")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IDropTarget
+    {
+        [PreserveSig] int DragEnter(
+            [MarshalAs(UnmanagedType.Interface)] System.Runtime.InteropServices.ComTypes.IDataObject dataObject,
+            uint keyState, POINTL point, ref uint effect);
+        [PreserveSig] int DragOver(uint keyState, POINTL point, ref uint effect);
+        [PreserveSig] int DragLeave();
+        [PreserveSig] int Drop(
+            [MarshalAs(UnmanagedType.Interface)] System.Runtime.InteropServices.ComTypes.IDataObject dataObject,
+            uint keyState, POINTL point, ref uint effect);
+    }
+
+    [ComImport]
+    [Guid("3D8B0590-F691-11D2-8EA9-006097DF5BD4")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IDataObjectAsyncCapability
+    {
+        [PreserveSig] int SetAsyncMode([MarshalAs(UnmanagedType.Bool)] bool doOperationAsync);
+        [PreserveSig] int GetAsyncMode([MarshalAs(UnmanagedType.Bool)] out bool isAsync);
+        [PreserveSig] int StartOperation([MarshalAs(UnmanagedType.Interface)] IBindCtx? reserved);
+        [PreserveSig] int InOperation([MarshalAs(UnmanagedType.Bool)] out bool inOperation);
+        [PreserveSig] int EndOperation(int result,
+            [MarshalAs(UnmanagedType.Interface)] IBindCtx? reserved, uint effects);
     }
 
     // Used with LVM_HITTEST to determine whether a point lands on a list-view item.
@@ -311,6 +348,117 @@ public static class NativeMethods
         public int    ptX;
         public int    ptY;
     }
+
+    // ── Dedicated native-window thread support ───────────────────────────────
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    public delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct WNDCLASS
+    {
+        public uint style;
+        public IntPtr lpfnWndProc;
+        public int cbClsExtra;
+        public int cbWndExtra;
+        public IntPtr hInstance;
+        public IntPtr hIcon;
+        public IntPtr hCursor;
+        public IntPtr hbrBackground;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? lpszMenuName;
+        [MarshalAs(UnmanagedType.LPWStr)] public string lpszClassName;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr GetModuleHandleW(string? lpModuleName);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern ushort RegisterClassW(ref WNDCLASS lpWndClass);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr CreateWindowExW(uint dwExStyle, string lpClassName,
+        string? lpWindowName, uint dwStyle, int x, int y, int nWidth, int nHeight,
+        IntPtr hWndParent, IntPtr hMenu, IntPtr hInstance, IntPtr lpParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool DestroyWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr DefWindowProcW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern int GetMessageW(out MSG lpMsg, IntPtr hWnd, uint min, uint max);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool TranslateMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr DispatchMessageW(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PostMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PostThreadMessageW(uint threadId, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("ole32.dll")]
+    public static extern int OleInitialize(IntPtr reserved);
+
+    [DllImport("ole32.dll")]
+    public static extern void OleUninitialize();
+
+    [DllImport("ole32.dll")]
+    public static extern int RegisterDragDrop(IntPtr hwnd, [MarshalAs(UnmanagedType.Interface)] IDropTarget dropTarget);
+
+    [DllImport("ole32.dll")]
+    public static extern int RevokeDragDrop(IntPtr hwnd);
+
+    [DllImport("ole32.dll")]
+    public static extern void ReleaseStgMedium(ref STGMEDIUM medium);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern uint DragQueryFileW(IntPtr hDrop, uint fileIndex,
+        [Out] StringBuilder? fileName, uint characterCount);
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GlobalLock(IntPtr memory);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GlobalUnlock(IntPtr memory);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GlobalFree(IntPtr memory);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern ushort RegisterClipboardFormatW(string format);
+
+    public const uint GMEM_MOVEABLE     = 0x0002;
+    public const uint GMEM_ZEROINIT     = 0x0040;
+
+    public const uint WS_CHILD         = 0x40000000;
+    public const uint WS_POPUP         = 0x80000000;
+    public const uint WS_VISIBLE       = 0x10000000;
+    public const uint WS_CLIPCHILDREN  = 0x02000000;
+    public const uint WS_CLIPSIBLINGS  = 0x04000000;
+    public const uint WM_QUIT          = 0x0012;
+    public const uint WM_APP_INVOKE    = 0x8001;
+    public const uint DROPEFFECT_NONE  = 0;
+    public const uint DROPEFFECT_COPY  = 1;
+    public const uint DROPEFFECT_MOVE  = 2;
+    public const uint MK_SHIFT         = 0x0004;
+    public const uint MK_CONTROL       = 0x0008;
+    public const uint MK_RBUTTON       = 0x0002;
 
     // ── IComServiceProvider — [ComImport] version for querying COM objects ───────
     //
@@ -675,6 +823,31 @@ public static class NativeMethods
     [DllImport("shell32.dll")]
     public static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
 
+    // Legacy-named, but still supported by the Windows shell and useful here
+    // because it owns its progress/conflict UI on the calling STA thread.  By
+    // invoking it away from the WinForms thread, a long copy no longer makes the
+    // whole application modal.
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct SHFILEOPSTRUCT
+    {
+        public IntPtr hwnd;
+        public uint wFunc;
+        [MarshalAs(UnmanagedType.LPWStr)] public string pFrom;
+        [MarshalAs(UnmanagedType.LPWStr)] public string pTo;
+        public ushort fFlags;
+        [MarshalAs(UnmanagedType.Bool)] public bool fAnyOperationsAborted;
+        public IntPtr hNameMappings;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? lpszProgressTitle;
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = false)]
+    public static extern int SHFileOperationW(ref SHFILEOPSTRUCT lpFileOp);
+
+    public const uint FO_MOVE = 0x0001;
+    public const uint FO_COPY = 0x0002;
+    public const ushort FOF_ALLOWUNDO       = 0x0040;
+    public const ushort FOF_NOCONFIRMMKDIR  = 0x0200;
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SendNotifyMessage(IntPtr hWnd, uint Msg, IntPtr wParam, string? lParam);
@@ -689,6 +862,12 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool MoveWindow(
+        IntPtr hWnd, int x, int y, int width, int height,
+        [MarshalAs(UnmanagedType.Bool)] bool repaint);
 
     public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
 
@@ -752,6 +931,10 @@ public static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+
+    public const int GWL_STYLE       = -16;
     public const int GWL_EXSTYLE     = -20;
     public const int WS_EX_LAYERED   = 0x00080000;
 

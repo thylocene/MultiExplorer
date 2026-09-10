@@ -26,4 +26,13 @@
     <ProjectReference Include="..\MultiExplorer.csproj" />
   </ItemGroup>
 
+  <Target Name="CopyOperationHostForTests" AfterTargets="Build">
+    <ItemGroup>
+      <_OperationHostFiles Include="$(MSBuildProjectDirectory)\..\MultiExplorer.OperationHost\bin\$(Configuration)\net8.0-windows\win-x64\MultiExplorer.OperationHost.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_OperationHostFiles)"
+          DestinationFolder="$(TargetDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>

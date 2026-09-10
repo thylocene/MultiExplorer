@@ -107,9 +107,22 @@ internal sealed class PreviewPane : Panel
 
     protected override void OnHandleDestroyed(EventArgs e)
     {
+        // Release only the native preview handler here. The placeholder font is a
+        // long-lived resource: WinForms recreates control handles on DPI changes
+        // and reparenting, after which OnPaint would draw with a disposed font.
+        // Font disposal belongs in Dispose, which runs once at end of life.
         ReleaseHandler();
-        _placeholderFont.Dispose();
         base.OnHandleDestroyed(e);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            ReleaseHandler();
+            _placeholderFont.Dispose();
+        }
+        base.Dispose(disposing);
     }
 
     protected override void OnPaint(PaintEventArgs e)

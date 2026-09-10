@@ -56,7 +56,7 @@ MultiExplorer provides complete light and dark application modes. To change the 
 
 1. Click **… ▾** at the far right of the toolbar.
 2. Open **Appearance**.
-3. Choose **Light application mode** or **Dark application mode**.
+3. Choose **Light** or **Dark**.
 
 The selected mode applies to the entire application, including:
 

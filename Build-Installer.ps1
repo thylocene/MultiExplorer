@@ -32,7 +32,7 @@
 
 .EXAMPLE
     .\Build-Installer.ps1
-    .\Build-Installer.ps1 -Version 1.2.0
+    .\Build-Installer.ps1 -Version 1.4.7
     .\Build-Installer.ps1 -SkipPublish -SkipSigning
     .\Build-Installer.ps1 -SkipPublish -Force
 #>
@@ -46,6 +46,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$env:DOTNET_CLI_TELEMETRY_OPTOUT = "1"
 
 $Root             = $PSScriptRoot
 $MainCsproj       = Join-Path $Root "MultiExplorer.csproj"
@@ -71,9 +72,9 @@ $PublishExe = Join-Path $PublishDir "MultiExplorer.exe"
 
 if (-not $SkipPublish) {
     # Check for a running instance — Windows Installer cannot replace a locked exe.
-    $running = Get-Process -Name "MultiExplorer" -ErrorAction SilentlyContinue
+    $running = Get-Process -Name "MultiExplorer", "MultiExplorer.OperationHost" -ErrorAction SilentlyContinue
     if ($running) {
-        throw "MultiExplorer is currently running (PID $($running.Id)). Close it before building the installer."
+        throw "MultiExplorer or one of its file operations is currently running (PID $($running.Id -join ', ')). Close it or let the operations finish before building the installer."
     }
 
     Write-Host "`n>> Publishing MultiExplorer..." -ForegroundColor Cyan

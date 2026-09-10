@@ -23,12 +23,15 @@
          Run: dotnet publish -c Release
          Output: bin\Release\net8.0-windows\win-x64\publish\ -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <SelfContained>true</SelfContained>
+    <SelfContained Condition="'$(Configuration)' == 'Release'">true</SelfContained>
     <PublishSingleFile>false</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
     <!-- Precompile managed assemblies so a newly installed copy does not have to
          JIT most of WinForms and the application before displaying its window. -->
     <PublishReadyToRun>true</PublishReadyToRun>
+    <!-- MultiExplorer ships in English only. Do not copy the Windows Desktop
+         runtime's localized satellite-resource assemblies into publish output. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <ItemGroup>
@@ -37,11 +40,38 @@
 
   <ItemGroup>
     <Compile Remove="MultiExplorer.Tests\**" />
+    <Compile Remove="MultiExplorer.OperationHost\**" />
     <EmbeddedResource Remove="MultiExplorer.Tests\**" />
+    <EmbeddedResource Remove="MultiExplorer.OperationHost\**" />
     <None Remove="MultiExplorer.Tests\**" />
+    <None Remove="MultiExplorer.OperationHost\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="MultiExplorer.OperationHost\MultiExplorer.OperationHost.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
     <Content Include="MultiExplorer-Installer.ico" />
   </ItemGroup>
+
+  <Target Name="CopyOperationHostForBuild" AfterTargets="Build">
+    <ItemGroup>
+      <_OperationHostFiles Include="$(MSBuildProjectDirectory)\MultiExplorer.OperationHost\bin\$(Configuration)\net8.0-windows\win-x64\MultiExplorer.OperationHost.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_OperationHostFiles)"
+          DestinationFolder="$(TargetDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="PublishOperationHost" AfterTargets="Publish">
+    <PropertyGroup>
+      <_OperationHostPublishDir Condition="$([System.IO.Path]::IsPathRooted('$(PublishDir)'))">$(PublishDir)</_OperationHostPublishDir>
+      <_OperationHostPublishDir Condition="!$([System.IO.Path]::IsPathRooted('$(PublishDir)'))">$(MSBuildProjectDirectory)\$(PublishDir)</_OperationHostPublishDir>
+    </PropertyGroup>
+    <MSBuild Projects="$(MSBuildProjectDirectory)\MultiExplorer.OperationHost\MultiExplorer.OperationHost.csproj"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(_OperationHostPublishDir);Version=$(Version)" />
+  </Target>
 </Project>

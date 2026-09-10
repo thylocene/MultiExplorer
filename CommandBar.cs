@@ -198,15 +198,15 @@ public sealed class CommandBar : ToolStrip
             Height            = LogicalToDeviceUnits(38),
             TextAlign         = ContentAlignment.MiddleCenter,
         };
-        DropItem(_more, "Options",                Cmd.FolderOptions);
+        DropItem(_more, "Options", Cmd.FolderOptions, "Ctrl+O");
         _more.DropDownItems.Add(new ToolStripSeparator());
         var appearance = new ToolStripMenuItem("Appearance") { Font = Font };
-        _miLightTheme = new ToolStripMenuItem("Light application mode")
+        _miLightTheme = new ToolStripMenuItem("Light")
         {
             Font = Font,
             CheckOnClick = false,
         };
-        _miDarkTheme = new ToolStripMenuItem("Dark application mode")
+        _miDarkTheme = new ToolStripMenuItem("Dark")
         {
             Font = Font,
             CheckOnClick = false,
@@ -217,12 +217,12 @@ public sealed class CommandBar : ToolStrip
         appearance.DropDownItems.Add(_miDarkTheme);
         _more.DropDownItems.Add(appearance);
         _more.DropDownItems.Add(new ToolStripSeparator());
-        DropItem(_more, "View log",                Cmd.ViewLog);
+        DropItem(_more, "View log", Cmd.ViewLog, "Ctrl+L");
         DropItem(_more, "Set show-window hotkey…", Cmd.SetHotkey);
         _more.DropDownItems.Add(new ToolStripSeparator());
-        DropItem(_more, "About MultiExplorer",     Cmd.About);
+        DropItem(_more, "About MultiExplorer", Cmd.About);
         _more.DropDownItems.Add(new ToolStripSeparator());
-        DropItem(_more, "Exit  (Ctrl+Q)",          Cmd.Exit);
+        DropItem(_more, "Exit", Cmd.Exit, "Ctrl+Q");
         Items.Add(_more);
         SetThemeSelection(ThemeManager.Current);
     }
@@ -339,9 +339,17 @@ public sealed class CommandBar : ToolStrip
         Items.Add(b);
     }
 
-    private void DropItem(ToolStripDropDownItem parent, string text, Cmd cmd)
+    private void DropItem(
+        ToolStripDropDownItem parent,
+        string text,
+        Cmd cmd,
+        string? shortcutKeyDisplayString = null)
     {
-        var item = new ToolStripMenuItem(text) { Font = Font };
+        var item = new ToolStripMenuItem(text)
+        {
+            Font = Font,
+            ShortcutKeyDisplayString = shortcutKeyDisplayString,
+        };
         item.Click += (_, _) => CommandIssued?.Invoke(this, cmd);
         parent.DropDownItems.Add(item);
     }

@@ -5,6 +5,8 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace MultiExplorer;
@@ -16,6 +18,11 @@ namespace MultiExplorer;
 /// </summary>
 public sealed class PanelView : UserControl
 {
+    internal const string QuickLookProjectUrl = "https://github.com/ql-win/quicklook";
+    internal const string QuickLookAcknowledgementText =
+        "QuickLook is a separate third-party application that provides an " +
+        "instant-preview experience to Windows. See " + QuickLookProjectUrl;
+
     private readonly TabBar     _tabBar;
     private readonly PathBar    _pathBar;
     private readonly CommandBar _commandBar;
@@ -41,6 +48,9 @@ public sealed class PanelView : UserControl
     /// <summary>Raised when either panel's Appearance menu selects a theme.</summary>
     public event EventHandler<ApplicationTheme>? ThemeSelected;
 
+    /// <summary>Raised when the initially active tab has completed its first navigation.</summary>
+    internal event EventHandler? InitialBrowserReady;
+
     // ── Filter bar ────────────────────────────────────────────────────────────
     private readonly Panel    _filterBar;
     private readonly Label    _filterPrefix;
@@ -49,6 +59,7 @@ public sealed class PanelView : UserControl
     private readonly ListView _filterListView;
     private string _filterText = "";
     private readonly System.Windows.Forms.Timer _filterDebounce;
+    private CancellationTokenSource? _filterCancellation;
 
     private readonly List<ExplorerHost> _hosts = new();
     private int    _active         = -1;
@@ -99,7 +110,7 @@ public sealed class PanelView : UserControl
         _filterTextBox.TextChanged += OnFilterTextBoxChanged;
         _filterTextBox.KeyDown     += OnFilterTextBoxKeyDown;
 
-        _clearBtn = new Button
+        _clearBtn = new RoundedButton
         {
             Text      = "×",
             Dock      = DockStyle.Right,
@@ -162,6 +173,7 @@ public sealed class PanelView : UserControl
         _tabBar.TabSelected       += (_, i) => ActivateTab(i);
         _tabBar.TabCloseRequested += (_, i) => CloseTab(i);
         _tabBar.AddTabRequested   += (_, _) => AddTab(CurrentPath());
+        _tabBar.TabMoveRequested  += OnTabMoveRequested;
 
         _pathBar.Navigate += (_, path) =>
         {
@@ -199,6 +211,17 @@ public sealed class PanelView : UserControl
         _commandBar.ApplyTheme();
         foreach (var host in _hosts) host.ApplyTheme();
         Invalidate(true);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _filterCancellation?.Cancel();
+            _filterCancellation?.Dispose();
+            _filterDebounce.Dispose();
+        }
+        base.Dispose(disposing);
     }
 
     /// <summary>Recreates already-open native shell views for a live theme change.</summary>
@@ -245,6 +268,8 @@ public sealed class PanelView : UserControl
     public List<string> GetAllPaths()
         => _hosts.Select(h => h.GetCurrentPath()).ToList();
 
+    internal void RefreshCurrentFolder() => ActiveHost?.RefreshShellView();
+
     /// <summary>Called from MainForm.OnShown after the panel has its final layout dimensions.</summary>
     public void Launch(List<string> paths)
     {
@@ -258,14 +283,17 @@ public sealed class PanelView : UserControl
     public void PollPath()
     {
         if (_active < 0) return;
-        string p = _hosts[_active].GetCurrentPath();
+        string p = _hosts[_active].GetCurrentPathForPolling();
         _pathBar.SetPath(p);
         _tabBar.UpdateLabel(_active, FolderLabel(p), p);
 
         // Feed details/preview panes if visible
         if (_detailsPanel.Visible || _previewPanel.Visible)
         {
-            string? sel = _hosts[_active].GetSelectedItemPath();
+            // Selection is sampled asynchronously.  Shell drag/drop can occupy a
+            // browser STA for the duration of a copy/move; a synchronous query here
+            // would freeze the WinForms timer (and therefore the whole main window).
+            string? sel = _hosts[_active].GetSelectedItemPathForPolling();
             if (_detailsPanel.Visible) _detailsPanel.ShowItem(sel);
             if (_previewPanel.Visible) _previewPanel.Preview(sel);
         }
@@ -293,12 +321,44 @@ public sealed class PanelView : UserControl
         var host = new ExplorerHost(path);
         host.SetBounds(0, 0, w, h);
         host.Visible = false;
-        host.FilterCharInput      += OnFilterCharInput;
-        host.FilterBackspaceTyped += OnFilterBackspaceTyped;
-        host.FilterEscapePressed  += (_, _) => ClearFilter();
+        AttachHostEvents(host);
         _hostContainer.Controls.Add(host);
         _hosts.Add(host);
         host.ApplyTheme();
+    }
+
+    private void AttachHostEvents(ExplorerHost host)
+    {
+        host.FilterCharInput      += OnFilterCharInput;
+        host.FilterBackspaceTyped += OnFilterBackspaceTyped;
+        host.FilterEscapePressed += OnHostFilterEscapePressed;
+        host.ApplicationShortcutRequested += OnHostApplicationShortcutRequested;
+        host.QuickLookUnavailable += OnHostQuickLookUnavailable;
+        host.InitialNavigationCompleted += OnHostInitialNavigationCompleted;
+    }
+
+    private void DetachHostEvents(ExplorerHost host)
+    {
+        host.FilterCharInput -= OnFilterCharInput;
+        host.FilterBackspaceTyped -= OnFilterBackspaceTyped;
+        host.FilterEscapePressed -= OnHostFilterEscapePressed;
+        host.ApplicationShortcutRequested -= OnHostApplicationShortcutRequested;
+        host.QuickLookUnavailable -= OnHostQuickLookUnavailable;
+        host.InitialNavigationCompleted -= OnHostInitialNavigationCompleted;
+    }
+
+    private void OnHostFilterEscapePressed(object? sender, EventArgs e) => ClearFilter();
+
+    private void OnHostApplicationShortcutRequested(object? sender, CommandBar.Cmd command) =>
+        ExecuteCommand(command);
+
+    private void OnHostQuickLookUnavailable(object? sender, QuickLookFailure failure) =>
+        ShowQuickLookUnavailable(failure);
+
+    private void OnHostInitialNavigationCompleted(object? sender, EventArgs e)
+    {
+        if (ReferenceEquals(sender, ActiveHost))
+            InitialBrowserReady?.Invoke(this, EventArgs.Empty);
     }
 
     private void CloseTab(int index)
@@ -318,6 +378,94 @@ public sealed class PanelView : UserControl
 
         _active = -1;
         ActivateTab(newActive);
+    }
+
+    private void OnTabMoveRequested(object? sender, TabMoveRequestedEventArgs e)
+    {
+        if (e.Source.Parent is not PanelView sourcePanel) return;
+        sourcePanel.MoveTabTo(this, e.SourceIndex, e.TargetIndex);
+    }
+
+    private void MoveTabTo(PanelView target, int sourceIndex, int targetInsertionIndex)
+    {
+        if (sourceIndex < 0 || sourceIndex >= _hosts.Count
+            || target.IsDisposed || target.Disposing)
+            return;
+
+        if (ReferenceEquals(this, target))
+        {
+            MoveTabWithinPanel(sourceIndex, targetInsertionIndex);
+            return;
+        }
+
+        ClearFilter();
+        ExplorerHost host = _hosts[sourceIndex];
+        bool movedActiveTab = sourceIndex == _active;
+        host.Visible = false;
+        DetachHostEvents(host);
+        _hostContainer.Controls.Remove(host);
+        _hosts.RemoveAt(sourceIndex);
+
+        if (_hosts.Count == 0)
+        {
+            _active = -1;
+            AddHostInternal(@"C:\");
+            ActivateTab(0);
+        }
+        else if (movedActiveTab)
+        {
+            int replacement = Math.Min(sourceIndex, _hosts.Count - 1);
+            _active = -1;
+            ActivateTab(replacement);
+        }
+        else
+        {
+            if (_active > sourceIndex) _active--;
+            RefreshTabBar();
+        }
+
+        target.AcceptTransferredTab(host, targetInsertionIndex);
+    }
+
+    private void MoveTabWithinPanel(int sourceIndex, int insertionIndex)
+    {
+        int targetIndex = ReorderTargetIndex(_hosts.Count, sourceIndex, insertionIndex);
+        if (targetIndex == sourceIndex) return;
+
+        ExplorerHost activeHost = _hosts[_active];
+        ExplorerHost movedHost = _hosts[sourceIndex];
+        _hosts.RemoveAt(sourceIndex);
+        _hosts.Insert(targetIndex, movedHost);
+        _active = _hosts.IndexOf(activeHost);
+        RefreshTabBar();
+    }
+
+    internal static int ReorderTargetIndex(int tabCount, int sourceIndex, int insertionIndex)
+    {
+        if (tabCount <= 0) return 0;
+        int targetIndex = Math.Clamp(insertionIndex, 0, tabCount);
+        if (targetIndex > sourceIndex) targetIndex--;
+        return Math.Clamp(targetIndex, 0, tabCount - 1);
+    }
+
+    private void AcceptTransferredTab(ExplorerHost host, int insertionIndex)
+    {
+        ClearFilter();
+        if (_active >= 0 && _active < _hosts.Count)
+            _hosts[_active].Visible = false;
+
+        int targetIndex = Math.Clamp(insertionIndex, 0, _hosts.Count);
+        AttachHostEvents(host);
+        host.SetBounds(0, 0,
+            Math.Max(1, _hostContainer.ClientSize.Width),
+            Math.Max(1, _hostContainer.ClientSize.Height));
+        host.Visible = false;
+        _hostContainer.Controls.Add(host);
+        _hosts.Insert(targetIndex, host);
+        host.ApplyTheme();
+
+        _active = -1;
+        ActivateTab(targetIndex);
     }
 
     private void ActivateTab(int index)
@@ -557,15 +705,16 @@ public sealed class PanelView : UserControl
         }
     }
 
-    private void OnFilterDebounce(object? sender, EventArgs e)
+    private async void OnFilterDebounce(object? sender, EventArgs e)
     {
         _filterDebounce.Stop();
-        PopulateFilterList(_filterText);
+        await PopulateFilterListAsync(_filterText);
     }
 
     private void ClearFilter()
     {
         _filterDebounce.Stop();
+        _filterCancellation?.Cancel();
         _filterText = "";
 
         _filterTextBox.TextChanged -= OnFilterTextBoxChanged;
@@ -581,7 +730,7 @@ public sealed class PanelView : UserControl
     private void ShowFilterOverlay()
     {
         if (!_filterBar.Visible)
-            _filterBar.Visible = true;  // WinForms resizes _hostContainer; Resize fires ResizeAllHosts
+            _filterBar.Visible = true;  // WinForms resizes _hostContainer; Resize fires ResizeAllHosts.
         _filterListView.BringToFront(); // above ExplorerHosts inside _hostContainer
         _filterListView.Visible = true;
     }
@@ -592,60 +741,114 @@ public sealed class PanelView : UserControl
         _filterDebounce.Start();
     }
 
-    private void PopulateFilterList(string filterText)
+    private async Task PopulateFilterListAsync(string filterText)
     {
         var host = ActiveHost;
         if (host == null) return;
         string folder = host.GetCurrentPath();
-        if (!Directory.Exists(folder)) return;
 
-        _filterListView.BeginUpdate();
-        _filterListView.Items.Clear();
+        _filterCancellation?.Cancel();
+        _filterCancellation?.Dispose();
+        var cancellation = new CancellationTokenSource();
+        _filterCancellation = cancellation;
+
+        List<FilterItemData> items;
         try
         {
-            var comp = StringComparison.OrdinalIgnoreCase;
-
-            var dirs = Directory.GetDirectories(folder)
-                .Select(Path.GetFileName)
-                .Where(n => n != null && n.Contains(filterText, comp))
-                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase);
-
-            foreach (string? name in dirs)
-            {
-                string full = Path.Combine(folder, name!);
-                string mod  = Directory.GetLastWriteTime(full).ToString("g");
-                var item    = new ListViewItem(new[] { name!, "Folder", "", mod }) { Tag = full };
-                _filterListView.Items.Add(item);
-            }
-
-            var files = Directory.GetFiles(folder)
-                .Select(Path.GetFileName)
-                .Where(n => n != null && n.Contains(filterText, comp))
-                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase);
-
-            foreach (string? name in files)
-            {
-                string full = Path.Combine(folder, name!);
-                string ext  = Path.GetExtension(full).TrimStart('.').ToUpperInvariant();
-                string type = ext.Length > 0 ? $"{ext} file" : "File";
-                string size = FormatFileSize(new FileInfo(full).Length);
-                string mod  = File.GetLastWriteTime(full).ToString("g");
-                var item    = new ListViewItem(new[] { name!, type, size, mod }) { Tag = full };
-                _filterListView.Items.Add(item);
-            }
+            items = await Task.Run(
+                () => BuildFilterItems(folder, filterText, cancellation.Token),
+                cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
         {
-            AppLog.Debug(ex, nameof(PopulateFilterList),
+            AppLog.Debug(ex, nameof(PopulateFilterListAsync),
                 $"Could not enumerate \"{folder}\" while filtering.");
+            return;
         }
         catch (Exception ex)
         {
-            AppLog.Warn(ex, nameof(PopulateFilterList),
+            AppLog.Warn(ex, nameof(PopulateFilterListAsync),
                 $"Filtering failed for \"{folder}\".");
+            return;
         }
-        _filterListView.EndUpdate();
+
+        if (cancellation.IsCancellationRequested
+            || IsDisposed
+            || host != ActiveHost
+            || !string.Equals(filterText, _filterText, StringComparison.Ordinal))
+            return;
+
+        _filterListView.BeginUpdate();
+        try
+        {
+            _filterListView.Items.Clear();
+            foreach (FilterItemData item in items)
+            {
+                var listItem = new ListViewItem(
+                    new[] { item.Name, item.Type, item.Size, item.Modified })
+                {
+                    Tag = item.FullPath,
+                };
+                _filterListView.Items.Add(listItem);
+            }
+        }
+        finally
+        {
+            _filterListView.EndUpdate();
+        }
     }
+
+    private static List<FilterItemData> BuildFilterItems(
+        string folder, string filterText, CancellationToken cancellationToken)
+    {
+        var directory = new DirectoryInfo(folder);
+        if (!directory.Exists) return new List<FilterItemData>();
+
+        var items = new List<FilterItemData>();
+        var comparison = StringComparison.OrdinalIgnoreCase;
+
+        foreach (DirectoryInfo child in directory.EnumerateDirectories()
+                     .Select(d =>
+                     {
+                         cancellationToken.ThrowIfCancellationRequested();
+                         return d;
+                     })
+                     .Where(d => d.Name.Contains(filterText, comparison))
+                     .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            items.Add(new FilterItemData(
+                child.Name, "Folder", "", child.LastWriteTime.ToString("g"), child.FullName));
+        }
+
+        foreach (FileInfo child in directory.EnumerateFiles()
+                     .Select(f =>
+                     {
+                         cancellationToken.ThrowIfCancellationRequested();
+                         return f;
+                     })
+                     .Where(f => f.Name.Contains(filterText, comparison))
+                     .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string extension = child.Extension.TrimStart('.').ToUpperInvariant();
+            items.Add(new FilterItemData(
+                child.Name,
+                extension.Length > 0 ? $"{extension} file" : "File",
+                FormatFileSize(child.Length),
+                child.LastWriteTime.ToString("g"),
+                child.FullName));
+        }
+
+        return items;
+    }
+
+    private readonly record struct FilterItemData(
+        string Name, string Type, string Size, string Modified, string FullPath);
 
     private static string FormatFileSize(long bytes)
     {
@@ -682,6 +885,8 @@ public sealed class PanelView : UserControl
     }
 
     // ── Command bar dispatch ─────────────────────────────────────────────────
+
+    internal void ExecuteCommand(CommandBar.Cmd cmd) => OnCommandIssued(this, cmd);
 
     private void OnCommandIssued(object? sender, CommandBar.Cmd cmd)
     {
@@ -779,6 +984,91 @@ public sealed class PanelView : UserControl
         }
     }
 
+    private void ShowQuickLookUnavailable(QuickLookFailure failure)
+    {
+        string message = failure switch
+        {
+            QuickLookFailure.NotInstalled =>
+                "QuickLook is not installed. You can download it from the QuickLook project page:",
+            QuickLookFailure.NotRunning =>
+                "QuickLook is installed but is not running. Start QuickLook, then press Space again.",
+            _ =>
+                "MultiExplorer could not communicate with QuickLook. Ensure QuickLook is running, then press Space again.",
+        };
+
+        using var dialog = new Form
+        {
+            Text            = "QuickLook unavailable",
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox     = false,
+            MinimizeBox     = false,
+            ShowInTaskbar   = false,
+            StartPosition   = FormStartPosition.CenterParent,
+            ClientSize      = new Size(520, 190),
+            Font            = SystemFonts.MessageBoxFont ?? new Font("Segoe UI", 9f),
+        };
+
+        var messageLabel = new Label
+        {
+            Text      = message,
+            Dock      = DockStyle.Fill,
+            AutoSize  = true,
+            MaximumSize = new Size(472, 0),
+        };
+        var link = new LinkLabel
+        {
+            Text     = QuickLookProjectUrl,
+            AutoSize = true,
+            TabStop  = true,
+        };
+        link.LinkClicked += (_, _) => OpenWebLink(QuickLookProjectUrl);
+
+        var okButton = new RoundedButton
+        {
+            Text         = "OK",
+            DialogResult = DialogResult.OK,
+            AutoSize     = true,
+            MinimumSize  = new Size(88, 30),
+            Anchor       = AnchorStyles.Right,
+        };
+
+        var layout = new TableLayoutPanel
+        {
+            Dock        = DockStyle.Fill,
+            Padding     = new Padding(24),
+            ColumnCount = 1,
+            RowCount    = 3,
+        };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.Controls.Add(messageLabel, 0, 0);
+        layout.Controls.Add(link, 0, 1);
+        layout.Controls.Add(okButton, 0, 2);
+
+        dialog.AcceptButton = okButton;
+        dialog.CancelButton = okButton;
+        dialog.Controls.Add(layout);
+        ThemeManager.ApplyTo(dialog);
+        link.LinkColor       = ThemeManager.AccentText;
+        link.ActiveLinkColor = ThemeManager.Accent;
+        dialog.Shown += (_, _) => ThemeManager.ApplyNativeWindow(dialog.Handle);
+        dialog.ShowDialog(this);
+    }
+
+    private static void OpenWebLink(string url)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, nameof(OpenWebLink), $"Could not open {url}.");
+        }
+    }
+
     private void ShowAbout() => ShowAboutDialog(this);
 
     /// <summary>Shows the About dialog; callable from any owner (toolbar button, tray icon, etc.).</summary>
@@ -798,7 +1088,7 @@ public sealed class PanelView : UserControl
             MinimizeBox     = false,
             ShowInTaskbar   = false,
             StartPosition   = FormStartPosition.CenterParent,
-            ClientSize      = new Size(600, 470),
+            ClientSize      = new Size(600, 540),
             Font            = SystemFonts.MessageBoxFont ?? new Font("Segoe UI", 9f),
         };
 
@@ -807,7 +1097,7 @@ public sealed class PanelView : UserControl
             Dock           = DockStyle.Fill,
             BorderStyle    = BorderStyle.None,
             ReadOnly       = true,
-            DetectUrls     = false,
+            DetectUrls     = true,
             HideSelection  = false,
             ShortcutsEnabled = true,
             ScrollBars     = RichTextBoxScrollBars.Vertical,
@@ -826,8 +1116,13 @@ public sealed class PanelView : UserControl
         copyMenu.Items.AddRange([copyItem, selectAllItem]);
         copyMenu.Opening += (_, _) => copyItem.Enabled = content.SelectionLength > 0;
         content.ContextMenuStrip = copyMenu;
+        content.LinkClicked += (_, e) =>
+        {
+            if (!string.IsNullOrWhiteSpace(e.LinkText))
+                OpenWebLink(e.LinkText);
+        };
 
-        var okButton = new Button
+        var okButton = new RoundedButton
         {
             Text         = "OK",
             DialogResult = DialogResult.OK,
@@ -898,6 +1193,10 @@ public sealed class PanelView : UserControl
             "MultiExplorer operates entirely offline, contains no advertisements, " +
             "and collects no user data, analytics, or personal information." +
             Environment.NewLine + Environment.NewLine,
+            dialog.Font);
+        Append("Third-party acknowledgement" + Environment.NewLine, sectionFont);
+        Append(
+            QuickLookAcknowledgementText + Environment.NewLine + Environment.NewLine,
             dialog.Font);
         Append("Build information" + Environment.NewLine, sectionFont);
         AppendDetail("Version", version);

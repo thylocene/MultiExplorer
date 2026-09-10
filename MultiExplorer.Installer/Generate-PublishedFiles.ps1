@@ -13,20 +13,7 @@ if (-not (Test-Path -LiteralPath $publishRoot -PathType Container)) {
 }
 
 $directoryIds = @{
-    ""        = "INSTALLFOLDER"
-    "cs"      = "PublishedDir_cs"
-    "de"      = "PublishedDir_de"
-    "es"      = "PublishedDir_es"
-    "fr"      = "PublishedDir_fr"
-    "it"      = "PublishedDir_it"
-    "ja"      = "PublishedDir_ja"
-    "ko"      = "PublishedDir_ko"
-    "pl"      = "PublishedDir_pl"
-    "pt-BR"   = "PublishedDir_pt_BR"
-    "ru"      = "PublishedDir_ru"
-    "tr"      = "PublishedDir_tr"
-    "zh-Hans" = "PublishedDir_zh_Hans"
-    "zh-Hant" = "PublishedDir_zh_Hant"
+    "" = "INSTALLFOLDER"
 }
 
 function Get-StableId([string]$prefix, [string]$value) {

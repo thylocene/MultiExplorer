@@ -110,19 +110,20 @@ internal sealed class HotkeyDialog : Form
             Anchor        = AnchorStyles.Right | AnchorStyles.Top,
             Margin        = new Padding(0, 6, 0, 0),
         };
-        var btnCancel = new Button
+        var btnCancel = new RoundedButton
         {
             Text         = "Cancel",
-            AutoSize     = true,
-            MinimumSize  = new Size(80, 26),
+            AutoSize     = false,
+            Size         = new Size(80, 28),
             Margin       = new Padding(4, 0, 0, 0),
             DialogResult = DialogResult.Cancel,
         };
-        _btnOk = new Button
+        _btnOk = new RoundedButton
         {
             Text         = "OK",
-            AutoSize     = true,
-            MinimumSize  = new Size(80, 26),
+            AutoSize     = false,
+            Size         = new Size(80, 28),
+            Margin       = new Padding(4, 0, 0, 0),
             DialogResult = DialogResult.OK,
         };
         _btnOk.Click += (_, _) =>

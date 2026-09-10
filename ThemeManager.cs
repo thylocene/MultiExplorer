@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
@@ -19,6 +20,8 @@ public enum ApplicationTheme
 /// </summary>
 internal static class ThemeManager
 {
+    private const int ButtonCornerRadius = 6;
+
     internal static ApplicationTheme Current { get; private set; } = ApplicationTheme.Light;
     internal static bool IsDark => Current == ApplicationTheme.Dark;
 
@@ -87,13 +90,34 @@ internal static class ThemeManager
                 button.ForeColor = Text;
                 button.FlatStyle = FlatStyle.Flat;
                 button.FlatAppearance.BorderColor = Border;
+                button.FlatAppearance.BorderSize = 0;
                 button.FlatAppearance.MouseOverBackColor = Hover;
                 button.FlatAppearance.MouseDownBackColor = Pressed;
+                button.Invalidate();
                 return;
             default:
                 control.BackColor = Background;
                 break;
         }
+    }
+
+    private static GraphicsPath CreateRoundedPath(RectangleF bounds, float radius)
+    {
+        var path = new GraphicsPath();
+        float diameter = Math.Min(radius * 2, Math.Min(bounds.Width, bounds.Height));
+        if (diameter <= 1)
+        {
+            path.AddRectangle(bounds);
+            return path;
+        }
+
+        path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter,
+            diameter, diameter, 0, 90);
+        path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
+        path.CloseFigure();
+        return path;
     }
 
     internal static void ApplyToolStrip(ToolStrip strip)
@@ -198,6 +222,36 @@ internal static class ThemeManager
     private sealed class ThemeRenderer : ToolStripProfessionalRenderer
     {
         internal ThemeRenderer() : base(new ThemeColorTable()) { RoundedEdges = false; }
+
+        protected override void OnRenderButtonBackground(ToolStripItemRenderEventArgs e) =>
+            DrawThemedButtonBackground(e);
+
+        protected override void OnRenderDropDownButtonBackground(ToolStripItemRenderEventArgs e) =>
+            DrawThemedButtonBackground(e);
+
+        private static void DrawThemedButtonBackground(ToolStripItemRenderEventArgs e)
+        {
+            bool isChecked = e.Item is ToolStripButton button && button.Checked;
+            bool drawBorder = e.Item.Selected || e.Item.Pressed || isChecked;
+            Color fill = e.Item.Pressed ? Pressed
+                : drawBorder ? Hover
+                : Surface;
+            int radius = Math.Max(2,
+                ButtonCornerRadius * (e.ToolStrip?.DeviceDpi ?? 96) / 96);
+            var bounds = new Rectangle(1, 1,
+                Math.Max(1, e.Item.Width - 2), Math.Max(1, e.Item.Height - 2));
+            using GraphicsPath path = CreateRoundedPath(bounds, radius);
+            SmoothingMode previousMode = e.Graphics.SmoothingMode;
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var brush = new SolidBrush(fill))
+                e.Graphics.FillPath(brush, path);
+            if (drawBorder)
+            {
+                using var pen = new Pen(Border);
+                e.Graphics.DrawPath(pen, path);
+            }
+            e.Graphics.SmoothingMode = previousMode;
+        }
 
         protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
         {

@@ -6,8 +6,20 @@ using System.Windows.Forms;
 
 namespace MultiExplorer;
 
+internal sealed class TabMoveRequestedEventArgs(
+    TabBar source, int sourceIndex, int targetIndex) : EventArgs
+{
+    internal TabBar Source { get; } = source;
+    internal int SourceIndex { get; } = sourceIndex;
+    internal int TargetIndex { get; } = targetIndex;
+}
+
 public sealed class TabBar : UserControl
 {
+    private const string TabDragFormat = "MultiExplorer.TabDrag";
+    private static TabBar? s_dragSource;
+    private static int s_dragSourceIndex = -1;
+
     // Logical (96-DPI) base values — scaled at runtime via LogicalToDeviceUnits.
     private int PadH   => LogicalToDeviceUnits(12);
     private int CloseW => LogicalToDeviceUnits(18);
@@ -25,6 +37,9 @@ public sealed class TabBar : UserControl
     private int  _hovClose    = -1;
     private int  _lastTipTab  = -2; // -2 = not yet initialised
     private bool _hovAdd      = false;
+    private int _dragCandidate = -1;
+    private Point _dragStart;
+    private int _dropIndex = -1;
 
     private readonly List<(Rectangle Tab, Rectangle Close)> _hits = new();
     private Rectangle _addHit;
@@ -32,12 +47,14 @@ public sealed class TabBar : UserControl
     public event EventHandler<int>? TabSelected;
     public event EventHandler<int>? TabCloseRequested;
     public event EventHandler?      AddTabRequested;
+    internal event EventHandler<TabMoveRequestedEventArgs>? TabMoveRequested;
 
     public TabBar()
     {
         _font     = new Font("Segoe UI", 9.5f);
         Height    = LogicalToDeviceUnits(42);
         BackColor = ThemeManager.Background;
+        AllowDrop = true;
         SetStyle(ControlStyles.OptimizedDoubleBuffer |
                  ControlStyles.AllPaintingInWmPaint  |
                  ControlStyles.ResizeRedraw, true);
@@ -113,7 +130,7 @@ public sealed class TabBar : UserControl
         const TextFormatFlags MeasureTff =
             TextFormatFlags.NoPadding | TextFormatFlags.SingleLine;
         const TextFormatFlags DrawTff =
-            MeasureTff | TextFormatFlags.EndEllipsis;
+            MeasureTff | TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter;
 
         // Leave 1 px at the bottom for the separator line; tabs fill the rest.
         int tabH = ClientSize.Height - 1;
@@ -162,7 +179,7 @@ public sealed class TabBar : UserControl
                 g.DrawPath(pen, path);
             }
 
-            // Label
+            // Vertically centre the label on the close glyph.
             var labelR = new Rectangle(tabR.X + PadH, tabR.Y + 2, textW + 4, tabH - 4);
             TextRenderer.DrawText(g, _labels[i], _font, labelR, ThemeManager.Text, DrawTff);
 
@@ -201,6 +218,14 @@ public sealed class TabBar : UserControl
         // Bottom separator line
         using var bp = new Pen(ThemeManager.Border);
         g.DrawLine(bp, 0, ClientSize.Height - 1, ClientSize.Width, ClientSize.Height - 1);
+
+        if (_dropIndex >= 0)
+        {
+            int indicatorX = DropIndicatorX(_dropIndex);
+            using var dropPen = new Pen(ThemeManager.Accent, LogicalToDeviceUnits(2));
+            g.DrawLine(dropPen, indicatorX, LogicalToDeviceUnits(3),
+                indicatorX, tabH - LogicalToDeviceUnits(3));
+        }
     }
 
     // Full rounded-top-corner closed path (left + top arcs + right + bottom).
@@ -232,6 +257,8 @@ public sealed class TabBar : UserControl
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
+        if (TryStartTabDrag(e)) return;
+
         int  ht = -1, hc = -1;
         bool ha = _addHit.Contains(e.Location);
 
@@ -292,8 +319,131 @@ public sealed class TabBar : UserControl
             if (_hits[i].Close.Contains(e.Location))
                 TabCloseRequested?.Invoke(this, i);
             else
+            {
+                _dragCandidate = i;
+                _dragStart = e.Location;
                 TabSelected?.Invoke(this, i);
+            }
             return;
         }
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        _dragCandidate = -1;
+    }
+
+    protected override void OnDragEnter(DragEventArgs drgevent)
+    {
+        base.OnDragEnter(drgevent);
+        UpdateDragTarget(drgevent);
+    }
+
+    protected override void OnDragOver(DragEventArgs drgevent)
+    {
+        base.OnDragOver(drgevent);
+        UpdateDragTarget(drgevent);
+    }
+
+    protected override void OnDragLeave(EventArgs e)
+    {
+        base.OnDragLeave(e);
+        SetDropIndex(-1);
+    }
+
+    protected override void OnDragDrop(DragEventArgs drgevent)
+    {
+        base.OnDragDrop(drgevent);
+        int targetIndex = _dropIndex;
+        SetDropIndex(-1);
+        if (drgevent.Data?.GetDataPresent(TabDragFormat) != true
+            || !TryGetDraggedTab(out TabBar? source, out int sourceIndex)
+            || targetIndex < 0)
+        {
+            drgevent.Effect = DragDropEffects.None;
+            return;
+        }
+
+        drgevent.Effect = DragDropEffects.Move;
+        TabMoveRequested?.Invoke(this,
+            new TabMoveRequestedEventArgs(source!, sourceIndex, targetIndex));
+    }
+
+    private bool TryStartTabDrag(MouseEventArgs e)
+    {
+        if (_dragCandidate < 0 || e.Button != MouseButtons.Left) return false;
+        Size dragSize = SystemInformation.DragSize;
+        var threshold = new Rectangle(
+            _dragStart.X - dragSize.Width / 2,
+            _dragStart.Y - dragSize.Height / 2,
+            dragSize.Width,
+            dragSize.Height);
+        if (threshold.Contains(e.Location)) return false;
+
+        int sourceIndex = _dragCandidate;
+        _dragCandidate = -1;
+        s_dragSource = this;
+        s_dragSourceIndex = sourceIndex;
+        try
+        {
+            var data = new DataObject();
+            data.SetData(TabDragFormat, "tab");
+            DoDragDrop(data, DragDropEffects.Move);
+        }
+        finally
+        {
+            s_dragSource = null;
+            s_dragSourceIndex = -1;
+            SetDropIndex(-1);
+        }
+        return true;
+    }
+
+    private void UpdateDragTarget(DragEventArgs e)
+    {
+        if (e.Data?.GetDataPresent(TabDragFormat) != true
+            || !TryGetDraggedTab(out _, out _))
+        {
+            e.Effect = DragDropEffects.None;
+            SetDropIndex(-1);
+            return;
+        }
+
+        Point clientPoint = PointToClient(new Point(e.X, e.Y));
+        e.Effect = DragDropEffects.Move;
+        SetDropIndex(InsertionIndexAt(clientPoint.X));
+    }
+
+    private static bool TryGetDraggedTab(out TabBar? source, out int sourceIndex)
+    {
+        source = s_dragSource;
+        sourceIndex = s_dragSourceIndex;
+        return source != null && sourceIndex >= 0;
+    }
+
+    private int InsertionIndexAt(int x)
+    {
+        for (int i = 0; i < _hits.Count; i++)
+        {
+            if (x < _hits[i].Tab.Left + _hits[i].Tab.Width / 2)
+                return i;
+        }
+        return _hits.Count;
+    }
+
+    private int DropIndicatorX(int index)
+    {
+        if (_hits.Count == 0) return LogicalToDeviceUnits(6);
+        if (index <= 0) return _hits[0].Tab.Left - LogicalToDeviceUnits(2);
+        if (index >= _hits.Count) return _hits[^1].Tab.Right + LogicalToDeviceUnits(1);
+        return _hits[index].Tab.Left - LogicalToDeviceUnits(1);
+    }
+
+    private void SetDropIndex(int index)
+    {
+        if (_dropIndex == index) return;
+        _dropIndex = index;
+        Invalidate();
     }
 }

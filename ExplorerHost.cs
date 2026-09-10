@@ -10,6 +10,13 @@ using System.Windows.Forms;
 
 namespace MultiExplorer;
 
+internal enum QuickLookFailure
+{
+    NotInstalled,
+    NotRunning,
+    Unavailable,
+}
+
 /// <summary>
 /// Hosts a full Windows Explorer UI (address bar, toolbar, file list) using the
 /// IExplorerBrowser COM interface (CLSID_ExplorerBrowser).
@@ -40,10 +47,23 @@ public sealed class ExplorerHost : Control, IMessageFilter
     internal static bool QuickLookEnabled { get; set; }
 
     private NativeMethods.IExplorerBrowser? _browser;
+    private BrowserThread?                  _browserThread;
     private BrowserSiteImpl?               _site;
     private ExplorerBrowserEventsImpl?     _events;
     private uint                           _eventsCookie;
-    private string                         _currentPath;
+    // Read by the WinForms UI thread and updated by the browser STA.  Keep this
+    // as a snapshot: UI polling must never synchronously enter the browser STA,
+    // because Shell drag/drop can keep that STA in a modal loop for the entire
+    // copy/move operation.
+    private volatile string                _currentPath;
+    private string?                        _cachedSelectedItemPath;
+    private int                            _selectionRefreshPending;
+    private int                            _pathRefreshPending;
+    private long                           _nextPathRefreshTick;
+    private int                            _initialNavigationReported;
+    private int                            _quickLookAlertPending;
+    private ShellFileDropTarget?           _fileDropTarget;
+    private IntPtr                         _fileDropTargetWindow;
     private bool                           _browserWasLaunched;
     private bool                           _showNavPane = true;
 
@@ -53,6 +73,12 @@ public sealed class ExplorerHost : Control, IMessageFilter
     // successive WM_LBUTTONDOWN messages that fall within the system thresholds.
     private long  _lastBlankClickTick;
     private Point _lastBlankClickPt;
+
+    // Short-lived timers used to defer selection restore / inline-rename until the
+    // shell view has finished loading asynchronously. Tracked so they can be
+    // stopped and disposed if the host is torn down before they fire — otherwise a
+    // rapid theme toggle or tab close leaks a timer per operation.
+    private readonly List<System.Windows.Forms.Timer> _pendingTimers = new();
 
     // ── Name filter ───────────────────────────────────────────────────────────
 
@@ -67,6 +93,19 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
     /// <summary>Fired when Escape is pressed while the filter bar is active.</summary>
     internal event EventHandler? FilterEscapePressed;
+
+    /// <summary>Raised on the WinForms thread for an application-wide Ctrl shortcut.</summary>
+    internal event EventHandler<CommandBar.Cmd>? ApplicationShortcutRequested;
+
+    /// <summary>Raised on the WinForms thread when QuickLook cannot preview the selection.</summary>
+    internal event EventHandler<QuickLookFailure>? QuickLookUnavailable;
+
+    /// <summary>
+    /// Raised on the WinForms thread after this host's first navigation attempt.
+    /// Shell navigation trees share process-wide image-list infrastructure, so the
+    /// main form uses this signal to avoid initializing both panes concurrently.
+    /// </summary>
+    internal event EventHandler? InitialNavigationCompleted;
 
     // ── Construction ──────────────────────────────────────────────────────────
 
@@ -84,7 +123,22 @@ public sealed class ExplorerHost : Control, IMessageFilter
     /// </summary>
     public void LaunchExplorer()
     {
-        if (_browser != null || !IsHandleCreated || Width == 0 || Height == 0) return;
+        if (_browser != null || _browserThread != null
+            || !IsHandleCreated || Width == 0 || Height == 0) return;
+
+        // The shell view owns modal loops used by native drag/drop operations.
+        // Keep it on its own STA so those loops cannot stall the WinForms pump.
+        NativeMethods.RECT initialBounds = BrowserBounds();
+        _browserThread = new BrowserThread(Handle, Width, Height);
+        _browserThread.MessageHook = BrowserMessageHook;
+        // Do not wait here. ExplorerBrowser.Initialize can synchronously notify
+        // ancestor windows, which need the WinForms thread to keep pumping.
+        _browserThread.Post(() => LaunchExplorerCore(initialBounds));
+    }
+
+    private void LaunchExplorerCore(NativeMethods.RECT initialBounds)
+    {
+        if (_browser != null || _browserThread == null) return;
 
         try
         {
@@ -103,10 +157,10 @@ public sealed class ExplorerHost : Control, IMessageFilter
             // EBO_SHOWFRAMES (0x0002) — navigation pane + address bar.
             _browser.SetOptions(_showNavPane ? 0x0002u : 0u);
 
-            var rect = BrowserBounds();
+            var rect = initialBounds;
             var fs   = CreateHeaderEnabledFolderSettings(FVM_DETAILS);
 
-            int hr = _browser.Initialize(Handle, ref rect, ref fs);
+            int hr = _browser.Initialize(_browserThread.Handle, ref rect, ref fs);
             if (hr < 0)
                 throw new COMException("IExplorerBrowser.Initialize failed.", hr);
 
@@ -133,22 +187,64 @@ public sealed class ExplorerHost : Control, IMessageFilter
         catch (Exception ex)
         {
             AppLog.Warn(ex, nameof(LaunchExplorer));
-            DestroyBrowser();
+            DestroyBrowserCore();
+            PostToUi(DestroyBrowser);
+            ReportInitialNavigationCompleted();
         }
+    }
+
+    private bool BrowserMessageHook(NativeMethods.MSG msg)
+    {
+        var message = Message.Create(msg.hwnd, (int)msg.message, msg.wParam, msg.lParam);
+        return PreFilterMessage(ref message);
+    }
+
+    private void PostToUi(Action action)
+    {
+        if (IsDisposed || Disposing || !IsHandleCreated) return;
+        try { BeginInvoke(action); }
+        catch (InvalidOperationException) { /* the host closed while posting */ }
+    }
+
+    private bool SwitchToBrowserThread(Action action)
+    {
+        BrowserThread? thread = _browserThread;
+        if (thread == null || NativeMethods.GetCurrentThreadId() == thread.ThreadId)
+            return false;
+
+        thread.Invoke(action);
+        return true;
+    }
+
+    private T RunOnBrowserThread<T>(Func<T> func)
+    {
+        BrowserThread? thread = _browserThread;
+        return thread != null && NativeMethods.GetCurrentThreadId() != thread.ThreadId
+            ? thread.Invoke(func)
+            : func();
     }
 
     /// <summary>Navigates to the parent of the current folder (no-op at a drive root).</summary>
     public void NavigateUp()
     {
+        if (SwitchToBrowserThread(NavigateUp)) return;
         string current = GetCurrentPath().TrimEnd(Path.DirectorySeparatorChar);
         string? parent = Path.GetDirectoryName(current);
-        if (parent != null && Directory.Exists(parent))
+        if (parent == null) return;
+
+        // Directory.Exists fails for UNC paths on many network configurations
+        // (e.g. \\server as the parent of \\server\share), which would make "up"
+        // silently no-op. Let SHParseDisplayName inside NavigateTo validate UNC
+        // paths instead, matching the handling in NavigateTo.
+        bool isUnc = parent.StartsWith(@"\\", StringComparison.Ordinal);
+        if (isUnc || Directory.Exists(parent))
             NavigateTo(parent);
     }
 
     /// <summary>Navigates the browser to path (no-op if path does not exist).</summary>
     public void NavigateTo(string path)
     {
+        if (SwitchToBrowserThread(() => NavigateTo(path))) return;
         if (_browser == null) return;
         // Directory.Exists fails for UNC paths on many network configurations; let
         // SHParseDisplayName inside BrowseTo validate those paths instead.
@@ -161,12 +257,17 @@ public sealed class ExplorerHost : Control, IMessageFilter
     /// <summary>Applies the current palette to this host and every native shell child.</summary>
     public void ApplyTheme()
     {
+        if (InvokeRequired)
+        {
+            BeginInvoke(ApplyTheme);
+            return;
+        }
+
         BackColor = ThemeManager.Window;
         ForeColor = ThemeManager.Text;
         if (!IsHandleCreated) return;
 
-        if (_browser != null && Width > 0 && Height > 0)
-            _browser.SetRect(IntPtr.Zero, BrowserBounds());
+        QueueBrowserBoundsUpdate();
 
         ThemeManager.ApplyNativeWindow(Handle);
         // Shell navigation creates parts of the view asynchronously. Re-apply after
@@ -209,16 +310,11 @@ public sealed class ExplorerHost : Control, IMessageFilter
         // the user's current item appear to have been deselected.
         if (selectedPath != null || restoreFocus)
         {
-            var timer = new System.Windows.Forms.Timer { Interval = 200 };
-            timer.Tick += (_, _) =>
+            StartOneShotTimer(200, () =>
             {
-                timer.Stop();
-                timer.Dispose();
-                if (IsDisposed || Disposing || _browser == null) return;
                 if (selectedPath != null) SelectItem(selectedPath, edit: false);
                 if (restoreFocus) FocusShellView();
-            };
-            timer.Start();
+            });
         }
     }
 
@@ -226,7 +322,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
     public void FocusShellView()
     {
         if (!IsHandleCreated) return;
-        if (_browser != null && ActivateShellView(takeFocus: true)) return;
+        if (_browser != null && RunOnBrowserThread(() => ActivateShellView(takeFocus: true))) return;
         Focus();
     }
 
@@ -276,18 +372,64 @@ public sealed class ExplorerHost : Control, IMessageFilter
     }
 
     /// <summary>
-    /// Returns the folder the user is currently viewing.
-    /// Queries the live browser via IFolderView → IPersistFolder2 → GetCurFolder.
-    /// Falls back to the initial path if the query fails (e.g. virtual folder).
+    /// Returns the latest folder reported by the browser navigation callback.
+    /// This intentionally does not synchronously query the browser STA: a Shell
+    /// drag/drop operation may occupy that STA until a long copy/move completes.
     /// </summary>
     public string GetCurrentPath()
     {
-        if (_browser != null)
-        {
-            string? live = QueryLivePath();
-            if (live != null) return live;
-        }
         return _currentPath;
+    }
+
+    /// <summary>
+    /// Returns the cached path immediately and periodically queues the original live
+    /// COM query as a fallback. Navigation callbacks normally keep the snapshot current;
+    /// throttling the fallback avoids redundant Shell calls on every 300 ms UI tick.
+    /// </summary>
+    internal string GetCurrentPathForPolling()
+    {
+        BrowserThread? thread = _browserThread;
+        long now = Environment.TickCount64;
+        long nextRefresh = Volatile.Read(ref _nextPathRefreshTick);
+        if (thread != null
+            && now >= nextRefresh
+            && Interlocked.CompareExchange(ref _nextPathRefreshTick, now + 2000, nextRefresh) == nextRefresh
+            && Interlocked.Exchange(ref _pathRefreshPending, 1) == 0)
+        {
+            thread.Post(() =>
+            {
+                try
+                {
+                    string? livePath = QueryLivePath();
+                    if (livePath != null) _currentPath = livePath;
+                }
+                finally { Volatile.Write(ref _pathRefreshPending, 0); }
+            });
+        }
+
+        return _currentPath;
+    }
+
+    /// <summary>
+    /// Returns the most recent selection snapshot and requests a fresh one without
+    /// making the WinForms UI thread wait for the browser STA.  Used by the timer
+    /// that feeds the optional details and preview panes.
+    /// </summary>
+    internal string? GetSelectedItemPathForPolling()
+    {
+        BrowserThread? thread = _browserThread;
+        if (thread == null) return _cachedSelectedItemPath;
+
+        if (Interlocked.Exchange(ref _selectionRefreshPending, 1) == 0)
+        {
+            thread.Post(() =>
+            {
+                try { Volatile.Write(ref _cachedSelectedItemPath, GetSelectedItemPath()); }
+                finally { Volatile.Write(ref _selectionRefreshPending, 0); }
+            });
+        }
+
+        return Volatile.Read(ref _cachedSelectedItemPath);
     }
 
     // ── Keyboard routing ──────────────────────────────────────────────────────
@@ -434,8 +576,19 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
         if ((m.Msg == WM_KEYDOWN || m.Msg == WM_SYSKEYDOWN)
             && _browser != null
-            && ContainsFocus)
+            && (m.HWnd == Handle || NativeMethods.IsChild(Handle, m.HWnd)))
         {
+            // The native Explorer windows live on this browser STA, so the main
+            // WinForms IMessageFilter never sees their keystrokes. Forward the
+            // application-wide shortcuts to the UI thread explicitly.
+            CommandBar.Cmd? shortcut = MainForm.GetApplicationShortcut(
+                m.Msg, m.WParam, ModifierKeys);
+            if (shortcut.HasValue)
+            {
+                PostToUi(() => ApplicationShortcutRequested?.Invoke(this, shortcut.Value));
+                return true;
+            }
+
             // ── Type-to-filter key interception ──────────────────────────────
             if (m.Msg == WM_KEYDOWN && IsInFileListArea(m.HWnd) && !IsEditControl())
             {
@@ -445,12 +598,12 @@ public sealed class ExplorerHost : Control, IMessageFilter
                 {
                     if (vk == 0x08 /* VK_BACK */ && ModifierKeys == Keys.None)
                     {
-                        FilterBackspaceTyped?.Invoke(this, EventArgs.Empty);
+                        PostToUi(() => FilterBackspaceTyped?.Invoke(this, EventArgs.Empty));
                         return true;
                     }
                     if (vk == 0x1B /* VK_ESCAPE */ && ModifierKeys == Keys.None)
                     {
-                        FilterEscapePressed?.Invoke(this, EventArgs.Empty);
+                        PostToUi(() => FilterEscapePressed?.Invoke(this, EventArgs.Empty));
                         return true;
                     }
                 }
@@ -464,7 +617,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
                     char c = GetCharFromVk(m.WParam);
                     if (c >= 0x20 && c != 0x7F && (IsFiltering || c != ' '))
                     {
-                        FilterCharInput?.Invoke(this, c);
+                        PostToUi(() => FilterCharInput?.Invoke(this, c));
                         return true;
                     }
                 }
@@ -482,6 +635,27 @@ public sealed class ExplorerHost : Control, IMessageFilter
                 return true;
             }
 
+            // Do not let the shell start its modal paste loop on our UI thread.
+            // Text-edit controls still receive Ctrl+V normally (for example while
+            // renaming an item).
+            if (m.Msg == WM_KEYDOWN
+                && m.WParam == (IntPtr)0x56 // VK_V
+                && ModifierKeys == Keys.Control
+                && !IsEditControl())
+            {
+                Paste();
+                return true;
+            }
+
+            // Route deletion through the tracked operation host rather than allowing
+            // the embedded shell to enter its own modal delete loop.
+            if (m.Msg == WM_KEYDOWN && m.WParam == (IntPtr)0x2E /* VK_DELETE */
+                && (ModifierKeys == Keys.None || ModifierKeys == Keys.Shift))
+            {
+                Delete(permanently: ModifierKeys == Keys.Shift);
+                return true;
+            }
+
             // QuickLook: Space sends the focused/selected item to QuickLook for preview.
             if (m.Msg == WM_KEYDOWN && m.WParam == (IntPtr)0x20
                 && QuickLookEnabled && ModifierKeys == Keys.None)
@@ -489,7 +663,16 @@ public sealed class ExplorerHost : Control, IMessageFilter
                 string? sel = GetSelectedItemPath();
                 if (sel != null)
                 {
-                    InvokeQuickLook(sel);
+                    QuickLookFailure? failure = InvokeQuickLook(sel);
+                    if (failure != null
+                        && Interlocked.Exchange(ref _quickLookAlertPending, 1) == 0)
+                    {
+                        PostToUi(() =>
+                        {
+                            try { QuickLookUnavailable?.Invoke(this, failure.Value); }
+                            finally { Volatile.Write(ref _quickLookAlertPending, 0); }
+                        });
+                    }
                     return true;
                 }
             }
@@ -501,6 +684,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
     public void CreateNewFolder()
     {
+        if (SwitchToBrowserThread(CreateNewFolder)) return;
         string currentPath = GetCurrentPath();
         if (!Directory.Exists(currentPath)) return;
 
@@ -527,6 +711,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
     private void SelectItem(string path, bool edit)
     {
+        if (SwitchToBrowserThread(() => SelectItem(path, edit))) return;
         if (_browser == null) return;
         try
         {
@@ -617,8 +802,19 @@ public sealed class ExplorerHost : Control, IMessageFilter
     {
         base.OnResize(e);
 
-        if (_browser != null && Width > 0 && Height > 0)
-            _browser.SetRect(IntPtr.Zero, BrowserBounds());
+        QueueBrowserBoundsUpdate();
+    }
+
+    private void QueueBrowserBoundsUpdate()
+    {
+        BrowserThread? thread = _browserThread;
+        if (thread == null || Width <= 0 || Height <= 0) return;
+
+        int width = Width;
+        int height = Height;
+        NativeMethods.RECT rect = BrowserBounds();
+        NativeMethods.MoveWindow(thread.Handle, 0, 0, width, height, repaint: true);
+        thread.Post(() => _browser?.SetRect(IntPtr.Zero, rect));
     }
 
     private NativeMethods.RECT BrowserBounds()
@@ -643,8 +839,31 @@ public sealed class ExplorerHost : Control, IMessageFilter
     protected override void Dispose(bool disposing)
     {
         if (disposing)
+        {
+            foreach (var timer in _pendingTimers.ToArray())
+            {
+                timer.Stop();
+                timer.Dispose();
+            }
+            _pendingTimers.Clear();
             DestroyBrowser();
+        }
         base.Dispose(disposing);
+    }
+
+    private void StartOneShotTimer(int interval, Action action)
+    {
+        var timer = new System.Windows.Forms.Timer { Interval = interval };
+        _pendingTimers.Add(timer);
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            _pendingTimers.Remove(timer);
+            timer.Dispose();
+            if (!IsDisposed && !Disposing)
+                action();
+        };
+        timer.Start();
     }
 
     // ── Command bar helpers ───────────────────────────────────────────────────
@@ -652,6 +871,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
     /// <summary>Changes the view mode (FVM_* constant: 1=icons 2=small 3=list 4=details 5=thumbnail 6=tile).</summary>
     public void SetViewMode(uint viewMode)
     {
+        if (SwitchToBrowserThread(() => SetViewMode(viewMode))) return;
         if (_browser == null) return;
         try
         {
@@ -674,6 +894,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
     internal void EnsureColumnHeaders()
     {
+        if (SwitchToBrowserThread(EnsureColumnHeaders)) return;
         if (_browser == null) return;
         ApplyFolderSettings(FVM_DETAILS);
         FixColumnHeadersOnCurrentView();
@@ -701,6 +922,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
     /// <summary>Sets view mode and icon size via IFolderView2 (for Medium Icons = FVM_ICON + 48px).</summary>
     public void SetViewModeAndIconSize(uint viewMode, int iconSize)
     {
+        if (SwitchToBrowserThread(() => SetViewModeAndIconSize(viewMode, iconSize))) return;
         if (_browser == null) return;
         try
         {
@@ -758,6 +980,9 @@ public sealed class ExplorerHost : Control, IMessageFilter
     /// </summary>
     internal string? GetSelectedItemPath()
     {
+        if (_browserThread != null
+            && NativeMethods.GetCurrentThreadId() != _browserThread.ThreadId)
+            return _browserThread.Invoke(GetSelectedItemPath);
         if (_browser == null) return null;
         try
         {
@@ -807,6 +1032,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
     /// <summary>Refreshes the current shell view (used after system settings changes).</summary>
     internal void RefreshShellView()
     {
+        if (SwitchToBrowserThread(RefreshShellView)) return;
         if (_browser == null) return;
         try
         {
@@ -874,20 +1100,22 @@ public sealed class ExplorerHost : Control, IMessageFilter
             NativeMethods.WM_SETTINGCHANGE, IntPtr.Zero, null);
     }
 
-    // Sends the file to QuickLook for preview.  Tries the named pipe first (instant,
-    // no process overhead), then falls back to spawning QuickLook.exe with the path —
-    // QuickLook's own single-instance logic forwards it to the running window.
-    private static void InvokeQuickLook(string filePath)
+    // Sends the file to an already-running QuickLook instance. MultiExplorer does
+    // not silently start a separate third-party application; the UI explains how
+    // to start or install it when the pipe is unavailable.
+    private static QuickLookFailure? InvokeQuickLook(string filePath)
     {
         // Grant QuickLook permission to bring its window to the foreground.
         // Windows blocks SetForegroundWindow from background processes; only the
         // current foreground process can delegate that right via AllowSetForegroundWindow.
         int qlPid = GetQuickLookPid();
-        if (qlPid > 0)
-            NativeMethods.AllowSetForegroundWindow(qlPid);
+        if (qlPid <= 0)
+            return FindQuickLookExe() == null
+                ? QuickLookFailure.NotInstalled
+                : QuickLookFailure.NotRunning;
 
-        if (TrySendViaQuickLookPipe(filePath)) return;
-        TryLaunchQuickLookProcess(filePath);
+        NativeMethods.AllowSetForegroundWindow(qlPid);
+        return TrySendViaQuickLookPipe(filePath) ? null : QuickLookFailure.Unavailable;
     }
 
     private static int GetQuickLookPid()
@@ -950,33 +1178,6 @@ public sealed class ExplorerHost : Control, IMessageFilter
             }
         }
         return false;
-    }
-
-    // Fallback: find QuickLook.exe and launch it with the file path.
-    // QuickLook's single-instance logic forwards the path to the running window.
-    private static void TryLaunchQuickLookProcess(string filePath)
-    {
-        try
-        {
-            string? exe = FindQuickLookExe();
-            if (string.IsNullOrEmpty(exe))
-            {
-                AppLog.Warn(null, "QuickLook",
-                            "Could not locate QuickLook.exe — " +
-                            "ensure QuickLook is installed and running.");
-                return;
-            }
-            Process.Start(new ProcessStartInfo
-            {
-                FileName        = exe,
-                Arguments       = $"\"{filePath}\"",
-                UseShellExecute = false,
-            });
-        }
-        catch (Exception ex)
-        {
-            AppLog.Warn(ex, "QuickLook", "Failed to launch QuickLook.exe");
-        }
     }
 
     private static string? FindQuickLookExe()
@@ -1096,6 +1297,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
     /// <summary>Shows properties for the selected shell item(s).</summary>
     public void ShowProperties()
     {
+        if (SwitchToBrowserThread(ShowProperties)) return;
         // Prefer the focus-independent shell command. Some shell views do not
         // expose IOleCommandTarget, so retain Alt+Enter as an accelerator fallback.
         if (!OleExec(10 /* OLECMDID_PROPERTIES */))
@@ -1115,7 +1317,111 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
     public void Cut()    => SendAccelWithCtrl(0x58); // Ctrl+X  (VK_X)
     public void Copy()   => SendAccelWithCtrl(0x43); // Ctrl+C  (VK_C)
-    public void Paste()  => SendAccelWithCtrl(0x56); // Ctrl+V  (VK_V)
+
+    /// <summary>
+    /// Starts a clipboard file copy/move on its own STA thread. Shell file
+    /// operations run a modal message loop, so executing one on the WinForms
+    /// thread would prevent the user from starting another operation or using
+    /// any other part of MultiExplorer until it completed.
+    /// </summary>
+    public void Paste()
+    {
+        string destination = GetCurrentPath();
+        if (!Directory.Exists(destination)) return;
+
+        try
+        {
+            IDataObject? data = Clipboard.GetDataObject();
+            if (data == null || !data.GetDataPresent(DataFormats.FileDrop))
+            {
+                // Preserve support for non-file-system shell clipboard formats.
+                // These are uncommon and cannot be represented by SHFileOperation.
+                SendAccelWithCtrl(0x56); // Ctrl+V (VK_V)
+                return;
+            }
+
+            // Clipboard.GetFileDropList normalises the native CF_HDROP payload to
+            // a StringCollection. IDataObject.GetData may instead return a
+            // string[], depending on which application populated the clipboard.
+            var paths = Clipboard.GetFileDropList().Cast<string>().ToArray();
+            if (paths.Length == 0) return;
+
+            bool move = ClipboardRequestsMove(data);
+            OperationManager.Current?.Start(
+                move ? FileOperationKind.Move : FileOperationKind.Copy,
+                paths, destination);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, nameof(Paste), "Could not start the clipboard file operation.");
+        }
+    }
+
+    private static bool ClipboardRequestsMove(IDataObject data)
+    {
+        const string preferredDropEffect = "Preferred DropEffect";
+        if (!data.GetDataPresent(preferredDropEffect)) return false;
+
+        object? value = data.GetData(preferredDropEffect);
+        byte[]? bytes = value switch
+        {
+            MemoryStream stream => stream.ToArray(),
+            byte[] array         => array,
+            _                    => null,
+        };
+
+        // DROPEFFECT_MOVE is bit 1. A regular Copy places DROPEFFECT_COPY (bit 0).
+        return bytes is { Length: >= 4 }
+            && (BitConverter.ToUInt32(bytes, 0) & 0x00000002u) != 0;
+    }
+
+    private void InstallAsynchronousFileDropTarget()
+    {
+        // Windows 11's ExplorerBrowser file list is DirectUIHWND beneath
+        // SHELLDLL_DefView (not UIItemsView). Register on that deepest window so
+        // OLE hit-testing selects us ahead of the DefView's synchronous target.
+        // Older Shell versions use SysListView32 directly.
+        IntPtr defView = FindDescendant(Handle, "SHELLDLL_DefView");
+        IntPtr listWindow = defView == IntPtr.Zero
+            ? IntPtr.Zero
+            : FindDescendant(defView, "DirectUIHWND");
+        if (listWindow == IntPtr.Zero)
+            listWindow = FindDescendant(Handle, "SysListView32");
+        if (listWindow == IntPtr.Zero || listWindow == _fileDropTargetWindow) return;
+
+        RemoveAsynchronousFileDropTarget();
+
+        var target = new ShellFileDropTarget(
+            () => _currentPath,
+            (paths, destination, move) =>
+                OperationManager.Current?.Start(
+                    move ? FileOperationKind.Move : FileOperationKind.Copy,
+                    paths, destination) != null);
+
+        // ExplorerBrowser registers a synchronous Shell target on its item view.
+        // Replace it with a target that merely captures CF_HDROP and schedules the
+        // operation, allowing IDropTarget.Drop (and therefore DoDragDrop) to return.
+        NativeMethods.RevokeDragDrop(listWindow);
+        int hr = NativeMethods.RegisterDragDrop(listWindow, target);
+        if (hr >= 0)
+        {
+            _fileDropTarget = target; // keep the CCW alive while OLE holds it
+            _fileDropTargetWindow = listWindow;
+        }
+        else
+        {
+            AppLog.Warn(null, nameof(InstallAsynchronousFileDropTarget),
+                $"RegisterDragDrop failed with HRESULT 0x{hr:X8}.");
+        }
+    }
+
+    private void RemoveAsynchronousFileDropTarget()
+    {
+        if (_fileDropTargetWindow != IntPtr.Zero)
+            NativeMethods.RevokeDragDrop(_fileDropTargetWindow);
+        _fileDropTargetWindow = IntPtr.Zero;
+        _fileDropTarget = null;
+    }
 
     /// <summary>
     /// Copies every selected file-system path to the clipboard, one per line.
@@ -1123,60 +1429,12 @@ public sealed class ExplorerHost : Control, IMessageFilter
     /// </summary>
     public void CopySelectedPaths()
     {
-        if (_browser == null) return;
-
+        if (SwitchToBrowserThread(CopySelectedPaths)) return;
         try
         {
-            var fv2Id = new Guid("1AF3A467-214F-4298-908E-06B03E0B39F9");
-            if (_browser.GetCurrentView(ref fv2Id, out IntPtr ppv) < 0 || ppv == IntPtr.Zero)
-                return;
-
-            try
-            {
-                var fv2 = (NativeMethods.IFolderView2)Marshal.GetObjectForIUnknown(ppv);
-                var paths = new List<string>();
-
-                // GetSelectedItem is useful for locating one selected item, but
-                // cannot reliably enumerate a multi-selection by advancing the
-                // returned view index. GetSelection returns one stable snapshot
-                // containing every selected item.
-                if (fv2.GetSelection(0, out IntPtr ppvSelection) < 0
-                    || ppvSelection == IntPtr.Zero)
-                    return;
-
-                try
-                {
-                    if (NativeMethods.ShellItemArrayGetCount(ppvSelection, out uint count) < 0)
-                        return;
-
-                    for (uint index = 0; index < count; index++)
-                    {
-                        if (NativeMethods.ShellItemArrayGetItemAt(
-                                ppvSelection, index, out IntPtr ppvItem) < 0
-                            || ppvItem == IntPtr.Zero)
-                            continue;
-
-                        try
-                        {
-                            var item = (NativeMethods.IShellItem)Marshal.GetObjectForIUnknown(ppvItem);
-                            if (item.GetDisplayName(0x80058000 /*SIGDN_FILESYSPATH*/, out string path) >= 0
-                                && !string.IsNullOrEmpty(path))
-                                paths.Add(path);
-                        }
-                        catch (Exception ex)
-                        {
-                            AppLog.Debug(ex, nameof(CopySelectedPaths),
-                                $"Could not resolve selected shell item {index} to a file-system path.");
-                        }
-                        finally { Marshal.Release(ppvItem); }
-                    }
-                }
-                finally { Marshal.Release(ppvSelection); }
-
-                if (paths.Count > 0)
-                    Clipboard.SetText(string.Join(Environment.NewLine, paths));
-            }
-            finally { Marshal.Release(ppv); }
+            string[] paths = GetSelectedFileSystemPaths();
+            if (paths.Length > 0)
+                Clipboard.SetText(string.Join(Environment.NewLine, paths));
         }
         catch (Exception ex)
         {
@@ -1185,21 +1443,75 @@ public sealed class ExplorerHost : Control, IMessageFilter
         }
     }
 
-    public void Delete()
+    private string[] GetSelectedFileSystemPaths()
     {
-        var m = Message.Create(Handle, 0x0100 /*WM_KEYDOWN*/, (IntPtr)0x2E /*VK_DELETE*/, (IntPtr)1);
-        TryShellTranslateAccelerator(ref m);
+        if (_browserThread != null
+            && NativeMethods.GetCurrentThreadId() != _browserThread.ThreadId)
+            return _browserThread.Invoke(GetSelectedFileSystemPaths);
+        if (_browser == null) return [];
+
+        var paths = new List<string>();
+        var fv2Id = new Guid("1AF3A467-214F-4298-908E-06B03E0B39F9");
+        if (_browser.GetCurrentView(ref fv2Id, out IntPtr ppv) < 0 || ppv == IntPtr.Zero)
+            return [];
+        try
+        {
+            var fv2 = (NativeMethods.IFolderView2)Marshal.GetObjectForIUnknown(ppv);
+            if (fv2.GetSelection(0, out IntPtr selection) < 0 || selection == IntPtr.Zero)
+                return [];
+            try
+            {
+                if (NativeMethods.ShellItemArrayGetCount(selection, out uint count) < 0)
+                    return [];
+                for (uint index = 0; index < count; index++)
+                {
+                    if (NativeMethods.ShellItemArrayGetItemAt(
+                            selection, index, out IntPtr itemPointer) < 0
+                        || itemPointer == IntPtr.Zero)
+                        continue;
+                    try
+                    {
+                        var item = (NativeMethods.IShellItem)Marshal.GetObjectForIUnknown(itemPointer);
+                        if (item.GetDisplayName(0x80058000, out string path) >= 0
+                            && !string.IsNullOrEmpty(path))
+                            paths.Add(path);
+                    }
+                    finally { Marshal.Release(itemPointer); }
+                }
+            }
+            finally { Marshal.Release(selection); }
+        }
+        finally { Marshal.Release(ppv); }
+        return paths.ToArray();
+    }
+
+    public void Delete(bool permanently = false)
+    {
+        if (SwitchToBrowserThread(() => Delete(permanently))) return;
+        try
+        {
+            string[] paths = GetSelectedFileSystemPaths();
+            OperationManager.Current?.Start(
+                permanently ? FileOperationKind.DeletePermanently : FileOperationKind.Delete,
+                paths);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, nameof(Delete), "Could not start the delete operation.");
+        }
     }
 
     // Rename: pass a synthetic VK_F2 WM_KEYDOWN through IInputObject::TranslateAcceleratorIO.
     public void Rename()
     {
+        if (SwitchToBrowserThread(Rename)) return;
         var m = Message.Create(Handle, 0x0100 /*WM_KEYDOWN*/, (IntPtr)0x71 /*VK_F2*/, (IntPtr)1);
         TryShellTranslateAccelerator(ref m);
     }
 
     private void SendAccelWithCtrl(int vk)
     {
+        if (SwitchToBrowserThread(() => SendAccelWithCtrl(vk))) return;
         byte[] saved = new byte[256];
         NativeMethods.GetKeyboardState(saved);
 
@@ -1219,6 +1531,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
     private void SendAccelWithAlt(int vk)
     {
+        if (SwitchToBrowserThread(() => SendAccelWithAlt(vk))) return;
         byte[] saved = new byte[256];
         NativeMethods.GetKeyboardState(saved);
 
@@ -1326,7 +1639,27 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
     private void DestroyBrowser()
     {
+        BrowserThread? thread = _browserThread;
+        if (thread != null && NativeMethods.GetCurrentThreadId() != thread.ThreadId)
+        {
+            try { thread.Invoke(DestroyBrowserCore); }
+            finally
+            {
+                thread.MessageHook = null;
+                thread.Dispose();
+                _browserThread = null;
+            }
+            return;
+        }
+
+        DestroyBrowserCore();
+    }
+
+    private void DestroyBrowserCore()
+    {
         if (_browser == null) return;
+
+        RemoveAsynchronousFileDropTarget();
 
         try
         {
@@ -1357,7 +1690,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
         _eventsCookie = 0;
     }
 
-    // Called by ExplorerBrowserEventsImpl on this control's UI thread.
+    // Called by ExplorerBrowserEventsImpl on the browser STA.
     internal void BrowserNavigationCompleted(bool succeeded)
     {
         if (_browser == null || IsDisposed || Disposing) return;
@@ -1365,11 +1698,29 @@ public sealed class ExplorerHost : Control, IMessageFilter
             AppLog.Debug(nameof(BrowserNavigationCompleted),
                 "The shell reported a failed navigation; continuing initial-view setup.");
 
+        // Capture the live path here, while already on the browser STA.  UI polling
+        // can then consume the snapshot without blocking on Shell modal operations.
+        if (succeeded)
+        {
+            string? livePath = QueryLivePath();
+            if (livePath != null)
+                _currentPath = livePath;
+        }
+
+        InstallAsynchronousFileDropTarget();
+
         // A completed BrowseToIDList has installed the final view. Folder state can
         // replace Initialize's settings, and DirectUI children now exist to be themed.
         ApplyFolderSettings(FVM_DETAILS);
         ActivateShellView(takeFocus: false);
         ApplyTheme();
+        ReportInitialNavigationCompleted();
+    }
+
+    private void ReportInitialNavigationCompleted()
+    {
+        if (Interlocked.Exchange(ref _initialNavigationReported, 1) != 0) return;
+        PostToUi(() => InitialNavigationCompleted?.Invoke(this, EventArgs.Empty));
     }
 
     /// <summary>
@@ -1527,6 +1878,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
     /// </summary>
     internal void SyncNavigationPane(string path)
     {
+        if (SwitchToBrowserThread(() => SyncNavigationPane(path))) return;
         if (_browser == null || string.IsNullOrEmpty(path)) return;
         try
         {
@@ -1810,6 +2162,161 @@ public sealed class ExplorerHost : Control, IMessageFilter
             || string.Equals(t, "此电脑",         StringComparison.OrdinalIgnoreCase); // Chinese
     }
 
+}
+
+/// <summary>
+/// OLE drop target for ordinary file-system objects. Drop returns as soon as the
+/// paths and intended effect have been captured; the owning ExplorerHost performs
+/// the actual Shell operation on a separate STA.
+/// </summary>
+[ComVisible(true)]
+[ClassInterface(ClassInterfaceType.None)]
+internal sealed class ShellFileDropTarget : NativeMethods.IDropTarget
+{
+    private const short CfHDrop = 15;
+    private readonly Func<string> _getDestination;
+    private readonly Func<string[], string, bool, bool> _startOperation;
+    private string[]? _dragPaths;
+
+    public ShellFileDropTarget(
+        Func<string> getDestination,
+        Func<string[], string, bool, bool> startOperation)
+    {
+        _getDestination = getDestination;
+        _startOperation = startOperation;
+    }
+
+    public int DragEnter(
+        System.Runtime.InteropServices.ComTypes.IDataObject dataObject,
+        uint keyState, NativeMethods.POINTL point, ref uint effect)
+    {
+        _dragPaths = TryGetFileDropPaths(dataObject);
+        effect = ChooseEffect(effect, keyState, _dragPaths, _getDestination());
+        return 0;
+    }
+
+    public int DragOver(uint keyState, NativeMethods.POINTL point, ref uint effect)
+    {
+        effect = ChooseEffect(effect, keyState, _dragPaths, _getDestination());
+        return 0;
+    }
+
+    public int DragLeave()
+    {
+        _dragPaths = null;
+        return 0;
+    }
+
+    public int Drop(
+        System.Runtime.InteropServices.ComTypes.IDataObject dataObject,
+        uint keyState, NativeMethods.POINTL point, ref uint effect)
+    {
+        string[]? paths = _dragPaths ?? TryGetFileDropPaths(dataObject);
+        string destination = _getDestination();
+        uint chosen = ChooseEffect(effect, keyState, paths, destination);
+        _dragPaths = null;
+
+        if (paths is not { Length: > 0 } || chosen == NativeMethods.DROPEFFECT_NONE)
+        {
+            effect = NativeMethods.DROPEFFECT_NONE;
+            return 0;
+        }
+
+        bool move = chosen == NativeMethods.DROPEFFECT_MOVE;
+        if (!_startOperation(paths, destination, move))
+        {
+            effect = NativeMethods.DROPEFFECT_NONE;
+            return 0;
+        }
+
+        // The helper owns the complete move. Report an optimized move so the drag
+        // source does not delete the source a second time after Drop returns.
+        effect = move ? NativeMethods.DROPEFFECT_NONE : chosen;
+        return 0;
+    }
+
+    internal static uint ChooseEffect(
+        uint allowedEffects, uint keyState, string[]? paths, string destination)
+    {
+        if (paths is not { Length: > 0 }
+            || !Directory.Exists(destination)
+            || (keyState & NativeMethods.MK_RBUTTON) != 0)
+            return NativeMethods.DROPEFFECT_NONE;
+
+        uint preferred;
+        if ((keyState & NativeMethods.MK_CONTROL) != 0)
+        {
+            preferred = NativeMethods.DROPEFFECT_COPY;
+        }
+        else if ((keyState & NativeMethods.MK_SHIFT) != 0)
+        {
+            preferred = NativeMethods.DROPEFFECT_MOVE;
+        }
+        else
+        {
+            string? destinationRoot = Path.GetPathRoot(destination);
+            bool sameVolume = destinationRoot != null && paths.All(path =>
+                string.Equals(Path.GetPathRoot(path), destinationRoot,
+                    StringComparison.OrdinalIgnoreCase));
+            preferred = sameVolume
+                ? NativeMethods.DROPEFFECT_MOVE
+                : NativeMethods.DROPEFFECT_COPY;
+        }
+
+        if ((allowedEffects & preferred) != 0) return preferred;
+        if ((allowedEffects & NativeMethods.DROPEFFECT_COPY) != 0)
+            return NativeMethods.DROPEFFECT_COPY;
+        if ((allowedEffects & NativeMethods.DROPEFFECT_MOVE) != 0)
+            return NativeMethods.DROPEFFECT_MOVE;
+        return NativeMethods.DROPEFFECT_NONE;
+    }
+
+    private static string[]? TryGetFileDropPaths(
+        System.Runtime.InteropServices.ComTypes.IDataObject dataObject)
+    {
+        var format = new System.Runtime.InteropServices.ComTypes.FORMATETC
+        {
+            cfFormat = CfHDrop,
+            dwAspect = System.Runtime.InteropServices.ComTypes.DVASPECT.DVASPECT_CONTENT,
+            lindex = -1,
+            tymed = System.Runtime.InteropServices.ComTypes.TYMED.TYMED_HGLOBAL,
+        };
+
+        try
+        {
+            if (dataObject.QueryGetData(ref format) != 0) return null;
+            dataObject.GetData(ref format, out System.Runtime.InteropServices.ComTypes.STGMEDIUM medium);
+            try
+            {
+                if (medium.tymed != System.Runtime.InteropServices.ComTypes.TYMED.TYMED_HGLOBAL
+                    || medium.unionmember == IntPtr.Zero)
+                    return null;
+
+                uint count = NativeMethods.DragQueryFileW(
+                    medium.unionmember, uint.MaxValue, null, 0);
+                if (count == 0) return null;
+
+                var paths = new string[count];
+                for (uint index = 0; index < count; index++)
+                {
+                    uint length = NativeMethods.DragQueryFileW(
+                        medium.unionmember, index, null, 0);
+                    var path = new StringBuilder(checked((int)length + 1));
+                    NativeMethods.DragQueryFileW(
+                        medium.unionmember, index, path, (uint)path.Capacity);
+                    paths[index] = path.ToString();
+                }
+                return paths;
+            }
+            finally { NativeMethods.ReleaseStgMedium(ref medium); }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(ShellFileDropTarget),
+                "Could not read CF_HDROP from the OLE data object.");
+            return null;
+        }
+    }
 }
 
 // Non-nested internal class — private nested class CCW does not reliably answer
