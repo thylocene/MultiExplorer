@@ -1,0 +1,907 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Codepage="1252" Manufacturer="MultiExplorer" ProductCode="{F17600A5-0AE5-464F-A92F-50AA2742BDC6}" Language="1033" Name="MultiExplorer" Version="1.2.0" UpgradeCode="{C1965219-E757-47A2-AA69-F84F693B94DC}" Scope="perUser">
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="The first launch may take a little longer than usual while Windows prepares the application. Subsequent launches will be faster." />
+    <Property Id="BUILD_DATE" Value="2026-09-09" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch MultiExplorer" />
+    <Property Id="WixShellExecTarget" Value="[#MultiExplorerExe]" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ErrorDialog" Value="ErrorDlg" />
+    <Property Id="WixUIRMOption" Value="UseRM" />
+    <Property Id="BURNMSIMODIFY" Secure="yes" />
+    <Property Id="BURNMSIREPAIR" Secure="yes" />
+    <Property Id="BURNMSIUNINSTALL" Secure="yes" />
+    <Property Id="PREVIOUSINSTALLPATH" Secure="yes">
+      <RegistrySearch Id="InstallPathSearch" Key="Software\MultiExplorer" Name="InstallPath" Root="HKCU" Bitness="always32" Type="raw" />
+    </Property>
+    <CustomTable Id="Wix4CloseApplication">
+      <Column Id="CloseApplication" Description="Primary key, non-localized token in table." PrimaryKey="yes" Width="72" Category="identifier" Modularize="Column" Type="string" />
+      <Column Id="Target" Description="Name of executable to ensure is closed." Localizable="yes" Width="0" Category="formatted" Modularize="Property" Type="string" />
+      <Column Id="Description" Description="Description string displayed to user when executable is in use." Nullable="yes" Width="0" Category="formatted" Modularize="Property" Type="string" />
+      <Column Id="Condition" Description="Optional expression which skips the closing." Nullable="yes" Width="0" Category="condition" Modularize="Condition" Type="string" />
+      <Column Id="Attributes" Description="A 32-bit word that specifies the attribute flags to be applied." MaxValue="2147483647" MinValue="0" Width="4" Type="int" />
+      <Column Id="Sequence" Description="Sequence to order the closings by." MaxValue="2147483647" MinValue="1" Nullable="yes" Width="4" Type="int" />
+      <Column Id="Property" Description="Optional property that is set to the number of running instances of the app." Nullable="yes" Width="72" Category="identifier" Modularize="Column" Type="string" />
+      <Column Id="TerminateExitCode" Description="Exit code to return from a terminated application." MaxValue="2147483647" MinValue="0" Nullable="yes" Width="4" Type="int" />
+      <Column Id="Timeout" Description="Timeout in milliseconds before scheduling restart or terminating application." MaxValue="2147483647" MinValue="1" Nullable="yes" Width="4" Type="int" />
+      <Row>
+        <Data Column="CloseApplication" Value="CloseMultiExplorer" />
+        <Data Column="Target" Value="MultiExplorer.exe" />
+        <Data Column="Attributes" Value="32" />
+        <Data Column="TerminateExitCode" Value="0" />
+        <Data Column="Timeout" Value="1000" />
+      </Row>
+    </CustomTable>
+    <CustomAction Id="SetINSTALLFOLDER" Directory="INSTALLFOLDER" Value="[PREVIOUSINSTALLPATH]" />
+    <CustomAction Id="Wix4CloseApplications_X86" BinaryRef="Wix4UtilCA_X86" DllEntry="WixCloseApplications" />
+    <CustomAction Id="Wix4CloseApplicationsDeferred_X86" Impersonate="no" Execute="deferred" BinaryRef="Wix4UtilCA_X86" DllEntry="WixCloseApplicationsDeferred" />
+    <CustomAction Id="Wix4CheckRebootRequired_X86" Return="ignore" BinaryRef="Wix4UtilCA_X86" DllEntry="WixCheckRebootRequired" />
+    <CustomAction Id="Wix4RemoveFoldersEx_X86" Return="ignore" BinaryRef="Wix4UtilCA_X86" DllEntry="WixRemoveFoldersEx" />
+    <CustomAction Id="Wix4ShellExec_X86" BinaryRef="Wix4UtilCA_X86" DllEntry="WixShellExec" />
+    <CustomAction Id="WixUIPrintEula_X86" Return="ignore" BinaryRef="WixUiCa_X86" DllEntry="PrintEula" />
+    <CustomAction Id="WixUIValidatePath_X86" Return="ignore" BinaryRef="WixUiCa_X86" DllEntry="ValidatePath" />
+    <Icon Id="AppIcon" SourceFile="FILE NOT EXPORTED" />
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="{7E1663C1-F591-4819-9EE9-D57CDD64609D}" Bitness="always32">
+        <Shortcut Id="DesktopSC" Directory="DesktopFolder" Description="Dual-pane file explorer" Icon="AppIcon" IconIndex="0" WorkingDirectory="INSTALLFOLDER" ShortName="kw2kmxdi" Name="MultiExplorer" Target="[INSTALLFOLDER]MultiExplorer.exe" />
+        <RegistryValue Id="regqpLwoxQXDas686QbOzVSNx.fomY" Key="Software\MultiExplorer" Name="DesktopShortcut" Root="HKCU" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="LocalProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" ShortName="h79encj2" Name="MultiExplorer">
+          <Component Id="MainExe" Guid="{802E9B3B-9AAA-41A8-AF21-CB895645D4C1}" Bitness="always32">
+            <RemoveFolder Id="RemoveInstallFolder" On="uninstall" Directory="INSTALLFOLDER" />
+            <RemoveFolder Id="RemoveLocalProgramsDir" On="uninstall" Directory="LocalProgramsDir" />
+            <File Id="MultiExplorerExe" ShortName="5lfoq31g.exe" Name="MultiExplorer.exe" Source="SourceDir\File\MultiExplorerExe" />
+            <File Id="LicenseFile" Name="LICENSE.txt" Source="SourceDir\File\LicenseFile" />
+            <File Id="ReadmeFile" Name="README.md" Source="SourceDir\File\ReadmeFile" />
+            <RegistryValue Id="reggQsRVL64NExPW0C0nkJUi0UogGE" Key="Software\MultiExplorer" Name="InstallPath" Root="HKCU" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+          </Component>
+          <Component Id="PublishedComponent_E3B0C44298FC1C149AFB" Guid="{1B2EF7D9-0B4E-9BDC-0ACD-3DCAD0B5E1F4}" Bitness="always32">
+            <File Id="PublishedFile_D6B37C3650206B639A7F" ShortName="aapydcy-.dll" Name="Accessibility.dll" Source="SourceDir\File\PublishedFile_D6B37C3650206B639A7F" />
+            <File Id="PublishedFile_49E2267F20469C059FF7" Name="clretwrc.dll" Source="SourceDir\File\PublishedFile_49E2267F20469C059FF7" />
+            <File Id="PublishedFile_D3BA62F8DEA0F642867F" Name="clrgc.dll" Source="SourceDir\File\PublishedFile_D3BA62F8DEA0F642867F" />
+            <File Id="PublishedFile_5434FA05CF1BC52EA83E" Name="clrjit.dll" Source="SourceDir\File\PublishedFile_5434FA05CF1BC52EA83E" />
+            <File Id="PublishedFile_21167760DA04F3B58AB4" Name="coreclr.dll" Source="SourceDir\File\PublishedFile_21167760DA04F3B58AB4" />
+            <File Id="PublishedFile_FC3D6C9793EE210F2D60" ShortName="nypq5b2n.exe" Name="createdump.exe" Source="SourceDir\File\PublishedFile_FC3D6C9793EE210F2D60" />
+            <File Id="PublishedFile_31DF11861A82F41FCEEE" ShortName="fpd00u_v.dll" Name="D3DCompiler_47_cor3.dll" Source="SourceDir\File\PublishedFile_31DF11861A82F41FCEEE" />
+            <File Id="PublishedFile_9D01DB9EF101D54EA514" ShortName="7ornq4rs.dll" Name="DirectWriteForwarder.dll" Source="SourceDir\File\PublishedFile_9D01DB9EF101D54EA514" />
+            <File Id="PublishedFile_09B5CEC08546CA163E82" Name="hostfxr.dll" Source="SourceDir\File\PublishedFile_09B5CEC08546CA163E82" />
+            <File Id="PublishedFile_A177D83F583A83AC39BA" ShortName="7isu13u2.dll" Name="hostpolicy.dll" Source="SourceDir\File\PublishedFile_A177D83F583A83AC39BA" />
+            <File Id="PublishedFile_1568257D0DF19B8091A0" ShortName="9ui0tiom.dll" Name="Microsoft.CSharp.dll" Source="SourceDir\File\PublishedFile_1568257D0DF19B8091A0" />
+            <File Id="PublishedFile_8A554EE68F00FFF8B964" ShortName="9qrqe_fm.dll" Name="Microsoft.DiaSymReader.Native.amd64.dll" Source="SourceDir\File\PublishedFile_8A554EE68F00FFF8B964" />
+            <File Id="PublishedFile_CA4FF6BCA863D04EE233" ShortName="xxns833e.dll" Name="Microsoft.VisualBasic.Core.dll" Source="SourceDir\File\PublishedFile_CA4FF6BCA863D04EE233" />
+            <File Id="PublishedFile_781E379DCC1021B025AD" ShortName="qjw4n_ia.dll" Name="Microsoft.VisualBasic.dll" Source="SourceDir\File\PublishedFile_781E379DCC1021B025AD" />
+            <File Id="PublishedFile_135102A5CF916A8768F6" ShortName="fq8ovf-w.dll" Name="Microsoft.VisualBasic.Forms.dll" Source="SourceDir\File\PublishedFile_135102A5CF916A8768F6" />
+            <File Id="PublishedFile_13768C6DE46DE5E09A30" ShortName="vvuod_c5.dll" Name="Microsoft.Win32.Primitives.dll" Source="SourceDir\File\PublishedFile_13768C6DE46DE5E09A30" />
+            <File Id="PublishedFile_4A25AEA997BB0B2EDADD" ShortName="p1jcjef3.dll" Name="Microsoft.Win32.Registry.AccessControl.dll" Source="SourceDir\File\PublishedFile_4A25AEA997BB0B2EDADD" />
+            <File Id="PublishedFile_8783E2A440C4D650BCF4" ShortName="p9gnpsdq.dll" Name="Microsoft.Win32.Registry.dll" Source="SourceDir\File\PublishedFile_8783E2A440C4D650BCF4" />
+            <File Id="PublishedFile_52AE605D0E6BC2A659A3" ShortName="6elu6cf5.dll" Name="Microsoft.Win32.SystemEvents.dll" Source="SourceDir\File\PublishedFile_52AE605D0E6BC2A659A3" />
+            <File Id="PublishedFile_8C66DF24863BB9736C42" ShortName="m2nata7e.dll" Name="mscordaccore.dll" Source="SourceDir\File\PublishedFile_8C66DF24863BB9736C42" />
+            <File Id="PublishedFile_43DCF7263D70ECEA1D53" ShortName="-modwyzb.dll" Name="mscordaccore_amd64_amd64_8.0.3026.36720.dll" Source="SourceDir\File\PublishedFile_43DCF7263D70ECEA1D53" />
+            <File Id="PublishedFile_BC5F2AF83838747AA55C" Name="mscordbi.dll" Source="SourceDir\File\PublishedFile_BC5F2AF83838747AA55C" />
+            <File Id="PublishedFile_137265D3F5FCE293DD28" Name="mscorlib.dll" Source="SourceDir\File\PublishedFile_137265D3F5FCE293DD28" />
+            <File Id="PublishedFile_40C15684035B909A22ED" Name="mscorrc.dll" Source="SourceDir\File\PublishedFile_40C15684035B909A22ED" />
+            <File Id="PublishedFile_0BD7B8E834D81AEE2E99" Name="msquic.dll" Source="SourceDir\File\PublishedFile_0BD7B8E834D81AEE2E99" />
+            <File Id="PublishedFile_DE645FB8ED10C1E013E7" ShortName="ul4oubvr.jso" Name="MultiExplorer.deps.json" Source="SourceDir\File\PublishedFile_DE645FB8ED10C1E013E7" />
+            <File Id="PublishedFile_8A077C2DF0F225CDF8AF" ShortName="d7delleu.dll" Name="MultiExplorer.dll" Source="SourceDir\File\PublishedFile_8A077C2DF0F225CDF8AF" />
+            <File Id="PublishedFile_B2A53A6E613968E271DE" ShortName="ba4hzw-c.jso" Name="MultiExplorer.runtimeconfig.json" Source="SourceDir\File\PublishedFile_B2A53A6E613968E271DE" />
+            <File Id="PublishedFile_A98B9C025B3EA75B6B3E" ShortName="damrvjuu.dll" Name="netstandard.dll" Source="SourceDir\File\PublishedFile_A98B9C025B3EA75B6B3E" />
+            <File Id="PublishedFile_484A220AF68D63B22657" ShortName="_r5ifh4l.dll" Name="PenImc_cor3.dll" Source="SourceDir\File\PublishedFile_484A220AF68D63B22657" />
+            <File Id="PublishedFile_B8A0573F17601A8CA4CA" ShortName="b3pbgitl.dll" Name="PresentationCore.dll" Source="SourceDir\File\PublishedFile_B8A0573F17601A8CA4CA" />
+            <File Id="PublishedFile_E420ADE5B2FCF9BF1063" ShortName="src--xaj.dll" Name="PresentationFramework.Aero.dll" Source="SourceDir\File\PublishedFile_E420ADE5B2FCF9BF1063" />
+            <File Id="PublishedFile_85BDBA0AEE1D5C91070E" ShortName="bemwqvrp.dll" Name="PresentationFramework.Aero2.dll" Source="SourceDir\File\PublishedFile_85BDBA0AEE1D5C91070E" />
+            <File Id="PublishedFile_A3BEA39AF53C8213FCF1" ShortName="i01cxqg0.dll" Name="PresentationFramework.AeroLite.dll" Source="SourceDir\File\PublishedFile_A3BEA39AF53C8213FCF1" />
+            <File Id="PublishedFile_20E4C1B7645AC8CC9E63" ShortName="1kz93esb.dll" Name="PresentationFramework.Classic.dll" Source="SourceDir\File\PublishedFile_20E4C1B7645AC8CC9E63" />
+            <File Id="PublishedFile_AB220CB963BD92E61535" ShortName="sxaqwqe2.dll" Name="PresentationFramework.dll" Source="SourceDir\File\PublishedFile_AB220CB963BD92E61535" />
+            <File Id="PublishedFile_E8B2535C044DE14DFE6F" ShortName="d7uzdioo.dll" Name="PresentationFramework.Luna.dll" Source="SourceDir\File\PublishedFile_E8B2535C044DE14DFE6F" />
+            <File Id="PublishedFile_9CABD91B5C3B823E1075" ShortName="devheznq.dll" Name="PresentationFramework.Royale.dll" Source="SourceDir\File\PublishedFile_9CABD91B5C3B823E1075" />
+            <File Id="PublishedFile_AE34BC106D2D15B40D20" ShortName="pzwxvfjp.dll" Name="PresentationFramework-SystemCore.dll" Source="SourceDir\File\PublishedFile_AE34BC106D2D15B40D20" />
+            <File Id="PublishedFile_E416709ED451CF1E0F85" ShortName="8oiflvmu.dll" Name="PresentationFramework-SystemData.dll" Source="SourceDir\File\PublishedFile_E416709ED451CF1E0F85" />
+            <File Id="PublishedFile_DC91BF21ABFF75682367" ShortName="ntetob-w.dll" Name="PresentationFramework-SystemDrawing.dll" Source="SourceDir\File\PublishedFile_DC91BF21ABFF75682367" />
+            <File Id="PublishedFile_1E03D7F3692A40D0ACBC" ShortName="9kefsjvl.dll" Name="PresentationFramework-SystemXml.dll" Source="SourceDir\File\PublishedFile_1E03D7F3692A40D0ACBC" />
+            <File Id="PublishedFile_981484FC0D8DA1059BC5" ShortName="mayxccja.dll" Name="PresentationFramework-SystemXmlLinq.dll" Source="SourceDir\File\PublishedFile_981484FC0D8DA1059BC5" />
+            <File Id="PublishedFile_265B345A39F6D71A8825" ShortName="fxt2rn5j.dll" Name="PresentationNative_cor3.dll" Source="SourceDir\File\PublishedFile_265B345A39F6D71A8825" />
+            <File Id="PublishedFile_1EFD8EE56FB1A97D737A" ShortName="dukx9j_b.dll" Name="PresentationUI.dll" Source="SourceDir\File\PublishedFile_1EFD8EE56FB1A97D737A" />
+            <File Id="PublishedFile_04678FC9C14EECF56909" ShortName="5a5ataev.dll" Name="ReachFramework.dll" Source="SourceDir\File\PublishedFile_04678FC9C14EECF56909" />
+            <File Id="PublishedFile_5C75F878B42E2BE09005" ShortName="q3dz2lq1.dll" Name="System.AppContext.dll" Source="SourceDir\File\PublishedFile_5C75F878B42E2BE09005" />
+            <File Id="PublishedFile_683F01FA4F33538FFE5C" ShortName="bbnzcy2c.dll" Name="System.Buffers.dll" Source="SourceDir\File\PublishedFile_683F01FA4F33538FFE5C" />
+            <File Id="PublishedFile_74C85702DB6BBCF50912" ShortName="l4cefdwj.dll" Name="System.CodeDom.dll" Source="SourceDir\File\PublishedFile_74C85702DB6BBCF50912" />
+            <File Id="PublishedFile_2FC1AADD3874E76134DE" ShortName="y7w2qmo1.dll" Name="System.Collections.Concurrent.dll" Source="SourceDir\File\PublishedFile_2FC1AADD3874E76134DE" />
+            <File Id="PublishedFile_367B948596CB3E995842" ShortName="olepphcq.dll" Name="System.Collections.dll" Source="SourceDir\File\PublishedFile_367B948596CB3E995842" />
+            <File Id="PublishedFile_040AF9FCFC89451BCB2A" ShortName="pxabt8qe.dll" Name="System.Collections.Immutable.dll" Source="SourceDir\File\PublishedFile_040AF9FCFC89451BCB2A" />
+            <File Id="PublishedFile_D0D3DAC1C6CA18107529" ShortName="-qheiw8z.dll" Name="System.Collections.NonGeneric.dll" Source="SourceDir\File\PublishedFile_D0D3DAC1C6CA18107529" />
+            <File Id="PublishedFile_13AC4867849451DF67D3" ShortName="4bwn8vdi.dll" Name="System.Collections.Specialized.dll" Source="SourceDir\File\PublishedFile_13AC4867849451DF67D3" />
+            <File Id="PublishedFile_F0AF4A3E07B61439AA0E" ShortName="ffkvb6ou.dll" Name="System.ComponentModel.Annotations.dll" Source="SourceDir\File\PublishedFile_F0AF4A3E07B61439AA0E" />
+            <File Id="PublishedFile_17DCE8FEBCFEE0E8D385" ShortName="l8m_8awv.dll" Name="System.ComponentModel.DataAnnotations.dll" Source="SourceDir\File\PublishedFile_17DCE8FEBCFEE0E8D385" />
+            <File Id="PublishedFile_5DA3329AAED6141CB7C4" ShortName="bwnhcbad.dll" Name="System.ComponentModel.dll" Source="SourceDir\File\PublishedFile_5DA3329AAED6141CB7C4" />
+            <File Id="PublishedFile_81FE94604D14D0F1EE76" ShortName="sx6im6av.dll" Name="System.ComponentModel.EventBasedAsync.dll" Source="SourceDir\File\PublishedFile_81FE94604D14D0F1EE76" />
+            <File Id="PublishedFile_354F800212A3ABD2BC41" ShortName="ucate2pn.dll" Name="System.ComponentModel.Primitives.dll" Source="SourceDir\File\PublishedFile_354F800212A3ABD2BC41" />
+            <File Id="PublishedFile_CD665CA27077EE411D0A" ShortName="fx5sq5tw.dll" Name="System.ComponentModel.TypeConverter.dll" Source="SourceDir\File\PublishedFile_CD665CA27077EE411D0A" />
+            <File Id="PublishedFile_6D49AFD971992AAFEE66" ShortName="7yrbu2mp.dll" Name="System.Configuration.ConfigurationManager.dll" Source="SourceDir\File\PublishedFile_6D49AFD971992AAFEE66" />
+            <File Id="PublishedFile_074D7C58EC44DE3950B0" ShortName="s9vsrntx.dll" Name="System.Configuration.dll" Source="SourceDir\File\PublishedFile_074D7C58EC44DE3950B0" />
+            <File Id="PublishedFile_B92533A8C611617C66CE" ShortName="ee9zvq9h.dll" Name="System.Console.dll" Source="SourceDir\File\PublishedFile_B92533A8C611617C66CE" />
+            <File Id="PublishedFile_FF1353889125ED0E2BB0" ShortName="hanrg4bs.dll" Name="System.Core.dll" Source="SourceDir\File\PublishedFile_FF1353889125ED0E2BB0" />
+            <File Id="PublishedFile_CBB6E70CF2472C27F29A" ShortName="uywzsufn.dll" Name="System.Data.Common.dll" Source="SourceDir\File\PublishedFile_CBB6E70CF2472C27F29A" />
+            <File Id="PublishedFile_68C038C3A95A908E33E2" ShortName="sw-h2ydy.dll" Name="System.Data.DataSetExtensions.dll" Source="SourceDir\File\PublishedFile_68C038C3A95A908E33E2" />
+            <File Id="PublishedFile_577D732137BC1444F4F3" ShortName="3owkzcpd.dll" Name="System.Data.dll" Source="SourceDir\File\PublishedFile_577D732137BC1444F4F3" />
+            <File Id="PublishedFile_8F950A128842E3BB5432" ShortName="u4kuzqhv.dll" Name="System.Design.dll" Source="SourceDir\File\PublishedFile_8F950A128842E3BB5432" />
+            <File Id="PublishedFile_97D249C4FDCD7BF1920B" ShortName="rduxuuf2.dll" Name="System.Diagnostics.Contracts.dll" Source="SourceDir\File\PublishedFile_97D249C4FDCD7BF1920B" />
+            <File Id="PublishedFile_AC047D9F024A17AF114D" ShortName="vovtzlpo.dll" Name="System.Diagnostics.Debug.dll" Source="SourceDir\File\PublishedFile_AC047D9F024A17AF114D" />
+            <File Id="PublishedFile_A0AE711A57EE70C08EAA" ShortName="g66nmekr.dll" Name="System.Diagnostics.DiagnosticSource.dll" Source="SourceDir\File\PublishedFile_A0AE711A57EE70C08EAA" />
+            <File Id="PublishedFile_9B1DEC2FD9486AEB2730" ShortName="rmh1pwvg.dll" Name="System.Diagnostics.EventLog.dll" Source="SourceDir\File\PublishedFile_9B1DEC2FD9486AEB2730" />
+            <File Id="PublishedFile_E3CB55F2AB0917275904" ShortName="svnk4lrs.dll" Name="System.Diagnostics.EventLog.Messages.dll" Source="SourceDir\File\PublishedFile_E3CB55F2AB0917275904" />
+            <File Id="PublishedFile_995DD5C98F48BD4CDB30" ShortName="osgzdhpj.dll" Name="System.Diagnostics.FileVersionInfo.dll" Source="SourceDir\File\PublishedFile_995DD5C98F48BD4CDB30" />
+            <File Id="PublishedFile_BFAEBB36CD4882F031A8" ShortName="qfao3wrg.dll" Name="System.Diagnostics.PerformanceCounter.dll" Source="SourceDir\File\PublishedFile_BFAEBB36CD4882F031A8" />
+            <File Id="PublishedFile_8AD26E8473EF9AF266D2" ShortName="77sw92r7.dll" Name="System.Diagnostics.Process.dll" Source="SourceDir\File\PublishedFile_8AD26E8473EF9AF266D2" />
+            <File Id="PublishedFile_1EF93362710E8F8923EB" ShortName="bknlbmpk.dll" Name="System.Diagnostics.StackTrace.dll" Source="SourceDir\File\PublishedFile_1EF93362710E8F8923EB" />
+            <File Id="PublishedFile_5237513842D0797BAC7E" ShortName="cx0wjxeu.dll" Name="System.Diagnostics.TextWriterTraceListener.dll" Source="SourceDir\File\PublishedFile_5237513842D0797BAC7E" />
+            <File Id="PublishedFile_07FECBBEEBBAB854FD21" ShortName="txxi03n6.dll" Name="System.Diagnostics.Tools.dll" Source="SourceDir\File\PublishedFile_07FECBBEEBBAB854FD21" />
+            <File Id="PublishedFile_CF9B2C7C3195BBDE0280" ShortName="mvrnfyt-.dll" Name="System.Diagnostics.TraceSource.dll" Source="SourceDir\File\PublishedFile_CF9B2C7C3195BBDE0280" />
+            <File Id="PublishedFile_B0AE892C0CB5894E117A" ShortName="5kjs-z-p.dll" Name="System.Diagnostics.Tracing.dll" Source="SourceDir\File\PublishedFile_B0AE892C0CB5894E117A" />
+            <File Id="PublishedFile_640B73B8411E25527C73" ShortName="lz1c7per.dll" Name="System.DirectoryServices.dll" Source="SourceDir\File\PublishedFile_640B73B8411E25527C73" />
+            <File Id="PublishedFile_3891033ABD0B05FD2DCC" Name="System.dll" Source="SourceDir\File\PublishedFile_3891033ABD0B05FD2DCC" />
+            <File Id="PublishedFile_858035F9FB4138CCBDCA" ShortName="ict-25o8.dll" Name="System.Drawing.Common.dll" Source="SourceDir\File\PublishedFile_858035F9FB4138CCBDCA" />
+            <File Id="PublishedFile_2764FAFB111B28D2D85C" ShortName="uccco7lv.dll" Name="System.Drawing.Design.dll" Source="SourceDir\File\PublishedFile_2764FAFB111B28D2D85C" />
+            <File Id="PublishedFile_6274D1450E31806540E2" ShortName="wfziblrc.dll" Name="System.Drawing.dll" Source="SourceDir\File\PublishedFile_6274D1450E31806540E2" />
+            <File Id="PublishedFile_5072710D4E65E90AE146" ShortName="umd0x-kb.dll" Name="System.Drawing.Primitives.dll" Source="SourceDir\File\PublishedFile_5072710D4E65E90AE146" />
+            <File Id="PublishedFile_D75C89C387A9FA64F4B6" ShortName="aotuwp-v.dll" Name="System.Dynamic.Runtime.dll" Source="SourceDir\File\PublishedFile_D75C89C387A9FA64F4B6" />
+            <File Id="PublishedFile_818E6BF5602AD13C80D3" ShortName="qfvrb093.dll" Name="System.Formats.Asn1.dll" Source="SourceDir\File\PublishedFile_818E6BF5602AD13C80D3" />
+            <File Id="PublishedFile_610920984C0ED0CB5FA7" ShortName="7cts4jl5.dll" Name="System.Formats.Tar.dll" Source="SourceDir\File\PublishedFile_610920984C0ED0CB5FA7" />
+            <File Id="PublishedFile_7C081D32D02C3FE21900" ShortName="5gemmmu-.dll" Name="System.Globalization.Calendars.dll" Source="SourceDir\File\PublishedFile_7C081D32D02C3FE21900" />
+            <File Id="PublishedFile_9422940E774B69F69C45" ShortName="ignbd-e8.dll" Name="System.Globalization.dll" Source="SourceDir\File\PublishedFile_9422940E774B69F69C45" />
+            <File Id="PublishedFile_A236F506AAD5C82B8AD1" ShortName="jf_reyqw.dll" Name="System.Globalization.Extensions.dll" Source="SourceDir\File\PublishedFile_A236F506AAD5C82B8AD1" />
+            <File Id="PublishedFile_03CE0A90ED7BB8F1EDC3" ShortName="erxgshje.dll" Name="System.IO.Compression.Brotli.dll" Source="SourceDir\File\PublishedFile_03CE0A90ED7BB8F1EDC3" />
+            <File Id="PublishedFile_663A2827698868C12647" ShortName="m3f9_c72.dll" Name="System.IO.Compression.dll" Source="SourceDir\File\PublishedFile_663A2827698868C12647" />
+            <File Id="PublishedFile_320A153266416BEB7667" ShortName="yhe8sx89.dll" Name="System.IO.Compression.FileSystem.dll" Source="SourceDir\File\PublishedFile_320A153266416BEB7667" />
+            <File Id="PublishedFile_5F66E8900D92CC6CF2EA" ShortName="ovfkdldv.dll" Name="System.IO.Compression.Native.dll" Source="SourceDir\File\PublishedFile_5F66E8900D92CC6CF2EA" />
+            <File Id="PublishedFile_C5F1D8044AFDBF06B4DA" ShortName="hrn0g88c.dll" Name="System.IO.Compression.ZipFile.dll" Source="SourceDir\File\PublishedFile_C5F1D8044AFDBF06B4DA" />
+            <File Id="PublishedFile_D2A67020395377D16F61" ShortName="_ak3amfe.dll" Name="System.IO.dll" Source="SourceDir\File\PublishedFile_D2A67020395377D16F61" />
+            <File Id="PublishedFile_8EAD3AA31B67DF604B59" ShortName="xu2utbur.dll" Name="System.IO.FileSystem.AccessControl.dll" Source="SourceDir\File\PublishedFile_8EAD3AA31B67DF604B59" />
+            <File Id="PublishedFile_F3D24665F6E050282677" ShortName="tzk7qjng.dll" Name="System.IO.FileSystem.dll" Source="SourceDir\File\PublishedFile_F3D24665F6E050282677" />
+            <File Id="PublishedFile_F1CA2CBD80D1D3709609" ShortName="2ohrpsgf.dll" Name="System.IO.FileSystem.DriveInfo.dll" Source="SourceDir\File\PublishedFile_F1CA2CBD80D1D3709609" />
+            <File Id="PublishedFile_F8D062B0F4560226C41D" ShortName="-x3fzu_u.dll" Name="System.IO.FileSystem.Primitives.dll" Source="SourceDir\File\PublishedFile_F8D062B0F4560226C41D" />
+            <File Id="PublishedFile_A3A6C7A2BFA314AF7B72" ShortName="l98f3k_v.dll" Name="System.IO.FileSystem.Watcher.dll" Source="SourceDir\File\PublishedFile_A3A6C7A2BFA314AF7B72" />
+            <File Id="PublishedFile_8B821690904BBB56DAC5" ShortName="xxrl7tne.dll" Name="System.IO.IsolatedStorage.dll" Source="SourceDir\File\PublishedFile_8B821690904BBB56DAC5" />
+            <File Id="PublishedFile_32A876CEEA6C49FF5A30" ShortName="n_0xqfcq.dll" Name="System.IO.MemoryMappedFiles.dll" Source="SourceDir\File\PublishedFile_32A876CEEA6C49FF5A30" />
+            <File Id="PublishedFile_0A5222364C59504E9421" ShortName="0paqfgwp.dll" Name="System.IO.Packaging.dll" Source="SourceDir\File\PublishedFile_0A5222364C59504E9421" />
+            <File Id="PublishedFile_CB4F132F28A897C84504" ShortName="bp2x2t7w.dll" Name="System.IO.Pipes.AccessControl.dll" Source="SourceDir\File\PublishedFile_CB4F132F28A897C84504" />
+            <File Id="PublishedFile_3A4EAA71AA894F8077A2" ShortName="crd3izba.dll" Name="System.IO.Pipes.dll" Source="SourceDir\File\PublishedFile_3A4EAA71AA894F8077A2" />
+            <File Id="PublishedFile_8C0EB175C7C0FFFB76DF" ShortName="5ygulxi1.dll" Name="System.IO.UnmanagedMemoryStream.dll" Source="SourceDir\File\PublishedFile_8C0EB175C7C0FFFB76DF" />
+            <File Id="PublishedFile_C04CE015D7113DC31053" ShortName="p3cltfls.dll" Name="System.Linq.dll" Source="SourceDir\File\PublishedFile_C04CE015D7113DC31053" />
+            <File Id="PublishedFile_B13DEE2F00994E264C86" ShortName="elnp5bqs.dll" Name="System.Linq.Expressions.dll" Source="SourceDir\File\PublishedFile_B13DEE2F00994E264C86" />
+            <File Id="PublishedFile_58A61FD6E476A3FBC579" ShortName="oziimmnd.dll" Name="System.Linq.Parallel.dll" Source="SourceDir\File\PublishedFile_58A61FD6E476A3FBC579" />
+            <File Id="PublishedFile_BABA7C58896F269EB590" ShortName="85iiug3m.dll" Name="System.Linq.Queryable.dll" Source="SourceDir\File\PublishedFile_BABA7C58896F269EB590" />
+            <File Id="PublishedFile_197607A0ED6500D350A7" ShortName="wkmoleb3.dll" Name="System.Memory.dll" Source="SourceDir\File\PublishedFile_197607A0ED6500D350A7" />
+            <File Id="PublishedFile_BF9E03B5214710A71563" ShortName="ehondicw.dll" Name="System.Net.dll" Source="SourceDir\File\PublishedFile_BF9E03B5214710A71563" />
+            <File Id="PublishedFile_463A2C87BBD3D6EBB6FB" ShortName="bvwwjslf.dll" Name="System.Net.Http.dll" Source="SourceDir\File\PublishedFile_463A2C87BBD3D6EBB6FB" />
+            <File Id="PublishedFile_2F20918C7D057E059B48" ShortName="nh0h2kz5.dll" Name="System.Net.Http.Json.dll" Source="SourceDir\File\PublishedFile_2F20918C7D057E059B48" />
+            <File Id="PublishedFile_3E745A725749F1D7FFEA" ShortName="zodkyx2x.dll" Name="System.Net.HttpListener.dll" Source="SourceDir\File\PublishedFile_3E745A725749F1D7FFEA" />
+            <File Id="PublishedFile_97390B428AD5581DAC0C" ShortName="1yhjhzqs.dll" Name="System.Net.Mail.dll" Source="SourceDir\File\PublishedFile_97390B428AD5581DAC0C" />
+            <File Id="PublishedFile_36ED788021B6041BFD21" ShortName="j_u-x_ew.dll" Name="System.Net.NameResolution.dll" Source="SourceDir\File\PublishedFile_36ED788021B6041BFD21" />
+            <File Id="PublishedFile_843D0E0713D5D2DA7230" ShortName="kvjvwiaf.dll" Name="System.Net.NetworkInformation.dll" Source="SourceDir\File\PublishedFile_843D0E0713D5D2DA7230" />
+            <File Id="PublishedFile_28A491E9BA056C7875C4" ShortName="hs39zk1g.dll" Name="System.Net.Ping.dll" Source="SourceDir\File\PublishedFile_28A491E9BA056C7875C4" />
+            <File Id="PublishedFile_CE3EE0EBEB466999A8ED" ShortName="rxwobf1e.dll" Name="System.Net.Primitives.dll" Source="SourceDir\File\PublishedFile_CE3EE0EBEB466999A8ED" />
+            <File Id="PublishedFile_62742FD938858B3CC0F8" ShortName="iai96x2a.dll" Name="System.Net.Quic.dll" Source="SourceDir\File\PublishedFile_62742FD938858B3CC0F8" />
+            <File Id="PublishedFile_F29E110B9672CC337BF6" ShortName="3xhrl8na.dll" Name="System.Net.Requests.dll" Source="SourceDir\File\PublishedFile_F29E110B9672CC337BF6" />
+            <File Id="PublishedFile_20D9E420DD999CDA57AB" ShortName="n_gtwu39.dll" Name="System.Net.Security.dll" Source="SourceDir\File\PublishedFile_20D9E420DD999CDA57AB" />
+            <File Id="PublishedFile_C044738E73BA6A86BE5C" ShortName="mj5n4m_b.dll" Name="System.Net.ServicePoint.dll" Source="SourceDir\File\PublishedFile_C044738E73BA6A86BE5C" />
+            <File Id="PublishedFile_AEDA537429AE73BC1249" ShortName="bn5pc3od.dll" Name="System.Net.Sockets.dll" Source="SourceDir\File\PublishedFile_AEDA537429AE73BC1249" />
+            <File Id="PublishedFile_E06F0F409DC1E3DFDDCF" ShortName="nm8fq4dh.dll" Name="System.Net.WebClient.dll" Source="SourceDir\File\PublishedFile_E06F0F409DC1E3DFDDCF" />
+            <File Id="PublishedFile_ABADD76CECDFB30F1F1A" ShortName="cuz_wvyl.dll" Name="System.Net.WebHeaderCollection.dll" Source="SourceDir\File\PublishedFile_ABADD76CECDFB30F1F1A" />
+            <File Id="PublishedFile_DC50B4B4F4A537801B7F" ShortName="wi0l9s5l.dll" Name="System.Net.WebProxy.dll" Source="SourceDir\File\PublishedFile_DC50B4B4F4A537801B7F" />
+            <File Id="PublishedFile_C2ACEC9E5B8C0E9B7A91" ShortName="ajr3ivra.dll" Name="System.Net.WebSockets.Client.dll" Source="SourceDir\File\PublishedFile_C2ACEC9E5B8C0E9B7A91" />
+            <File Id="PublishedFile_D9A1A0075596B52391FD" ShortName="r12iwjvt.dll" Name="System.Net.WebSockets.dll" Source="SourceDir\File\PublishedFile_D9A1A0075596B52391FD" />
+            <File Id="PublishedFile_A05068E0D1E49B1AB4EC" ShortName="fscaajjl.dll" Name="System.Numerics.dll" Source="SourceDir\File\PublishedFile_A05068E0D1E49B1AB4EC" />
+            <File Id="PublishedFile_E895A438F30243E6994E" ShortName="acahynjb.dll" Name="System.Numerics.Vectors.dll" Source="SourceDir\File\PublishedFile_E895A438F30243E6994E" />
+            <File Id="PublishedFile_D4A61A337699A7FDA808" ShortName="vphqwzps.dll" Name="System.ObjectModel.dll" Source="SourceDir\File\PublishedFile_D4A61A337699A7FDA808" />
+            <File Id="PublishedFile_1AD6ACD94B5082EB5717" ShortName="c_w1dym7.dll" Name="System.Printing.dll" Source="SourceDir\File\PublishedFile_1AD6ACD94B5082EB5717" />
+            <File Id="PublishedFile_6530E1BDD48394477B71" ShortName="pujy_vsa.dll" Name="System.Private.CoreLib.dll" Source="SourceDir\File\PublishedFile_6530E1BDD48394477B71" />
+            <File Id="PublishedFile_C238ABD70F390A042577" ShortName="fxwrilzn.dll" Name="System.Private.DataContractSerialization.dll" Source="SourceDir\File\PublishedFile_C238ABD70F390A042577" />
+            <File Id="PublishedFile_9AD2664DF032B203CD36" ShortName="t4iasbxk.dll" Name="System.Private.Uri.dll" Source="SourceDir\File\PublishedFile_9AD2664DF032B203CD36" />
+            <File Id="PublishedFile_99155A92895DBA6E9A0F" ShortName="s8vurjgv.dll" Name="System.Private.Xml.dll" Source="SourceDir\File\PublishedFile_99155A92895DBA6E9A0F" />
+            <File Id="PublishedFile_EAEDDC3140676DD7BF93" ShortName="nh4smjxm.dll" Name="System.Private.Xml.Linq.dll" Source="SourceDir\File\PublishedFile_EAEDDC3140676DD7BF93" />
+            <File Id="PublishedFile_CDC0860A8E5BD6A7374F" ShortName="qhxr4jzu.dll" Name="System.Reflection.DispatchProxy.dll" Source="SourceDir\File\PublishedFile_CDC0860A8E5BD6A7374F" />
+            <File Id="PublishedFile_7F7967A7F2E4A25BB5E5" ShortName="zvzztowx.dll" Name="System.Reflection.dll" Source="SourceDir\File\PublishedFile_7F7967A7F2E4A25BB5E5" />
+            <File Id="PublishedFile_504EF7E146949B9DB057" ShortName="mihjsuec.dll" Name="System.Reflection.Emit.dll" Source="SourceDir\File\PublishedFile_504EF7E146949B9DB057" />
+            <File Id="PublishedFile_58311D67171A8750EA82" ShortName="zdthxv44.dll" Name="System.Reflection.Emit.ILGeneration.dll" Source="SourceDir\File\PublishedFile_58311D67171A8750EA82" />
+            <File Id="PublishedFile_93123B05D4BF3D03E26A" ShortName="ne977w-s.dll" Name="System.Reflection.Emit.Lightweight.dll" Source="SourceDir\File\PublishedFile_93123B05D4BF3D03E26A" />
+            <File Id="PublishedFile_F95305B61D33AE676ED8" ShortName="fuh_lgbf.dll" Name="System.Reflection.Extensions.dll" Source="SourceDir\File\PublishedFile_F95305B61D33AE676ED8" />
+            <File Id="PublishedFile_081AA263A7930C7D1A20" ShortName="jglvip3e.dll" Name="System.Reflection.Metadata.dll" Source="SourceDir\File\PublishedFile_081AA263A7930C7D1A20" />
+            <File Id="PublishedFile_B38810FEC367A681D11D" ShortName="uu_ejzos.dll" Name="System.Reflection.Primitives.dll" Source="SourceDir\File\PublishedFile_B38810FEC367A681D11D" />
+            <File Id="PublishedFile_074F2F0BF6E3A959808E" ShortName="-eo1hsc6.dll" Name="System.Reflection.TypeExtensions.dll" Source="SourceDir\File\PublishedFile_074F2F0BF6E3A959808E" />
+            <File Id="PublishedFile_3D97D2099E4CDC688796" ShortName="8_g5m-no.dll" Name="System.Resources.Extensions.dll" Source="SourceDir\File\PublishedFile_3D97D2099E4CDC688796" />
+            <File Id="PublishedFile_54D91474642BB41E68CB" ShortName="jbxy_fkx.dll" Name="System.Resources.Reader.dll" Source="SourceDir\File\PublishedFile_54D91474642BB41E68CB" />
+            <File Id="PublishedFile_C10C588CFC444C157E89" ShortName="qsg_oslz.dll" Name="System.Resources.ResourceManager.dll" Source="SourceDir\File\PublishedFile_C10C588CFC444C157E89" />
+            <File Id="PublishedFile_8ED57707FA8BE7839ACC" ShortName="wkhrqr8m.dll" Name="System.Resources.Writer.dll" Source="SourceDir\File\PublishedFile_8ED57707FA8BE7839ACC" />
+            <File Id="PublishedFile_2A42FFAA01132E807988" ShortName="ml-wc2ig.dll" Name="System.Runtime.CompilerServices.Unsafe.dll" Source="SourceDir\File\PublishedFile_2A42FFAA01132E807988" />
+            <File Id="PublishedFile_765F15E294B37C597AC9" ShortName="4lyd3hej.dll" Name="System.Runtime.CompilerServices.VisualC.dll" Source="SourceDir\File\PublishedFile_765F15E294B37C597AC9" />
+            <File Id="PublishedFile_7416E1FDACDDBFE54757" ShortName="rvzu73gt.dll" Name="System.Runtime.dll" Source="SourceDir\File\PublishedFile_7416E1FDACDDBFE54757" />
+            <File Id="PublishedFile_1058B693B736433C1076" ShortName="glvyineq.dll" Name="System.Runtime.Extensions.dll" Source="SourceDir\File\PublishedFile_1058B693B736433C1076" />
+            <File Id="PublishedFile_EB5B4E9C60806B9F23EF" ShortName="tiyfndlj.dll" Name="System.Runtime.Handles.dll" Source="SourceDir\File\PublishedFile_EB5B4E9C60806B9F23EF" />
+            <File Id="PublishedFile_885747E4BD9531D42911" ShortName="-f5h1eaa.dll" Name="System.Runtime.InteropServices.dll" Source="SourceDir\File\PublishedFile_885747E4BD9531D42911" />
+            <File Id="PublishedFile_DFB550039842D81C9714" ShortName="kkovahiy.dll" Name="System.Runtime.InteropServices.JavaScript.dll" Source="SourceDir\File\PublishedFile_DFB550039842D81C9714" />
+            <File Id="PublishedFile_C25EF1EE09DE56A69785" ShortName="soph6hnt.dll" Name="System.Runtime.InteropServices.RuntimeInformation.dll" Source="SourceDir\File\PublishedFile_C25EF1EE09DE56A69785" />
+            <File Id="PublishedFile_B760573A3D84A7518179" ShortName="b5wgbs8n.dll" Name="System.Runtime.Intrinsics.dll" Source="SourceDir\File\PublishedFile_B760573A3D84A7518179" />
+            <File Id="PublishedFile_28E97316D49444D20B1A" ShortName="hcorgvhj.dll" Name="System.Runtime.Loader.dll" Source="SourceDir\File\PublishedFile_28E97316D49444D20B1A" />
+            <File Id="PublishedFile_DFCDEF1CDD7B5F5B9B13" ShortName="yzm_3q4h.dll" Name="System.Runtime.Numerics.dll" Source="SourceDir\File\PublishedFile_DFCDEF1CDD7B5F5B9B13" />
+            <File Id="PublishedFile_62F34D7F00718C94B37B" ShortName="iwjkhbat.dll" Name="System.Runtime.Serialization.dll" Source="SourceDir\File\PublishedFile_62F34D7F00718C94B37B" />
+            <File Id="PublishedFile_205706DE28BFC9CEFA87" ShortName="kbdqbd4-.dll" Name="System.Runtime.Serialization.Formatters.dll" Source="SourceDir\File\PublishedFile_205706DE28BFC9CEFA87" />
+            <File Id="PublishedFile_F3365A08699C7B5DD90F" ShortName="zaqllfkh.dll" Name="System.Runtime.Serialization.Json.dll" Source="SourceDir\File\PublishedFile_F3365A08699C7B5DD90F" />
+            <File Id="PublishedFile_8B48FD8602C695DA2394" ShortName="alnbo2nb.dll" Name="System.Runtime.Serialization.Primitives.dll" Source="SourceDir\File\PublishedFile_8B48FD8602C695DA2394" />
+            <File Id="PublishedFile_C83F77112F0016361797" ShortName="9twc4tqp.dll" Name="System.Runtime.Serialization.Xml.dll" Source="SourceDir\File\PublishedFile_C83F77112F0016361797" />
+            <File Id="PublishedFile_63971EB15AC5AA910A16" ShortName="g-yph92p.dll" Name="System.Security.AccessControl.dll" Source="SourceDir\File\PublishedFile_63971EB15AC5AA910A16" />
+            <File Id="PublishedFile_CC5351A38BE6AD251A2A" ShortName="ddpyxzwr.dll" Name="System.Security.Claims.dll" Source="SourceDir\File\PublishedFile_CC5351A38BE6AD251A2A" />
+            <File Id="PublishedFile_82BD678CDAA821EBCF25" ShortName="8dv_daao.dll" Name="System.Security.Cryptography.Algorithms.dll" Source="SourceDir\File\PublishedFile_82BD678CDAA821EBCF25" />
+            <File Id="PublishedFile_C4AC4DB36AFAF834F846" ShortName="etwl7fhx.dll" Name="System.Security.Cryptography.Cng.dll" Source="SourceDir\File\PublishedFile_C4AC4DB36AFAF834F846" />
+            <File Id="PublishedFile_B8DCD59B50F5EB3BF90A" ShortName="0-wcbudv.dll" Name="System.Security.Cryptography.Csp.dll" Source="SourceDir\File\PublishedFile_B8DCD59B50F5EB3BF90A" />
+            <File Id="PublishedFile_A9CABE7EB1A5E227E03E" ShortName="9mwmekeo.dll" Name="System.Security.Cryptography.dll" Source="SourceDir\File\PublishedFile_A9CABE7EB1A5E227E03E" />
+            <File Id="PublishedFile_D2CD1C66F8D4D10D6EDD" ShortName="og5aillf.dll" Name="System.Security.Cryptography.Encoding.dll" Source="SourceDir\File\PublishedFile_D2CD1C66F8D4D10D6EDD" />
+            <File Id="PublishedFile_C306732593D480D535EC" ShortName="5wpkq3ib.dll" Name="System.Security.Cryptography.OpenSsl.dll" Source="SourceDir\File\PublishedFile_C306732593D480D535EC" />
+            <File Id="PublishedFile_2D343E27A5A00B595CC6" ShortName="pgvh_fzt.dll" Name="System.Security.Cryptography.Pkcs.dll" Source="SourceDir\File\PublishedFile_2D343E27A5A00B595CC6" />
+            <File Id="PublishedFile_AC2E893E601408944227" ShortName="wgqcw7fn.dll" Name="System.Security.Cryptography.Primitives.dll" Source="SourceDir\File\PublishedFile_AC2E893E601408944227" />
+            <File Id="PublishedFile_82E04C944A736E80B1F7" ShortName="3jtjz1xk.dll" Name="System.Security.Cryptography.ProtectedData.dll" Source="SourceDir\File\PublishedFile_82E04C944A736E80B1F7" />
+            <File Id="PublishedFile_A9ADD510B1B62DC913DD" ShortName="7ungagnq.dll" Name="System.Security.Cryptography.X509Certificates.dll" Source="SourceDir\File\PublishedFile_A9ADD510B1B62DC913DD" />
+            <File Id="PublishedFile_C950CFC835CEB02FFC5D" ShortName="oydrly0e.dll" Name="System.Security.Cryptography.Xml.dll" Source="SourceDir\File\PublishedFile_C950CFC835CEB02FFC5D" />
+            <File Id="PublishedFile_53D8450733B1C2EBFC75" ShortName="pgaqx1dj.dll" Name="System.Security.dll" Source="SourceDir\File\PublishedFile_53D8450733B1C2EBFC75" />
+            <File Id="PublishedFile_3BE9E179CEDB4037B513" ShortName="9azop4hx.dll" Name="System.Security.Permissions.dll" Source="SourceDir\File\PublishedFile_3BE9E179CEDB4037B513" />
+            <File Id="PublishedFile_5EA103B0C4601DF6BE40" ShortName="dugtnr6p.dll" Name="System.Security.Principal.dll" Source="SourceDir\File\PublishedFile_5EA103B0C4601DF6BE40" />
+            <File Id="PublishedFile_A7D6D8197F9EE0AF58C2" ShortName="foghxrho.dll" Name="System.Security.Principal.Windows.dll" Source="SourceDir\File\PublishedFile_A7D6D8197F9EE0AF58C2" />
+            <File Id="PublishedFile_A783425089ECB1F6643B" ShortName="wk28uf7i.dll" Name="System.Security.SecureString.dll" Source="SourceDir\File\PublishedFile_A783425089ECB1F6643B" />
+            <File Id="PublishedFile_339D894C29C92AAAE7AC" ShortName="1bjfar-j.dll" Name="System.ServiceModel.Web.dll" Source="SourceDir\File\PublishedFile_339D894C29C92AAAE7AC" />
+            <File Id="PublishedFile_3792735FD2C42B21888D" ShortName="hqa2-q-x.dll" Name="System.ServiceProcess.dll" Source="SourceDir\File\PublishedFile_3792735FD2C42B21888D" />
+            <File Id="PublishedFile_073D0879011437087823" ShortName="7zmkujrj.dll" Name="System.Text.Encoding.CodePages.dll" Source="SourceDir\File\PublishedFile_073D0879011437087823" />
+            <File Id="PublishedFile_CC9E51133E6557236602" ShortName="0ey7zmbe.dll" Name="System.Text.Encoding.dll" Source="SourceDir\File\PublishedFile_CC9E51133E6557236602" />
+            <File Id="PublishedFile_C210F3DC21170CEE865E" ShortName="iou0wsqa.dll" Name="System.Text.Encoding.Extensions.dll" Source="SourceDir\File\PublishedFile_C210F3DC21170CEE865E" />
+            <File Id="PublishedFile_8202FDEA1F7D9EE5FE0A" ShortName="aban-ni6.dll" Name="System.Text.Encodings.Web.dll" Source="SourceDir\File\PublishedFile_8202FDEA1F7D9EE5FE0A" />
+            <File Id="PublishedFile_4767C19A4603B8E16D0B" ShortName="1bdeo6f2.dll" Name="System.Text.Json.dll" Source="SourceDir\File\PublishedFile_4767C19A4603B8E16D0B" />
+            <File Id="PublishedFile_1715DEB8EE7D391DB8AA" ShortName="knoyzqid.dll" Name="System.Text.RegularExpressions.dll" Source="SourceDir\File\PublishedFile_1715DEB8EE7D391DB8AA" />
+            <File Id="PublishedFile_56C167D177F407F4CF28" ShortName="kghj3wig.dll" Name="System.Threading.AccessControl.dll" Source="SourceDir\File\PublishedFile_56C167D177F407F4CF28" />
+            <File Id="PublishedFile_95020AE81A8488B736E4" ShortName="-b4ikgmo.dll" Name="System.Threading.Channels.dll" Source="SourceDir\File\PublishedFile_95020AE81A8488B736E4" />
+            <File Id="PublishedFile_DB0ADD61FA6217B14114" ShortName="eyciaqde.dll" Name="System.Threading.dll" Source="SourceDir\File\PublishedFile_DB0ADD61FA6217B14114" />
+            <File Id="PublishedFile_4E1F3EE84FECF3BE06B9" ShortName="t3uag5pe.dll" Name="System.Threading.Overlapped.dll" Source="SourceDir\File\PublishedFile_4E1F3EE84FECF3BE06B9" />
+            <File Id="PublishedFile_32CC0B33A56853F04C6C" ShortName="cnfobmyk.dll" Name="System.Threading.Tasks.Dataflow.dll" Source="SourceDir\File\PublishedFile_32CC0B33A56853F04C6C" />
+            <File Id="PublishedFile_1A91B16B760F713A5189" ShortName="6ky4588c.dll" Name="System.Threading.Tasks.dll" Source="SourceDir\File\PublishedFile_1A91B16B760F713A5189" />
+            <File Id="PublishedFile_E52E533D5490EC43EE59" ShortName="xak7cnk9.dll" Name="System.Threading.Tasks.Extensions.dll" Source="SourceDir\File\PublishedFile_E52E533D5490EC43EE59" />
+            <File Id="PublishedFile_B4B71976061BBFF39362" ShortName="zm5vtpn2.dll" Name="System.Threading.Tasks.Parallel.dll" Source="SourceDir\File\PublishedFile_B4B71976061BBFF39362" />
+            <File Id="PublishedFile_88729FBB638EF9C8CCDA" ShortName="3qomq1fw.dll" Name="System.Threading.Thread.dll" Source="SourceDir\File\PublishedFile_88729FBB638EF9C8CCDA" />
+            <File Id="PublishedFile_F7369BFC3D2A1B0573B7" ShortName="qmqjafr9.dll" Name="System.Threading.ThreadPool.dll" Source="SourceDir\File\PublishedFile_F7369BFC3D2A1B0573B7" />
+            <File Id="PublishedFile_916C905C5178290E34BD" ShortName="cf6sn6lu.dll" Name="System.Threading.Timer.dll" Source="SourceDir\File\PublishedFile_916C905C5178290E34BD" />
+            <File Id="PublishedFile_3D6C8A6794E074F44DF9" ShortName="cni5al_j.dll" Name="System.Transactions.dll" Source="SourceDir\File\PublishedFile_3D6C8A6794E074F44DF9" />
+            <File Id="PublishedFile_A45538E9082CABB1A55A" ShortName="38odes7x.dll" Name="System.Transactions.Local.dll" Source="SourceDir\File\PublishedFile_A45538E9082CABB1A55A" />
+            <File Id="PublishedFile_59865FC773CD5423B4F8" ShortName="rxq2wyd3.dll" Name="System.ValueTuple.dll" Source="SourceDir\File\PublishedFile_59865FC773CD5423B4F8" />
+            <File Id="PublishedFile_1B1549363AAD412A760C" ShortName="l-6fctdt.dll" Name="System.Web.dll" Source="SourceDir\File\PublishedFile_1B1549363AAD412A760C" />
+            <File Id="PublishedFile_C4DC09B572E715264BC4" ShortName="sn1vr7za.dll" Name="System.Web.HttpUtility.dll" Source="SourceDir\File\PublishedFile_C4DC09B572E715264BC4" />
+            <File Id="PublishedFile_20FA3082D34F3354B2BD" ShortName="wp67je6a.dll" Name="System.Windows.Controls.Ribbon.dll" Source="SourceDir\File\PublishedFile_20FA3082D34F3354B2BD" />
+            <File Id="PublishedFile_D128D34DC105C5AC7200" ShortName="zr0rv0hc.dll" Name="System.Windows.dll" Source="SourceDir\File\PublishedFile_D128D34DC105C5AC7200" />
+            <File Id="PublishedFile_BE6F8080845AFB8B6B0C" ShortName="jh33dvxs.dll" Name="System.Windows.Extensions.dll" Source="SourceDir\File\PublishedFile_BE6F8080845AFB8B6B0C" />
+            <File Id="PublishedFile_E8E560697D2FB5F6E96E" ShortName="-ay46rdc.dll" Name="System.Windows.Forms.Design.dll" Source="SourceDir\File\PublishedFile_E8E560697D2FB5F6E96E" />
+            <File Id="PublishedFile_BF96AA1F3A05EDF74265" ShortName="2iioii9p.dll" Name="System.Windows.Forms.Design.Editors.dll" Source="SourceDir\File\PublishedFile_BF96AA1F3A05EDF74265" />
+            <File Id="PublishedFile_27D3588E03AC9AF4D9DF" ShortName="etjn8vl3.dll" Name="System.Windows.Forms.dll" Source="SourceDir\File\PublishedFile_27D3588E03AC9AF4D9DF" />
+            <File Id="PublishedFile_97F879443605644FB20E" ShortName="jnwnxxxn.dll" Name="System.Windows.Forms.Primitives.dll" Source="SourceDir\File\PublishedFile_97F879443605644FB20E" />
+            <File Id="PublishedFile_583A69024E11B92618B0" ShortName="untw2jhl.dll" Name="System.Windows.Input.Manipulations.dll" Source="SourceDir\File\PublishedFile_583A69024E11B92618B0" />
+            <File Id="PublishedFile_7BFA5F4F2BFD515B89FF" ShortName="smubtscs.dll" Name="System.Windows.Presentation.dll" Source="SourceDir\File\PublishedFile_7BFA5F4F2BFD515B89FF" />
+            <File Id="PublishedFile_4F343DD81ABB42418688" ShortName="yefbnrdv.dll" Name="System.Xaml.dll" Source="SourceDir\File\PublishedFile_4F343DD81ABB42418688" />
+            <File Id="PublishedFile_21A34F1319B5D952985E" ShortName="iswthbfv.dll" Name="System.Xml.dll" Source="SourceDir\File\PublishedFile_21A34F1319B5D952985E" />
+            <File Id="PublishedFile_1B881EADDACEDB483299" ShortName="4cphq3x2.dll" Name="System.Xml.Linq.dll" Source="SourceDir\File\PublishedFile_1B881EADDACEDB483299" />
+            <File Id="PublishedFile_03F01236BCCAC19BBEA9" ShortName="cmfrp5an.dll" Name="System.Xml.ReaderWriter.dll" Source="SourceDir\File\PublishedFile_03F01236BCCAC19BBEA9" />
+            <File Id="PublishedFile_EC61924F2C6D9F54CAA2" ShortName="b0yynk3c.dll" Name="System.Xml.Serialization.dll" Source="SourceDir\File\PublishedFile_EC61924F2C6D9F54CAA2" />
+            <File Id="PublishedFile_062EAC4C4B695D468BB1" ShortName="gjoqsufe.dll" Name="System.Xml.XDocument.dll" Source="SourceDir\File\PublishedFile_062EAC4C4B695D468BB1" />
+            <File Id="PublishedFile_869246EE4F51039228DD" ShortName="npox0fe4.dll" Name="System.Xml.XmlDocument.dll" Source="SourceDir\File\PublishedFile_869246EE4F51039228DD" />
+            <File Id="PublishedFile_370AC52BA9457F1A91A5" ShortName="stzeqwqo.dll" Name="System.Xml.XmlSerializer.dll" Source="SourceDir\File\PublishedFile_370AC52BA9457F1A91A5" />
+            <File Id="PublishedFile_1BF0489901B0CA192D3D" ShortName="vh3nxvki.dll" Name="System.Xml.XPath.dll" Source="SourceDir\File\PublishedFile_1BF0489901B0CA192D3D" />
+            <File Id="PublishedFile_B4384A81C338BD71C5B6" ShortName="y_xorfzk.dll" Name="System.Xml.XPath.XDocument.dll" Source="SourceDir\File\PublishedFile_B4384A81C338BD71C5B6" />
+            <File Id="PublishedFile_79435757DADD82FBBBA2" ShortName="fuqjtb7l.dll" Name="UIAutomationClient.dll" Source="SourceDir\File\PublishedFile_79435757DADD82FBBBA2" />
+            <File Id="PublishedFile_A72C53160B5607E5A212" ShortName="gfodfrof.dll" Name="UIAutomationClientSideProviders.dll" Source="SourceDir\File\PublishedFile_A72C53160B5607E5A212" />
+            <File Id="PublishedFile_7ACAB0DF53689A2D8235" ShortName="xlc9_g55.dll" Name="UIAutomationProvider.dll" Source="SourceDir\File\PublishedFile_7ACAB0DF53689A2D8235" />
+            <File Id="PublishedFile_82BAB8E0D2CA5D754FC4" ShortName="s8ban6p5.dll" Name="UIAutomationTypes.dll" Source="SourceDir\File\PublishedFile_82BAB8E0D2CA5D754FC4" />
+            <File Id="PublishedFile_704E70145F90900F61E5" ShortName="em6guymr.dll" Name="vcruntime140_cor3.dll" Source="SourceDir\File\PublishedFile_704E70145F90900F61E5" />
+            <File Id="PublishedFile_F850ED95FF8FB8FA9B83" ShortName="ma5bkw6z.dll" Name="WindowsBase.dll" Source="SourceDir\File\PublishedFile_F850ED95FF8FB8FA9B83" />
+            <File Id="PublishedFile_92127B392D95372C87FF" ShortName="8hfiyapz.dll" Name="WindowsFormsIntegration.dll" Source="SourceDir\File\PublishedFile_92127B392D95372C87FF" />
+            <File Id="PublishedFile_B5ACBF26EAE8C27B770E" ShortName="bw4klv6j.dll" Name="wpfgfx_cor3.dll" Source="SourceDir\File\PublishedFile_B5ACBF26EAE8C27B770E" />
+            <RegistryValue Id="regbvoGIdq6W8kaGUhGN3grJkR7KTE" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_E3B0C44298FC1C149AFB" Root="HKCU" Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppMenuFolder" ShortName="ououxowm" Name="MultiExplorer">
+        <Component Id="StartMenuShortcut" Guid="{F454644F-1F8B-4629-8203-4443A1B3B1BF}" Bitness="always32">
+          <RemoveFolder Id="RemoveAppMenuFolder" On="uninstall" Directory="AppMenuFolder" />
+          <Shortcut Id="StartMenuSC" Directory="AppMenuFolder" Description="Dual-pane file explorer" Icon="AppIcon" IconIndex="0" WorkingDirectory="INSTALLFOLDER" ShortName="g9zqrncj" Name="MultiExplorer" Target="[INSTALLFOLDER]MultiExplorer.exe" />
+          <RegistryValue Id="reg90_A0wfY5jtZc6Y.90HT6CVayXY" Key="Software\MultiExplorer" Name="StartMenuShortcut" Root="HKCU" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <CustomTable Id="Wix4RemoveFolderEx">
+      <Column Id="RemoveFolderEx" Description="Identifier for the WixRemoveFolderEx row in the package." PrimaryKey="yes" Width="72" Category="identifier" Modularize="Column" Type="string" />
+      <Column Id="Component_" Description="Foreign key into the Component table used to determine install state" KeyTable="Component" KeyColumn="1" Width="72" Category="identifier" Modularize="Column" Type="string" />
+      <Column Id="Property" Description="Name of Property that contains the root of the directory tree to remove." Width="72" Category="identifier" Modularize="Column" Type="string" />
+      <Column Id="InstallMode" Description="1 == Remove only when the associated component is being installed (msiInstallStateLocal or msiInstallStateSource), 2 == Remove only when the associated component is being removed (msiInstallStateAbsent), 3 = Remove in either of the above cases." MaxValue="3" MinValue="1" Width="2" Type="int" />
+      <Column Id="Condition" Description="Optional expression which skips the removing of folders." Nullable="yes" Width="0" Category="condition" Modularize="Condition" Type="string" />
+      <Row>
+        <Data Column="RemoveFolderEx" Value="RemoveInstallFolderEx" />
+        <Data Column="Component_" Value="MainExe" />
+        <Data Column="Property" Value="PREVIOUSINSTALLPATH" />
+        <Data Column="InstallMode" Value="2" />
+      </Row>
+    </CustomTable>
+    <Feature Id="Main" Level="1">
+      <ComponentRef Id="MainExe" />
+      <ComponentRef Id="PublishedComponent_E3B0C44298FC1C149AFB" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+    <UI>
+      <Dialog Id="ErrorDlg" X="50" Y="50" Width="270" Height="105" ErrorDialog="yes" Title="[ProductName] Setup">
+        <Control Id="ErrorText" Type="Text" X="48" Y="15" Width="205" Height="60" Text="Information text" NoPrefix="yes" TabSkip="no" />
+        <Control Id="Y" Type="PushButton" X="100" Y="80" Width="56" Height="17" Text="&amp;Yes" TabSkip="yes">
+          <Publish Event="EndDialog" Value="ErrorYes" />
+        </Control>
+        <Control Id="A" Type="PushButton" X="100" Y="80" Width="56" Height="17" Text="Cancel" TabSkip="yes">
+          <Publish Event="EndDialog" Value="ErrorAbort" />
+        </Control>
+        <Control Id="C" Type="PushButton" X="100" Y="80" Width="56" Height="17" Text="Cancel" TabSkip="yes">
+          <Publish Event="EndDialog" Value="ErrorCancel" />
+        </Control>
+        <Control Id="ErrorIcon" Type="Icon" X="15" Y="15" Width="24" Height="24" Text="WixUI_Ico_Info" Disabled="yes" FixedSize="yes" IconSize="32" ToolTip="Information icon" TabSkip="yes" />
+        <Control Id="I" Type="PushButton" X="100" Y="80" Width="56" Height="17" Text="&amp;Ignore" TabSkip="yes">
+          <Publish Event="EndDialog" Value="ErrorIgnore" />
+        </Control>
+        <Control Id="N" Type="PushButton" X="100" Y="80" Width="56" Height="17" Text="&amp;No" TabSkip="yes">
+          <Publish Event="EndDialog" Value="ErrorNo" />
+        </Control>
+        <Control Id="O" Type="PushButton" X="100" Y="80" Width="56" Height="17" Text="OK" TabSkip="yes">
+          <Publish Event="EndDialog" Value="ErrorOk" />
+        </Control>
+        <Control Id="R" Type="PushButton" X="100" Y="80" Width="56" Height="17" Text="&amp;Retry" TabSkip="yes">
+          <Publish Event="EndDialog" Value="ErrorRetry" />
+        </Control>
+      </Dialog>
+      <Dialog Id="ExistingVersionDlg" X="50" Y="50" Width="370" Height="270" Title="MultiExplorer Setup">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" Disabled="yes" TabSkip="no" />
+        <Control Id="Continue" Type="PushButton" X="212" Y="243" Width="80" Height="17" Text="Continue" TabSkip="no" Default="yes">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" TabSkip="no" Cancel="yes">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="340" Height="20" Text="Choose whether to replace the existing installation." Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Text="Existing version detected" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="Message" Type="Text" X="25" Y="75" Width="320" Height="70" Text="The installed version of MultiExplorer is the same as or older than this setup package. Continuing will uninstall the existing version and install this version. Your application settings will be preserved." NoPrefix="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="WelcomeDlg" X="50" Y="50" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Next" TabSkip="no" Default="yes">
+          <Publish Condition="Installed AND PATCH" Property="WixUI_InstallMode" Value="Update" />
+          <Publish Condition="NOT Installed" Event="NewDialog" Value="LicenseAgreementDlg" />
+          <Publish Condition="Installed AND PATCH" Event="NewDialog" Value="VerifyReadyDlg" />
+          <Publish Condition="WIX_UPGRADE_DETECTED AND NOT Installed" Event="SpawnDialog" Value="ExistingVersionDlg" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" TabSkip="no" Cancel="yes">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" Text="WixUI_Bmp_Dialog" Disabled="yes" TabSkip="no" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back" Disabled="yes" TabSkip="no" />
+        <Control Id="Description" Type="Text" X="135" Y="80" Width="220" Height="60" Text="Version 1.2.0  |  Build date 2026-09-09&#xD;&#xA;&#xD;&#xA;The Setup Wizard will install [ProductName] on your computer. Click Next to continue or Cancel to exit the Setup Wizard." Transparent="yes" NoPrefix="yes" HideCondition="Installed AND PATCH" ShowCondition="NOT Installed OR NOT PATCH" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="135" Y="20" Width="220" Height="60" Text="{\WixUI_Font_Bigger}Welcome to the [ProductName] Setup Wizard" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="PatchDescription" Type="Text" X="135" Y="80" Width="220" Height="60" Text="The Setup Wizard will update [ProductName] on your computer. Click Next to continue or Cancel to exit the Setup Wizard." Transparent="yes" NoPrefix="yes" HideCondition="NOT Installed OR NOT PATCH" ShowCondition="Installed AND PATCH" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="CancelDlg" X="50" Y="50" Width="260" Height="85" Title="[ProductName] Setup">
+        <Control Id="No" Type="PushButton" X="132" Y="57" Width="56" Height="17" Text="&amp;No" TabSkip="no" Default="yes" Cancel="yes">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Yes" Type="PushButton" X="72" Y="57" Width="56" Height="17" Text="&amp;Yes" TabSkip="no">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+        <Control Id="Icon" Type="Icon" X="15" Y="15" Width="24" Height="24" Text="WixUI_Ico_Info" Disabled="yes" FixedSize="yes" IconSize="32" ToolTip="Information icon" TabSkip="yes" />
+        <Control Id="Text" Type="Text" X="48" Y="15" Width="194" Height="30" Text="Are you sure you want to cancel [ProductName] installation?" NoPrefix="yes" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="ProgressDlg" X="50" Y="50" Width="370" Height="270" Modeless="yes" Title="[ProductName] Setup">
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" TabSkip="no" Default="yes" Cancel="yes">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" Disabled="yes" TabSkip="no" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back" Disabled="yes" TabSkip="no" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Next" Disabled="yes" TabSkip="no" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="TextInstalling" Type="Text" X="20" Y="65" Width="330" Height="35" Text="Please wait while the Setup Wizard installs [ProductName]." Hidden="yes" NoPrefix="yes" ShowCondition="NOT Installed OR (Installed AND (RESUME OR Preselected) AND NOT PATCH)" TabSkip="yes" />
+        <Control Id="TitleInstalling" Type="Text" X="20" Y="15" Width="330" Height="15" Text="{\WixUI_Font_Title}Installing [ProductName]" Hidden="yes" Transparent="yes" NoPrefix="yes" ShowCondition="NOT Installed OR (Installed AND (RESUME OR Preselected) AND NOT PATCH)" TabSkip="yes" />
+        <Control Id="TextChanging" Type="Text" X="20" Y="65" Width="330" Height="35" Text="Please wait while the Setup Wizard changes [ProductName]." Hidden="yes" NoPrefix="yes" ShowCondition="WixUI_InstallMode = &quot;Change&quot;" TabSkip="yes" />
+        <Control Id="TitleChanging" Type="Text" X="20" Y="15" Width="330" Height="15" Text="{\WixUI_Font_Title}Changing [ProductName]" Hidden="yes" Transparent="yes" NoPrefix="yes" ShowCondition="WixUI_InstallMode = &quot;Change&quot;" TabSkip="yes" />
+        <Control Id="TextRepairing" Type="Text" X="20" Y="65" Width="330" Height="35" Text="Please wait while the Setup Wizard repairs [ProductName]." Hidden="yes" NoPrefix="yes" ShowCondition="WixUI_InstallMode = &quot;Repair&quot;" TabSkip="yes" />
+        <Control Id="TitleRepairing" Type="Text" X="20" Y="15" Width="330" Height="15" Text="{\WixUI_Font_Title}Repairing [ProductName]" Hidden="yes" Transparent="yes" NoPrefix="yes" ShowCondition="WixUI_InstallMode = &quot;Repair&quot;" TabSkip="yes" />
+        <Control Id="TextRemoving" Type="Text" X="20" Y="65" Width="330" Height="35" Text="Please wait while the Setup Wizard removes [ProductName]." Hidden="yes" NoPrefix="yes" ShowCondition="WixUI_InstallMode = &quot;Remove&quot;" TabSkip="yes" />
+        <Control Id="TitleRemoving" Type="Text" X="20" Y="15" Width="330" Height="15" Text="{\WixUI_Font_Title}Removing [ProductName]" Hidden="yes" Transparent="yes" NoPrefix="yes" ShowCondition="WixUI_InstallMode = &quot;Remove&quot;" TabSkip="yes" />
+        <Control Id="TextUpdating" Type="Text" X="20" Y="65" Width="330" Height="35" Text="Please wait while the Setup Wizard updates [ProductName]." Hidden="yes" NoPrefix="yes" ShowCondition="WixUI_InstallMode = &quot;Update&quot;" TabSkip="yes" />
+        <Control Id="TitleUpdating" Type="Text" X="20" Y="15" Width="330" Height="15" Text="{\WixUI_Font_Title}Updating [ProductName]" Hidden="yes" Transparent="yes" NoPrefix="yes" ShowCondition="WixUI_InstallMode = &quot;Update&quot;" TabSkip="yes" />
+        <Control Id="ActionText" Type="Text" X="70" Y="100" Width="285" Height="10" TabSkip="yes">
+          <Subscribe Event="ActionText" Attribute="Text" />
+        </Control>
+        <Control Id="ProgressBar" Type="ProgressBar" X="20" Y="115" Width="330" Height="10" Text="Progress done" Disabled="yes" ProgressBlocks="yes" TabSkip="yes">
+          <Subscribe Event="SetProgress" Attribute="Progress" />
+        </Control>
+        <Control Id="StatusLabel" Type="Text" X="20" Y="100" Width="50" Height="10" Text="Status:" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="ExitDialog" X="50" Y="50" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="Finish" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Finish" TabSkip="no" Default="yes" Cancel="yes">
+          <Publish Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" Event="DoAction" Value="Wix4ShellExec_X86" />
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" Disabled="yes" TabSkip="no" />
+        <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" Text="WixUI_Bmp_Dialog" Disabled="yes" TabSkip="no" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back" Disabled="yes" TabSkip="no" />
+        <Control Id="OptionalCheckBox" Type="CheckBox" X="135" Y="190" Width="220" Height="40" Text="[WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT]" Hidden="yes" ShowCondition="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT AND NOT Installed" Property="WIXUI_EXITDIALOGOPTIONALCHECKBOX" CheckBoxValue="1" TabSkip="no" />
+        <Control Id="Description" Type="Text" X="135" Y="70" Width="220" Height="40" Text="Click the Finish button to exit the Setup Wizard." Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="135" Y="20" Width="220" Height="60" Text="{\WixUI_Font_Bigger}Completed the [ProductName] Setup Wizard" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="OptionalText" Type="Text" X="135" Y="110" Width="220" Height="80" Text="[WIXUI_EXITDIALOGOPTIONALTEXT]" Hidden="yes" Transparent="yes" NoPrefix="yes" ShowCondition="WIXUI_EXITDIALOGOPTIONALTEXT AND NOT Installed" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="LicenseAgreementDlg" X="50" Y="50" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" Disabled="yes" TabSkip="no" />
+        <Control Id="LicenseAcceptedCheckBox" Type="CheckBox" X="20" Y="207" Width="330" Height="18" Text="I &amp;accept the terms in the License Agreement" Property="LicenseAccepted" CheckBoxValue="1" TabSkip="no" />
+        <Control Id="Print" Type="PushButton" X="112" Y="243" Width="56" Height="17" Text="&amp;Print" TabSkip="no">
+          <Publish Event="DoAction" Value="WixUIPrintEula_X86" />
+        </Control>
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back" TabSkip="no">
+          <Publish Event="NewDialog" Value="WelcomeDlg" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Next" EnableCondition="LicenseAccepted = &quot;1&quot;" DisableCondition="LicenseAccepted &lt;&gt; &quot;1&quot;" TabSkip="no" Default="yes">
+          <Publish Condition="LicenseAccepted = &quot;1&quot;" Event="NewDialog" Value="InstallDirDlg" />
+          <Publish Condition="1 OR CostingComplete = 1" Event="SpawnWaitDialog" Value="WaitForCostingDlg" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" TabSkip="no" Cancel="yes">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="LicenseText" Type="ScrollableText" X="20" Y="60" Width="330" Height="140" Text="{\rtf1\adeflang1025\ansi\ansicpg1252\uc1\adeff0\deff0\stshfdbch31505\stshfloch31506\stshfhich31506\stshfbi0\deflang3081\deflangfe3081\themelang3081\themelangfe0\themelangcs0{\fonttbl{\f0\fbidi \froman\fcharset0\fprq2{\*\panose 02020603050405020304}Times New Roman;}{\f1\fbidi \fswiss\fcharset0\fprq2{\*\panose 020b0604020202020204}Arial;}&#xD;&#xA;{\f34\fbidi \froman\fcharset0\fprq2{\*\panose 02040503050406030204}Cambria Math;}{\f42\fbidi \fswiss\fcharset0\fprq2{\*\panose 020b0004020202020204}Aptos;}{\flomajor\f31500\fbidi \froman\fcharset0\fprq2{\*\panose 02020603050405020304}Times New Roman;}&#xD;&#xA;{\fdbmajor\f31501\fbidi \froman\fcharset0\fprq2{\*\panose 02020603050405020304}Times New Roman;}{\fhimajor\f31502\fbidi \fswiss\fcharset0\fprq2{\*\panose 020b0004020202020204}Aptos Display;}&#xD;&#xA;{\fbimajor\f31503\fbidi \froman\fcharset0\fprq2{\*\panose 02020603050405020304}Times New Roman;}{\flominor\f31504\fbidi \froman\fcharset0\fprq2{\*\panose 02020603050405020304}Times New Roman;}&#xD;&#xA;{\fdbminor\f31505\fbidi \froman\fcharset0\fprq2{\*\panose 02020603050405020304}Times New Roman;}{\fhiminor\f31506\fbidi \fswiss\fcharset0\fprq2{\*\panose 020b0004020202020204}Aptos;}&#xD;&#xA;{\fbiminor\f31507\fbidi \froman\fcharset0\fprq2{\*\panose 02020603050405020304}Times New Roman;}{\f46\fbidi \froman\fcharset238\fprq2 Times New Roman CE;}{\f47\fbidi \froman\fcharset204\fprq2 Times New Roman Cyr;}&#xD;&#xA;{\f49\fbidi \froman\fcharset161\fprq2 Times New Roman Greek;}{\f50\fbidi \froman\fcharset162\fprq2 Times New Roman Tur;}{\f51\fbidi \froman\fcharset177\fprq2 Times New Roman (Hebrew);}{\f52\fbidi \froman\fcharset178\fprq2 Times New Roman (Arabic);}&#xD;&#xA;{\f53\fbidi \froman\fcharset186\fprq2 Times New Roman Baltic;}{\f54\fbidi \froman\fcharset163\fprq2 Times New Roman (Vietnamese);}{\f56\fbidi \fswiss\fcharset238\fprq2 Arial CE;}{\f57\fbidi \fswiss\fcharset204\fprq2 Arial Cyr;}&#xD;&#xA;{\f59\fbidi \fswiss\fcharset161\fprq2 Arial Greek;}{\f60\fbidi \fswiss\fcharset162\fprq2 Arial Tur;}{\f61\fbidi \fswiss\fcharset177\fprq2 Arial (Hebrew);}{\f62\fbidi \fswiss\fcharset178\fprq2 Arial (Arabic);}&#xD;&#xA;{\f63\fbidi \fswiss\fcharset186\fprq2 Arial Baltic;}{\f64\fbidi \fswiss\fcharset163\fprq2 Arial (Vietnamese);}{\f66\fbidi \froman\fcharset238\fprq2 Cambria Math CE;}{\f67\fbidi \froman\fcharset204\fprq2 Cambria Math Cyr;}&#xD;&#xA;{\f69\fbidi \froman\fcharset161\fprq2 Cambria Math Greek;}{\f70\fbidi \froman\fcharset162\fprq2 Cambria Math Tur;}{\f73\fbidi \froman\fcharset186\fprq2 Cambria Math Baltic;}{\f74\fbidi \froman\fcharset163\fprq2 Cambria Math (Vietnamese);}&#xD;&#xA;{\f76\fbidi \fswiss\fcharset238\fprq2 Aptos CE;}{\f77\fbidi \fswiss\fcharset204\fprq2 Aptos Cyr;}{\f79\fbidi \fswiss\fcharset161\fprq2 Aptos Greek;}{\f80\fbidi \fswiss\fcharset162\fprq2 Aptos Tur;}{\f83\fbidi \fswiss\fcharset186\fprq2 Aptos Baltic;}&#xD;&#xA;{\f84\fbidi \fswiss\fcharset163\fprq2 Aptos (Vietnamese);}{\flomajor\f31508\fbidi \froman\fcharset238\fprq2 Times New Roman CE;}{\flomajor\f31509\fbidi \froman\fcharset204\fprq2 Times New Roman Cyr;}&#xD;&#xA;{\flomajor\f31511\fbidi \froman\fcharset161\fprq2 Times New Roman Greek;}{\flomajor\f31512\fbidi \froman\fcharset162\fprq2 Times New Roman Tur;}{\flomajor\f31513\fbidi \froman\fcharset177\fprq2 Times New Roman (Hebrew);}&#xD;&#xA;{\flomajor\f31514\fbidi \froman\fcharset178\fprq2 Times New Roman (Arabic);}{\flomajor\f31515\fbidi \froman\fcharset186\fprq2 Times New Roman Baltic;}{\flomajor\f31516\fbidi \froman\fcharset163\fprq2 Times New Roman (Vietnamese);}&#xD;&#xA;{\fdbmajor\f31518\fbidi \froman\fcharset238\fprq2 Times New Roman CE;}{\fdbmajor\f31519\fbidi \froman\fcharset204\fprq2 Times New Roman Cyr;}{\fdbmajor\f31521\fbidi \froman\fcharset161\fprq2 Times New Roman Greek;}&#xD;&#xA;{\fdbmajor\f31522\fbidi \froman\fcharset162\fprq2 Times New Roman Tur;}{\fdbmajor\f31523\fbidi \froman\fcharset177\fprq2 Times New Roman (Hebrew);}{\fdbmajor\f31524\fbidi \froman\fcharset178\fprq2 Times New Roman (Arabic);}&#xD;&#xA;{\fdbmajor\f31525\fbidi \froman\fcharset186\fprq2 Times New Roman Baltic;}{\fdbmajor\f31526\fbidi \froman\fcharset163\fprq2 Times New Roman (Vietnamese);}{\fhimajor\f31528\fbidi \fswiss\fcharset238\fprq2 Aptos Display CE;}&#xD;&#xA;{\fhimajor\f31529\fbidi \fswiss\fcharset204\fprq2 Aptos Display Cyr;}{\fhimajor\f31531\fbidi \fswiss\fcharset161\fprq2 Aptos Display Greek;}{\fhimajor\f31532\fbidi \fswiss\fcharset162\fprq2 Aptos Display Tur;}&#xD;&#xA;{\fhimajor\f31535\fbidi \fswiss\fcharset186\fprq2 Aptos Display Baltic;}{\fhimajor\f31536\fbidi \fswiss\fcharset163\fprq2 Aptos Display (Vietnamese);}{\fbimajor\f31538\fbidi \froman\fcharset238\fprq2 Times New Roman CE;}&#xD;&#xA;{\fbimajor\f31539\fbidi \froman\fcharset204\fprq2 Times New Roman Cyr;}{\fbimajor\f31541\fbidi \froman\fcharset161\fprq2 Times New Roman Greek;}{\fbimajor\f31542\fbidi \froman\fcharset162\fprq2 Times New Roman Tur;}&#xD;&#xA;{\fbimajor\f31543\fbidi \froman\fcharset177\fprq2 Times New Roman (Hebrew);}{\fbimajor\f31544\fbidi \froman\fcharset178\fprq2 Times New Roman (Arabic);}{\fbimajor\f31545\fbidi \froman\fcharset186\fprq2 Times New Roman Baltic;}&#xD;&#xA;{\fbimajor\f31546\fbidi \froman\fcharset163\fprq2 Times New Roman (Vietnamese);}{\flominor\f31548\fbidi \froman\fcharset238\fprq2 Times New Roman CE;}{\flominor\f31549\fbidi \froman\fcharset204\fprq2 Times New Roman Cyr;}&#xD;&#xA;{\flominor\f31551\fbidi \froman\fcharset161\fprq2 Times New Roman Greek;}{\flominor\f31552\fbidi \froman\fcharset162\fprq2 Times New Roman Tur;}{\flominor\f31553\fbidi \froman\fcharset177\fprq2 Times New Roman (Hebrew);}&#xD;&#xA;{\flominor\f31554\fbidi \froman\fcharset178\fprq2 Times New Roman (Arabic);}{\flominor\f31555\fbidi \froman\fcharset186\fprq2 Times New Roman Baltic;}{\flominor\f31556\fbidi \froman\fcharset163\fprq2 Times New Roman (Vietnamese);}&#xD;&#xA;{\fdbminor\f31558\fbidi \froman\fcharset238\fprq2 Times New Roman CE;}{\fdbminor\f31559\fbidi \froman\fcharset204\fprq2 Times New Roman Cyr;}{\fdbminor\f31561\fbidi \froman\fcharset161\fprq2 Times New Roman Greek;}&#xD;&#xA;{\fdbminor\f31562\fbidi \froman\fcharset162\fprq2 Times New Roman Tur;}{\fdbminor\f31563\fbidi \froman\fcharset177\fprq2 Times New Roman (Hebrew);}{\fdbminor\f31564\fbidi \froman\fcharset178\fprq2 Times New Roman (Arabic);}&#xD;&#xA;{\fdbminor\f31565\fbidi \froman\fcharset186\fprq2 Times New Roman Baltic;}{\fdbminor\f31566\fbidi \froman\fcharset163\fprq2 Times New Roman (Vietnamese);}{\fhiminor\f31568\fbidi \fswiss\fcharset238\fprq2 Aptos CE;}&#xD;&#xA;{\fhiminor\f31569\fbidi \fswiss\fcharset204\fprq2 Aptos Cyr;}{\fhiminor\f31571\fbidi \fswiss\fcharset161\fprq2 Aptos Greek;}{\fhiminor\f31572\fbidi \fswiss\fcharset162\fprq2 Aptos Tur;}{\fhiminor\f31575\fbidi \fswiss\fcharset186\fprq2 Aptos Baltic;}&#xD;&#xA;{\fhiminor\f31576\fbidi \fswiss\fcharset163\fprq2 Aptos (Vietnamese);}{\fbiminor\f31578\fbidi \froman\fcharset238\fprq2 Times New Roman CE;}{\fbiminor\f31579\fbidi \froman\fcharset204\fprq2 Times New Roman Cyr;}&#xD;&#xA;{\fbiminor\f31581\fbidi \froman\fcharset161\fprq2 Times New Roman Greek;}{\fbiminor\f31582\fbidi \froman\fcharset162\fprq2 Times New Roman Tur;}{\fbiminor\f31583\fbidi \froman\fcharset177\fprq2 Times New Roman (Hebrew);}&#xD;&#xA;{\fbiminor\f31584\fbidi \froman\fcharset178\fprq2 Times New Roman (Arabic);}{\fbiminor\f31585\fbidi \froman\fcharset186\fprq2 Times New Roman Baltic;}{\fbiminor\f31586\fbidi \froman\fcharset163\fprq2 Times New Roman (Vietnamese);}}&#xD;&#xA;{\colortbl;\red0\green0\blue0;\red0\green0\blue255;\red0\green255\blue255;\red0\green255\blue0;\red255\green0\blue255;\red255\green0\blue0;\red255\green255\blue0;\red255\green255\blue255;\red0\green0\blue128;\red0\green128\blue128;\red0\green128\blue0;&#xD;&#xA;\red128\green0\blue128;\red128\green0\blue0;\red128\green128\blue0;\red128\green128\blue128;\red192\green192\blue192;\red0\green0\blue0;\red0\green0\blue0;\chyperlink\ctint255\cshade255\red70\green120\blue134;\red96\green94\blue92;&#xD;&#xA;\red225\green223\blue221;}{\*\defchp \fs24\kerning2\loch\af31506\hich\af31506\dbch\af31505 }{\*\defpap \ql \li0\ri0\sa160\sl278\slmult1\widctlpar\wrapdefault\aspalpha\aspnum\faauto\adjustright\rin0\lin0\itap0 }\noqfpromote {\stylesheet{&#xD;&#xA;\ql \li0\ri0\sa160\sl278\slmult1\widctlpar\wrapdefault\aspalpha\aspnum\faauto\adjustright\rin0\lin0\itap0 \rtlch\fcs1 \af0\afs24\alang1025 \ltrch\fcs0 \fs24\lang3081\langfe3081\kerning2\loch\f31506\hich\af31506\dbch\af31505\cgrid\langnp3081\langfenp3081 &#xD;&#xA;\snext0 \sqformat \spriority0 Normal;}{\*\cs10 \additive \ssemihidden \sunhideused \spriority1 Default Paragraph Font;}{\*&#xD;&#xA;\ts11\tsrowd\trftsWidthB3\trpaddl108\trpaddr108\trpaddfl3\trpaddft3\trpaddfb3\trpaddfr3\trcbpat1\trcfpat1\tblind0\tblindtype3\tsvertalt\tsbrdrt\tsbrdrl\tsbrdrb\tsbrdrr\tsbrdrdgl\tsbrdrdgr\tsbrdrh\tsbrdrv \ql \li0\ri0\sa160\sl278\slmult1&#xD;&#xA;\widctlpar\wrapdefault\aspalpha\aspnum\faauto\adjustright\rin0\lin0\itap0 \rtlch\fcs1 \af0\afs24\alang1025 \ltrch\fcs0 \fs24\lang3081\langfe3081\kerning2\loch\f31506\hich\af31506\dbch\af31505\cgrid\langnp3081\langfenp3081 &#xD;&#xA;\snext11 \ssemihidden \sunhideused Normal Table;}{\*\cs15 \additive \rtlch\fcs1 \af0 \ltrch\fcs0 \ul\cf19 \sbasedon10 \sunhideused \styrsid14551661 Hyperlink;}{\*\cs16 \additive \rtlch\fcs1 \af0 \ltrch\fcs0 \cf20\chshdng0\chcfpat0\chcbpat21 &#xD;&#xA;\sbasedon10 \ssemihidden \sunhideused \styrsid14551661 Unresolved Mention;}}{\*\rsidtbl \rsid4417619\rsid5006433\rsid6782047\rsid8943644\rsid14551661}{\mmathPr\mmathFont34\mbrkBin0\mbrkBinSub0\msmallFrac0\mdispDef1\mlMargin0\mrMargin0\mdefJc1&#xD;&#xA;\mwrapIndent1440\mintLim0\mnaryLim1}{\info{\author David C Piscopo}{\operator David C Piscopo}{\creatim\yr2026\mo9\dy4\hr8\min50}{\revtim\yr2026\mo9\dy4\hr9\min8}{\version3}{\edmins2}{\nofpages1}{\nofwords124}{\nofchars742}{\nofcharsws862}{\vern21}}&#xD;&#xA;{\*\xmlnstbl {\xmlns1 http://schemas.microsoft.com/office/word/2003/wordml}}\paperw12240\paperh15840\margl1440\margr1440\margt1440\margb1440\gutter0\ltrsect &#xD;&#xA;\widowctrl\ftnbj\aenddoc\trackmoves0\trackformatting1\donotembedsysfont0\relyonvml0\donotembedlingdata1\grfdocevents0\validatexml0\showplaceholdtext0\ignoremixedcontent0\saveinvalidxml0\showxmlerrors0\horzdoc\dghspace120\dgvspace120\dghorigin1701&#xD;&#xA;\dgvorigin1984\dghshow0\dgvshow3\jcompress\viewkind1\viewscale100\rsidroot14551661 \fet0{\*\wgrffmtfilter 2450}\ilfomacatclnup0\ltrpar \sectd \ltrsect\linex0\sectdefaultcl\sftnbj {\*\pnseclvl1\pnucrm\pnstart1\pnindent720\pnhang {\pntxta .}}{\*\pnseclvl2&#xD;&#xA;\pnucltr\pnstart1\pnindent720\pnhang {\pntxta .}}{\*\pnseclvl3\pndec\pnstart1\pnindent720\pnhang {\pntxta .}}{\*\pnseclvl4\pnlcltr\pnstart1\pnindent720\pnhang {\pntxta )}}{\*\pnseclvl5\pndec\pnstart1\pnindent720\pnhang {\pntxtb (}{\pntxta )}}{\*\pnseclvl6&#xD;&#xA;\pnlcltr\pnstart1\pnindent720\pnhang {\pntxtb (}{\pntxta )}}{\*\pnseclvl7\pnlcrm\pnstart1\pnindent720\pnhang {\pntxtb (}{\pntxta )}}{\*\pnseclvl8\pnlcltr\pnstart1\pnindent720\pnhang {\pntxtb (}{\pntxta )}}{\*\pnseclvl9\pnlcrm\pnstart1\pnindent720\pnhang &#xD;&#xA;{\pntxtb (}{\pntxta )}}\pard\plain \ltrpar\ql \li0\ri0\nowidctlpar\wrapdefault\faauto\rin0\lin0\itap0 \rtlch\fcs1 \af0\afs24\alang1025 \ltrch\fcs0 \fs24\lang3081\langfe3081\kerning2\loch\af31506\hich\af31506\dbch\af31505\cgrid\langnp3081\langfenp3081 {&#xD;&#xA;\rtlch\fcs1 \ab\af1\afs20 \ltrch\fcs0 \b\f1\fs20\kerning0\insrsid6782047 \hich\af1\dbch\af31505\loch\f1 MultiExplorer}{\rtlch\fcs1 \ab\af1\afs20 \ltrch\fcs0 \b\f1\fs20\kerning0\insrsid14551661 &#xD;&#xA;\par &#xD;&#xA;\par }{\rtlch\fcs1 \ab\af1\afs20 \ltrch\fcs0 \b\f1\fs20\kerning0\insrsid6782047 \hich\af1\dbch\af31505\loch\f1 Author and Original Creator:}{\rtlch\fcs1 \af1\afs20 \ltrch\fcs0 \f1\fs20\kerning0\insrsid6782047 \hich\af1\dbch\af31505\loch\f1  D. Piscopo (}{&#xD;&#xA;\rtlch\fcs1 \af1\afs20 \ltrch\fcs0 \f1\fs20\kerning0\insrsid14551661\charrsid8943644 \hich\af1\dbch\af31505\loch\f1 dpiscoposter@gmail.com}{\rtlch\fcs1 \af1\afs20 \ltrch\fcs0 \f1\fs20\kerning0\insrsid6782047 \hich\af1\dbch\af31505\loch\f1 )}{\rtlch\fcs1 &#xD;&#xA;\af1\afs20 \ltrch\fcs0 \f1\fs20\kerning0\insrsid14551661 &#xD;&#xA;\par &#xD;&#xA;\par }{\rtlch\fcs1 \ab\af1\afs20 \ltrch\fcs0 \b\f1\fs20\kerning0\insrsid6782047 \hich\af1\dbch\af31505\loch\f1 Terms of Use and Public Domain Notice}{\rtlch\fcs1 \ab\af1\afs20 \ltrch\fcs0 \b\f1\fs20\kerning0\insrsid14551661 &#xD;&#xA;\par &#xD;&#xA;\par }{\rtlch\fcs1 \af1\afs20 \ltrch\fcs0 \f1\fs20\kerning0\insrsid14551661 \hich\af1\dbch\af31505\loch\f1 MultiExplorer }{\rtlch\fcs1 \af1\afs20 \ltrch\fcs0 \f1\fs20\kerning0\insrsid6782047 \hich\af1\dbch\af31505\loch\f1 &#xD;&#xA;is a dual-panel file management application dedicated to the public domain under the Creative Commons CC0 1.0 Universal Public Domain Dedication.}{\rtlch\fcs1 \af1\afs20 \ltrch\fcs0 \f1\fs20\kerning0\insrsid14551661 &#xD;&#xA;\par &#xD;&#xA;\par \hich\af1\dbch\af31505\loch\f1 You }{\rtlch\fcs1 \af1\afs20 \ltrch\fcs0 \f1\fs20\kerning0\insrsid6782047 \hich\af1\dbch\af31505\loch\f1 &#xD;&#xA;are free to use, copy, modify, distribute, publish, and create derivative works from this software for any purpose, including commercial use, without permission or licensing fees.}{\rtlch\fcs1 \af1\afs20 \ltrch\fcs0 \f1\fs20\kerning0\insrsid14551661 &#xD;&#xA;&#xD;&#xA;\par &#xD;&#xA;\par }{\rtlch\fcs1 \af1\afs20 \ltrch\fcs0 \f1\fs20\kerning0\insrsid6782047 \hich\af1\dbch\af31505\loch\f1 \hich\f1 SOFTWARE IS PROVIDED \'93\loch\f1 \hich\f1 AS IS\'94\loch\f1 &#xD;&#xA;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, D&#xD;&#xA;\hich\af1\dbch\af31505\loch\f1 AMAGES, OR OTHER LIABILITY ARISING FROM THE USE OF THIS SOFTWARE.}{\rtlch\fcs1 \af1\afs20 \ltrch\fcs0 \f1\fs20\kerning0\insrsid14551661 &#xD;&#xA;\par &#xD;&#xA;\par \hich\af1\dbch\af31505\loch\f1 By }{\rtlch\fcs1 \af1\afs20 \ltrch\fcs0 \f1\fs20\kerning0\insrsid6782047 \hich\af1\dbch\af31505\loch\f1 installing or using MultiExplorer, you acknowledge and accept these terms.}{\rtlch\fcs1 \af0 \ltrch\fcs0 &#xD;&#xA;\insrsid6782047 &#xD;&#xA;\par }{\*\themedata 504b030414000600080000002100e9de0fbfff0000001c020000130000005b436f6e74656e745f54797065735d2e786d6cac91cb4ec3301045f748fc83e52d4a&#xD;&#xA;9cb2400825e982c78ec7a27cc0c8992416c9d8b2a755fbf74cd25442a820166c2cd933f79e3be372bd1f07b5c3989ca74aaff2422b24eb1b475da5df374fd9ad&#xD;&#xA;5689811a183c61a50f98f4babebc2837878049899a52a57be670674cb23d8e90721f90a4d2fa3802cb35762680fd800ecd7551dc18eb899138e3c943d7e503b6&#xD;&#xA;b01d583deee5f99824e290b4ba3f364eac4a430883b3c092d4eca8f946c916422ecab927f52ea42b89a1cd59c254f919b0e85e6535d135a8de20f20b8c12c3b0&#xD;&#xA;0c895fcf6720192de6bf3b9e89ecdbd6596cbcdd8eb28e7c365ecc4ec1ff1460f53fe813d3cc7f5b7f020000ffff0300504b030414000600080000002100a5d6&#xD;&#xA;a7e7c0000000360100000b0000005f72656c732f2e72656c73848fcf6ac3300c87ef85bd83d17d51d2c31825762fa590432fa37d00e1287f68221bdb1bebdb4f&#xD;&#xA;c7060abb0884a4eff7a93dfeae8bf9e194e720169aaa06c3e2433fcb68e1763dbf7f82c985a4a725085b787086a37bdbb55fbc50d1a33ccd311ba548b6309512&#xD;&#xA;0f88d94fbc52ae4264d1c910d24a45db3462247fa791715fd71f989e19e0364cd3f51652d73760ae8fa8c9ffb3c330cc9e4fc17faf2ce545046e37944c69e462&#xD;&#xA;a1a82fe353bd90a865aad41ed0b5b8f9d6fd010000ffff0300504b0304140006000800000021006b799616830000008a0000001c0000007468656d652f746865&#xD;&#xA;6d652f7468656d654d616e616765722e786d6c0ccc4d0ac3201040e17da17790d93763bb284562b2cbaebbf600439c1a41c7a0d29fdbd7e5e38337cedf14d59b&#xD;&#xA;4b0d592c9c070d8a65cd2e88b7f07c2ca71ba8da481cc52c6ce1c715e6e97818c9b48d13df49c873517d23d59085adb5dd20d6b52bd521ef2cdd5eb9246a3d8b&#xD;&#xA;4757e8d3f729e245eb2b260a0238fd010000ffff0300504b030414000600080000002100d0557692fa0700000d220000160000007468656d652f7468656d652f&#xD;&#xA;7468656d65312e786d6cec5a4b8f1bb911be07c87f68f45d5677eb3db0bcd0d3b3f68c3db064077ba4244a4d0fbb2934a99911160b04de532e0b2cb00972c802&#xD;&#xA;b9e5100459200b64914b7e8c011bc9e647a448b65aa444791e30022398994b37f555f16355b1aa9add0f3fbb4aa87781334e58daf6c30781efe174ca66245db4&#xD;&#xA;fd97e361a9e97b5ca07486284b71db5f63ee7ff6e897bf78888e448c13ec817cca8f50db8f85581e95cb7c0ac3883f604b9cc26f73962548c06db628cf327409&#xD;&#xA;7a135a8e82a05e4e10497d2f4509a87d3e9f9329f6c652a5ff68a37c40e136155c0e4c693692aab125a1b0b3f35022f89af768e65d20daf6619e19bb1ce32be1&#xD;&#xA;7b1471013fb4fd40fdf9e5470fcbe82817a2e280ac2137547fb95c2e303b8fd49cd962524c1a0ca266352cf42b0015fbb84153fe17fa14004da7b052cdc5d419&#xD;&#xA;d6ea4133cab106485f3a74b71a61c5c61bfa2b7b9cc356bd1b552dfd0aa4f557f7f0c1b035e8d72cbc02697c6d0fdf09a26eab62e11548e3eb7bf8eaa0d38806&#xD;&#xA;165e81624ad2f37d74bdd16cd673740199337aec84b7eaf5a0d1cfe15b144443115d728a394bc5a1584bd06b960d0120811409927a62bdc473348528ee2c05e3&#xD;&#xA;5e9ff025456bdf5ba29471180ea23084d0ab0651f1af2c8e8e3032a4252f60c2f786241f8f4f33b2146dff0968f50dc8bb9f7e7afbe6c7b76ffefef6ebafdfbe&#xD;&#xA;f9ab774216b1d0aa2cb963942e4cb99ffff4ed7fbeffb5f7efbffdf1e7ef7eebc67313fffe2fbf79ff8f7f7e483d6cb5ad29defdee87f73ffef0eef7dffcebcf&#xD;&#xA;df39b477323431e1639260ee3dc397de0b96c00295296cfe7892dd4e621c23624a74d205472992b338f40f446ca19fad11450e5c17db767c9541aa71011faf5e&#xD;&#xA;5b844771b612c4a1f1699c58c053c66897654e2b3c957319661eafd2857bf26c65e25e2074e19abb8752cbcb83d512722c71a9ecc5d8a27946512ad002a75878&#xD;&#xA;f237768eb163755f1062d9f5944c33c6d95c785f10af8b88d3246332b1a2692b744c12f0cbda4510fc6dd9e6f495d765d4b5ea3ebeb091b0371075901f636a99&#xD;&#xA;f1315a0994b8548e51424d839f2011bb488ed6d9d4c40db8004f2f3065de60863977c93ccf60bd86d39f22c86e4eb79fd27562233341ce5d3a4f106326b2cfce&#xD;&#xA;7b314a962eec88a4b189fd9c9f438822ef8c0917fc94d93b44de831f507ad0ddaf08b6dc7d7d36780959cea4b40d10f9cb2a73f8f2316656fc8ed6748eb02bd5&#xD;&#xA;74b2c44ab19d8c38a3a3bb5a58a17d823145976886b1f7f27307832e5b5a36df927e12435639c6aec07a82ec5895f729e6d02bc9e6663f4f9e106e85ec082fd8&#xD;&#xA;013ea7eb9dc4b3466982b2439a9f81d74d9b0f26196c460785e7747a6e029f11e801215e9c4679ce418711dc07b59ec5c82a60f29ebbe3759d59febbc91e837d&#xD;&#xA;f9daa271837d0932f8d63290d84d990fda668ca835c13660c6887827ae740b2296fbb722b2b82ab195536e6e6fdaad1ba03bb29a9e84a4d77440ffbbce07fa8b&#xD;&#xA;777ff8de11821fa7db712bb652d52dfb9c43a9e478a7bb3984dbed697a2c9b914fbfa5e9a3557a86a18aece7abfb8ee6bea3f1ffef3b9a43fbf9be8f39d46ddc&#xD;&#xA;f7313ef417f77d4c7eb4f271fa986deb025d8d3c5ed0c73cead0273978e63327948ec49ae213ae8e7d383ccdcc863028e5d479272ece0097315cca32071358b8&#xD;&#xA;4586948c9731f12b22e2518c96703614fa52c982e7aa17dc5b320e47466ad8a95be2e92a3965337dd4a9ce96025d593912dbf1a006874e7a1c8ea98446d71bf9&#xD;&#xA;a0e4a7ce5381af62bb50c7ac1b0252f636248cc96c12150789c666f01a12f2d4ece3b068395834a5fa8dabf64c01d40aafc0e3b6070fe96dbf569584e08c9c4f&#xD;&#xA;a1359f493f69576fbcab9cf9313d7dc8985604c0b1a25e091cca179e6e49ae07972757a743ed069eb64828a7e8b0b24928cba8068fc7f0109c47a71cbd098ddb&#xD;&#xA;fabab575a9454f9a42cd07f1bda5d1687e88c55d7d0d72bbb981a666a6a0a977097b3c824de77b53b46cfb73383386cb6409c1c3e52317a20b78f1321599def1&#xD;&#xA;77492dcb8c8b3ee2b1b6b8ca3ada3f091138f32849dabe5c7fe1079aaa24a2c9b560eb7eaae422b9e13e3572e075dbcb783ec75361fadd189196d6b790e275b2&#xD;&#xA;70feaac4ef0e96926c05ee1ec5b34b6f4257d90b0421566b84d2bb33c2e1d541a85d3d23f02eacc864dbf8dba94c79f6375f46a918d2e3882e63949714339b6b&#xD;&#xA;b82a28051d7557d8c0b8cbd70c06354c9257c2c9425658d3a856392d6a97e670b0ec5e2f242d6764cd6dd1b4d28a2c9bee3466cdb0a9033bb6bc5b9537586d4c&#xD;&#xA;0c49cd2cf13a77efe6dcd626d9ed340a4599008317f6bb5bed37a86d27b3a849c6fb795826ed7cd42e1e9b055e43ed2655c248fbf58dda1dbb1545c2391d0cde&#xD;&#xA;a9f483dc6ed4c2d07cd3582a4bab97e6e67b6d36790dc9a30f6dee8aea37dd34853b19957c799629df4ed86c9d5f52ae138df6b96c4a2592a62ff0dc23b3abb6&#xD;&#xA;1fb93a47fdb635ccbb01859662b2781582ce6ecf16ccf152546fd84258077811547a53dac285849a197aef42589d28ba688bab0d65d9ab035e9990eb55836973&#xD;&#xA;4bc1d5be15e1743c43d0db8e5467a7732fd0be12797e812b6f9591b6ff6550eb547b51ad570a9ab541a95aa906a566ad5329756ab54a38a88541bf1b7d05f444&#xD;&#xA;9c8435fdd5c3105e02d175feed831adffbfe21d9bce77a30654999a9ef1bcacafbeafb87303afcfd033812684583b01a75a25ea9d70feba56ad4af979a8d4aa7&#xD;&#xA;d48beafda80345bb3eec7ce57b170a1c76fbfde1b01695ea3dc055834eadd4e9567aa57a73d08d86e1a0da0f009c979f2b788a019b6d6c01978ad7a3ff020000&#xD;&#xA;ffff0300504b0304140006000800000021000dd1909fb60000001b010000270000007468656d652f7468656d652f5f72656c732f7468656d654d616e61676572&#xD;&#xA;2e786d6c2e72656c73848f4d0ac2301484f78277086f6fd3ba109126dd88d0add40384e4350d363f2451eced0dae2c082e8761be9969bb979dc9136332de3168&#xD;&#xA;aa1a083ae995719ac16db8ec8e4052164e89d93b64b060828e6f37ed1567914b284d262452282e3198720e274a939cd08a54f980ae38a38f56e422a3a641c8bb&#xD;&#xA;d048f7757da0f19b017cc524bd62107bd5001996509affb3fd381a89672f1f165dfe514173d9850528a2c6cce0239baa4c04ca5bbabac4df000000ffff030050&#xD;&#xA;4b01022d0014000600080000002100e9de0fbfff0000001c0200001300000000000000000000000000000000005b436f6e74656e745f54797065735d2e786d6c&#xD;&#xA;504b01022d0014000600080000002100a5d6a7e7c0000000360100000b00000000000000000000000000300100005f72656c732f2e72656c73504b01022d0014&#xD;&#xA;0006000800000021006b799616830000008a0000001c00000000000000000000000000190200007468656d652f7468656d652f7468656d654d616e616765722e&#xD;&#xA;786d6c504b01022d0014000600080000002100d0557692fa0700000d2200001600000000000000000000000000d60200007468656d652f7468656d652f746865&#xD;&#xA;6d65312e786d6c504b01022d00140006000800000021000dd1909fb60000001b0100002700000000000000000000000000040b00007468656d652f7468656d652f5f72656c732f7468656d654d616e616765722e786d6c2e72656c73504b050600000000050005005d010000ff0b00000000}&#xD;&#xA;{\*\colorschememapping 3c3f786d6c2076657273696f6e3d22312e302220656e636f64696e673d225554462d3822207374616e64616c6f6e653d22796573223f3e0d0a3c613a636c724d&#xD;&#xA;617020786d6c6e733a613d22687474703a2f2f736368656d61732e6f70656e786d6c666f726d6174732e6f72672f64726177696e676d6c2f323030362f6d6169&#xD;&#xA;6e22206267313d226c743122207478313d22646b3122206267323d226c743222207478323d22646b322220616363656e74313d22616363656e74312220616363&#xD;&#xA;656e74323d22616363656e74322220616363656e74333d22616363656e74332220616363656e74343d22616363656e74342220616363656e74353d22616363656e74352220616363656e74363d22616363656e74362220686c696e6b3d22686c696e6b2220666f6c486c696e6b3d22666f6c486c696e6b222f3e}&#xD;&#xA;{\*\latentstyles\lsdstimax376\lsdlockeddef0\lsdsemihiddendef0\lsdunhideuseddef0\lsdqformatdef0\lsdprioritydef99{\lsdlockedexcept \lsdqformat1 \lsdpriority0 \lsdlocked0 Normal;\lsdqformat1 \lsdpriority9 \lsdlocked0 heading 1;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdqformat1 \lsdpriority9 \lsdlocked0 heading 2;\lsdsemihidden1 \lsdunhideused1 \lsdqformat1 \lsdpriority9 \lsdlocked0 heading 3;\lsdsemihidden1 \lsdunhideused1 \lsdqformat1 \lsdpriority9 \lsdlocked0 heading 4;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdqformat1 \lsdpriority9 \lsdlocked0 heading 5;\lsdsemihidden1 \lsdunhideused1 \lsdqformat1 \lsdpriority9 \lsdlocked0 heading 6;\lsdsemihidden1 \lsdunhideused1 \lsdqformat1 \lsdpriority9 \lsdlocked0 heading 7;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdqformat1 \lsdpriority9 \lsdlocked0 heading 8;\lsdsemihidden1 \lsdunhideused1 \lsdqformat1 \lsdpriority9 \lsdlocked0 heading 9;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 index 1;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 index 2;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 index 3;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 index 4;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 index 5;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 index 6;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 index 7;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 index 8;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 index 9;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdpriority39 \lsdlocked0 toc 1;\lsdsemihidden1 \lsdunhideused1 \lsdpriority39 \lsdlocked0 toc 2;\lsdsemihidden1 \lsdunhideused1 \lsdpriority39 \lsdlocked0 toc 3;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdpriority39 \lsdlocked0 toc 4;\lsdsemihidden1 \lsdunhideused1 \lsdpriority39 \lsdlocked0 toc 5;\lsdsemihidden1 \lsdunhideused1 \lsdpriority39 \lsdlocked0 toc 6;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdpriority39 \lsdlocked0 toc 7;\lsdsemihidden1 \lsdunhideused1 \lsdpriority39 \lsdlocked0 toc 8;\lsdsemihidden1 \lsdunhideused1 \lsdpriority39 \lsdlocked0 toc 9;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Normal Indent;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 footnote text;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 annotation text;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 header;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 footer;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 index heading;\lsdsemihidden1 \lsdunhideused1 \lsdqformat1 \lsdpriority35 \lsdlocked0 caption;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 table of figures;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 envelope address;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 envelope return;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 footnote reference;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 annotation reference;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 line number;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 page number;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 endnote reference;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 endnote text;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 table of authorities;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 macro;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 toa heading;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List Bullet;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List Number;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List 2;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List 3;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List 4;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List 5;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List Bullet 2;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List Bullet 3;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List Bullet 4;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List Bullet 5;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List Number 2;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List Number 3;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List Number 4;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List Number 5;\lsdqformat1 \lsdpriority10 \lsdlocked0 Title;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Closing;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Signature;\lsdsemihidden1 \lsdunhideused1 \lsdpriority1 \lsdlocked0 Default Paragraph Font;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Body Text;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Body Text Indent;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List Continue;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List Continue 2;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List Continue 3;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List Continue 4;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 List Continue 5;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Message Header;\lsdqformat1 \lsdpriority11 \lsdlocked0 Subtitle;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Salutation;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Date;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Body Text First Indent;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Body Text First Indent 2;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Note Heading;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Body Text 2;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Body Text 3;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Body Text Indent 2;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Body Text Indent 3;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Block Text;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Hyperlink;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 FollowedHyperlink;\lsdqformat1 \lsdpriority22 \lsdlocked0 Strong;&#xD;&#xA;\lsdqformat1 \lsdpriority20 \lsdlocked0 Emphasis;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Document Map;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Plain Text;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 E-mail Signature;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 HTML Top of Form;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 HTML Bottom of Form;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Normal (Web);\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 HTML Acronym;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 HTML Address;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 HTML Cite;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 HTML Code;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 HTML Definition;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 HTML Keyboard;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 HTML Preformatted;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 HTML Sample;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 HTML Typewriter;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 HTML Variable;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 annotation subject;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 No List;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Outline List 1;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Outline List 2;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Outline List 3;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Balloon Text;\lsdpriority39 \lsdlocked0 Table Grid;&#xD;&#xA;\lsdsemihidden1 \lsdlocked0 Placeholder Text;\lsdqformat1 \lsdpriority1 \lsdlocked0 No Spacing;\lsdpriority60 \lsdlocked0 Light Shading;\lsdpriority61 \lsdlocked0 Light List;\lsdpriority62 \lsdlocked0 Light Grid;&#xD;&#xA;\lsdpriority63 \lsdlocked0 Medium Shading 1;\lsdpriority64 \lsdlocked0 Medium Shading 2;\lsdpriority65 \lsdlocked0 Medium List 1;\lsdpriority66 \lsdlocked0 Medium List 2;\lsdpriority67 \lsdlocked0 Medium Grid 1;\lsdpriority68 \lsdlocked0 Medium Grid 2;&#xD;&#xA;\lsdpriority69 \lsdlocked0 Medium Grid 3;\lsdpriority70 \lsdlocked0 Dark List;\lsdpriority71 \lsdlocked0 Colorful Shading;\lsdpriority72 \lsdlocked0 Colorful List;\lsdpriority73 \lsdlocked0 Colorful Grid;\lsdpriority60 \lsdlocked0 Light Shading Accent 1;&#xD;&#xA;\lsdpriority61 \lsdlocked0 Light List Accent 1;\lsdpriority62 \lsdlocked0 Light Grid Accent 1;\lsdpriority63 \lsdlocked0 Medium Shading 1 Accent 1;\lsdpriority64 \lsdlocked0 Medium Shading 2 Accent 1;\lsdpriority65 \lsdlocked0 Medium List 1 Accent 1;&#xD;&#xA;\lsdsemihidden1 \lsdlocked0 Revision;\lsdqformat1 \lsdpriority34 \lsdlocked0 List Paragraph;\lsdqformat1 \lsdpriority29 \lsdlocked0 Quote;\lsdqformat1 \lsdpriority30 \lsdlocked0 Intense Quote;\lsdpriority66 \lsdlocked0 Medium List 2 Accent 1;&#xD;&#xA;\lsdpriority67 \lsdlocked0 Medium Grid 1 Accent 1;\lsdpriority68 \lsdlocked0 Medium Grid 2 Accent 1;\lsdpriority69 \lsdlocked0 Medium Grid 3 Accent 1;\lsdpriority70 \lsdlocked0 Dark List Accent 1;\lsdpriority71 \lsdlocked0 Colorful Shading Accent 1;&#xD;&#xA;\lsdpriority72 \lsdlocked0 Colorful List Accent 1;\lsdpriority73 \lsdlocked0 Colorful Grid Accent 1;\lsdpriority60 \lsdlocked0 Light Shading Accent 2;\lsdpriority61 \lsdlocked0 Light List Accent 2;\lsdpriority62 \lsdlocked0 Light Grid Accent 2;&#xD;&#xA;\lsdpriority63 \lsdlocked0 Medium Shading 1 Accent 2;\lsdpriority64 \lsdlocked0 Medium Shading 2 Accent 2;\lsdpriority65 \lsdlocked0 Medium List 1 Accent 2;\lsdpriority66 \lsdlocked0 Medium List 2 Accent 2;&#xD;&#xA;\lsdpriority67 \lsdlocked0 Medium Grid 1 Accent 2;\lsdpriority68 \lsdlocked0 Medium Grid 2 Accent 2;\lsdpriority69 \lsdlocked0 Medium Grid 3 Accent 2;\lsdpriority70 \lsdlocked0 Dark List Accent 2;\lsdpriority71 \lsdlocked0 Colorful Shading Accent 2;&#xD;&#xA;\lsdpriority72 \lsdlocked0 Colorful List Accent 2;\lsdpriority73 \lsdlocked0 Colorful Grid Accent 2;\lsdpriority60 \lsdlocked0 Light Shading Accent 3;\lsdpriority61 \lsdlocked0 Light List Accent 3;\lsdpriority62 \lsdlocked0 Light Grid Accent 3;&#xD;&#xA;\lsdpriority63 \lsdlocked0 Medium Shading 1 Accent 3;\lsdpriority64 \lsdlocked0 Medium Shading 2 Accent 3;\lsdpriority65 \lsdlocked0 Medium List 1 Accent 3;\lsdpriority66 \lsdlocked0 Medium List 2 Accent 3;&#xD;&#xA;\lsdpriority67 \lsdlocked0 Medium Grid 1 Accent 3;\lsdpriority68 \lsdlocked0 Medium Grid 2 Accent 3;\lsdpriority69 \lsdlocked0 Medium Grid 3 Accent 3;\lsdpriority70 \lsdlocked0 Dark List Accent 3;\lsdpriority71 \lsdlocked0 Colorful Shading Accent 3;&#xD;&#xA;\lsdpriority72 \lsdlocked0 Colorful List Accent 3;\lsdpriority73 \lsdlocked0 Colorful Grid Accent 3;\lsdpriority60 \lsdlocked0 Light Shading Accent 4;\lsdpriority61 \lsdlocked0 Light List Accent 4;\lsdpriority62 \lsdlocked0 Light Grid Accent 4;&#xD;&#xA;\lsdpriority63 \lsdlocked0 Medium Shading 1 Accent 4;\lsdpriority64 \lsdlocked0 Medium Shading 2 Accent 4;\lsdpriority65 \lsdlocked0 Medium List 1 Accent 4;\lsdpriority66 \lsdlocked0 Medium List 2 Accent 4;&#xD;&#xA;\lsdpriority67 \lsdlocked0 Medium Grid 1 Accent 4;\lsdpriority68 \lsdlocked0 Medium Grid 2 Accent 4;\lsdpriority69 \lsdlocked0 Medium Grid 3 Accent 4;\lsdpriority70 \lsdlocked0 Dark List Accent 4;\lsdpriority71 \lsdlocked0 Colorful Shading Accent 4;&#xD;&#xA;\lsdpriority72 \lsdlocked0 Colorful List Accent 4;\lsdpriority73 \lsdlocked0 Colorful Grid Accent 4;\lsdpriority60 \lsdlocked0 Light Shading Accent 5;\lsdpriority61 \lsdlocked0 Light List Accent 5;\lsdpriority62 \lsdlocked0 Light Grid Accent 5;&#xD;&#xA;\lsdpriority63 \lsdlocked0 Medium Shading 1 Accent 5;\lsdpriority64 \lsdlocked0 Medium Shading 2 Accent 5;\lsdpriority65 \lsdlocked0 Medium List 1 Accent 5;\lsdpriority66 \lsdlocked0 Medium List 2 Accent 5;&#xD;&#xA;\lsdpriority67 \lsdlocked0 Medium Grid 1 Accent 5;\lsdpriority68 \lsdlocked0 Medium Grid 2 Accent 5;\lsdpriority69 \lsdlocked0 Medium Grid 3 Accent 5;\lsdpriority70 \lsdlocked0 Dark List Accent 5;\lsdpriority71 \lsdlocked0 Colorful Shading Accent 5;&#xD;&#xA;\lsdpriority72 \lsdlocked0 Colorful List Accent 5;\lsdpriority73 \lsdlocked0 Colorful Grid Accent 5;\lsdpriority60 \lsdlocked0 Light Shading Accent 6;\lsdpriority61 \lsdlocked0 Light List Accent 6;\lsdpriority62 \lsdlocked0 Light Grid Accent 6;&#xD;&#xA;\lsdpriority63 \lsdlocked0 Medium Shading 1 Accent 6;\lsdpriority64 \lsdlocked0 Medium Shading 2 Accent 6;\lsdpriority65 \lsdlocked0 Medium List 1 Accent 6;\lsdpriority66 \lsdlocked0 Medium List 2 Accent 6;&#xD;&#xA;\lsdpriority67 \lsdlocked0 Medium Grid 1 Accent 6;\lsdpriority68 \lsdlocked0 Medium Grid 2 Accent 6;\lsdpriority69 \lsdlocked0 Medium Grid 3 Accent 6;\lsdpriority70 \lsdlocked0 Dark List Accent 6;\lsdpriority71 \lsdlocked0 Colorful Shading Accent 6;&#xD;&#xA;\lsdpriority72 \lsdlocked0 Colorful List Accent 6;\lsdpriority73 \lsdlocked0 Colorful Grid Accent 6;\lsdqformat1 \lsdpriority19 \lsdlocked0 Subtle Emphasis;\lsdqformat1 \lsdpriority21 \lsdlocked0 Intense Emphasis;&#xD;&#xA;\lsdqformat1 \lsdpriority31 \lsdlocked0 Subtle Reference;\lsdqformat1 \lsdpriority32 \lsdlocked0 Intense Reference;\lsdqformat1 \lsdpriority33 \lsdlocked0 Book Title;\lsdsemihidden1 \lsdunhideused1 \lsdpriority37 \lsdlocked0 Bibliography;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdqformat1 \lsdpriority39 \lsdlocked0 TOC Heading;\lsdpriority41 \lsdlocked0 Plain Table 1;\lsdpriority42 \lsdlocked0 Plain Table 2;\lsdpriority43 \lsdlocked0 Plain Table 3;\lsdpriority44 \lsdlocked0 Plain Table 4;&#xD;&#xA;\lsdpriority45 \lsdlocked0 Plain Table 5;\lsdpriority40 \lsdlocked0 Grid Table Light;\lsdpriority46 \lsdlocked0 Grid Table 1 Light;\lsdpriority47 \lsdlocked0 Grid Table 2;\lsdpriority48 \lsdlocked0 Grid Table 3;\lsdpriority49 \lsdlocked0 Grid Table 4;&#xD;&#xA;\lsdpriority50 \lsdlocked0 Grid Table 5 Dark;\lsdpriority51 \lsdlocked0 Grid Table 6 Colorful;\lsdpriority52 \lsdlocked0 Grid Table 7 Colorful;\lsdpriority46 \lsdlocked0 Grid Table 1 Light Accent 1;\lsdpriority47 \lsdlocked0 Grid Table 2 Accent 1;&#xD;&#xA;\lsdpriority48 \lsdlocked0 Grid Table 3 Accent 1;\lsdpriority49 \lsdlocked0 Grid Table 4 Accent 1;\lsdpriority50 \lsdlocked0 Grid Table 5 Dark Accent 1;\lsdpriority51 \lsdlocked0 Grid Table 6 Colorful Accent 1;&#xD;&#xA;\lsdpriority52 \lsdlocked0 Grid Table 7 Colorful Accent 1;\lsdpriority46 \lsdlocked0 Grid Table 1 Light Accent 2;\lsdpriority47 \lsdlocked0 Grid Table 2 Accent 2;\lsdpriority48 \lsdlocked0 Grid Table 3 Accent 2;&#xD;&#xA;\lsdpriority49 \lsdlocked0 Grid Table 4 Accent 2;\lsdpriority50 \lsdlocked0 Grid Table 5 Dark Accent 2;\lsdpriority51 \lsdlocked0 Grid Table 6 Colorful Accent 2;\lsdpriority52 \lsdlocked0 Grid Table 7 Colorful Accent 2;&#xD;&#xA;\lsdpriority46 \lsdlocked0 Grid Table 1 Light Accent 3;\lsdpriority47 \lsdlocked0 Grid Table 2 Accent 3;\lsdpriority48 \lsdlocked0 Grid Table 3 Accent 3;\lsdpriority49 \lsdlocked0 Grid Table 4 Accent 3;&#xD;&#xA;\lsdpriority50 \lsdlocked0 Grid Table 5 Dark Accent 3;\lsdpriority51 \lsdlocked0 Grid Table 6 Colorful Accent 3;\lsdpriority52 \lsdlocked0 Grid Table 7 Colorful Accent 3;\lsdpriority46 \lsdlocked0 Grid Table 1 Light Accent 4;&#xD;&#xA;\lsdpriority47 \lsdlocked0 Grid Table 2 Accent 4;\lsdpriority48 \lsdlocked0 Grid Table 3 Accent 4;\lsdpriority49 \lsdlocked0 Grid Table 4 Accent 4;\lsdpriority50 \lsdlocked0 Grid Table 5 Dark Accent 4;&#xD;&#xA;\lsdpriority51 \lsdlocked0 Grid Table 6 Colorful Accent 4;\lsdpriority52 \lsdlocked0 Grid Table 7 Colorful Accent 4;\lsdpriority46 \lsdlocked0 Grid Table 1 Light Accent 5;\lsdpriority47 \lsdlocked0 Grid Table 2 Accent 5;&#xD;&#xA;\lsdpriority48 \lsdlocked0 Grid Table 3 Accent 5;\lsdpriority49 \lsdlocked0 Grid Table 4 Accent 5;\lsdpriority50 \lsdlocked0 Grid Table 5 Dark Accent 5;\lsdpriority51 \lsdlocked0 Grid Table 6 Colorful Accent 5;&#xD;&#xA;\lsdpriority52 \lsdlocked0 Grid Table 7 Colorful Accent 5;\lsdpriority46 \lsdlocked0 Grid Table 1 Light Accent 6;\lsdpriority47 \lsdlocked0 Grid Table 2 Accent 6;\lsdpriority48 \lsdlocked0 Grid Table 3 Accent 6;&#xD;&#xA;\lsdpriority49 \lsdlocked0 Grid Table 4 Accent 6;\lsdpriority50 \lsdlocked0 Grid Table 5 Dark Accent 6;\lsdpriority51 \lsdlocked0 Grid Table 6 Colorful Accent 6;\lsdpriority52 \lsdlocked0 Grid Table 7 Colorful Accent 6;&#xD;&#xA;\lsdpriority46 \lsdlocked0 List Table 1 Light;\lsdpriority47 \lsdlocked0 List Table 2;\lsdpriority48 \lsdlocked0 List Table 3;\lsdpriority49 \lsdlocked0 List Table 4;\lsdpriority50 \lsdlocked0 List Table 5 Dark;&#xD;&#xA;\lsdpriority51 \lsdlocked0 List Table 6 Colorful;\lsdpriority52 \lsdlocked0 List Table 7 Colorful;\lsdpriority46 \lsdlocked0 List Table 1 Light Accent 1;\lsdpriority47 \lsdlocked0 List Table 2 Accent 1;\lsdpriority48 \lsdlocked0 List Table 3 Accent 1;&#xD;&#xA;\lsdpriority49 \lsdlocked0 List Table 4 Accent 1;\lsdpriority50 \lsdlocked0 List Table 5 Dark Accent 1;\lsdpriority51 \lsdlocked0 List Table 6 Colorful Accent 1;\lsdpriority52 \lsdlocked0 List Table 7 Colorful Accent 1;&#xD;&#xA;\lsdpriority46 \lsdlocked0 List Table 1 Light Accent 2;\lsdpriority47 \lsdlocked0 List Table 2 Accent 2;\lsdpriority48 \lsdlocked0 List Table 3 Accent 2;\lsdpriority49 \lsdlocked0 List Table 4 Accent 2;&#xD;&#xA;\lsdpriority50 \lsdlocked0 List Table 5 Dark Accent 2;\lsdpriority51 \lsdlocked0 List Table 6 Colorful Accent 2;\lsdpriority52 \lsdlocked0 List Table 7 Colorful Accent 2;\lsdpriority46 \lsdlocked0 List Table 1 Light Accent 3;&#xD;&#xA;\lsdpriority47 \lsdlocked0 List Table 2 Accent 3;\lsdpriority48 \lsdlocked0 List Table 3 Accent 3;\lsdpriority49 \lsdlocked0 List Table 4 Accent 3;\lsdpriority50 \lsdlocked0 List Table 5 Dark Accent 3;&#xD;&#xA;\lsdpriority51 \lsdlocked0 List Table 6 Colorful Accent 3;\lsdpriority52 \lsdlocked0 List Table 7 Colorful Accent 3;\lsdpriority46 \lsdlocked0 List Table 1 Light Accent 4;\lsdpriority47 \lsdlocked0 List Table 2 Accent 4;&#xD;&#xA;\lsdpriority48 \lsdlocked0 List Table 3 Accent 4;\lsdpriority49 \lsdlocked0 List Table 4 Accent 4;\lsdpriority50 \lsdlocked0 List Table 5 Dark Accent 4;\lsdpriority51 \lsdlocked0 List Table 6 Colorful Accent 4;&#xD;&#xA;\lsdpriority52 \lsdlocked0 List Table 7 Colorful Accent 4;\lsdpriority46 \lsdlocked0 List Table 1 Light Accent 5;\lsdpriority47 \lsdlocked0 List Table 2 Accent 5;\lsdpriority48 \lsdlocked0 List Table 3 Accent 5;&#xD;&#xA;\lsdpriority49 \lsdlocked0 List Table 4 Accent 5;\lsdpriority50 \lsdlocked0 List Table 5 Dark Accent 5;\lsdpriority51 \lsdlocked0 List Table 6 Colorful Accent 5;\lsdpriority52 \lsdlocked0 List Table 7 Colorful Accent 5;&#xD;&#xA;\lsdpriority46 \lsdlocked0 List Table 1 Light Accent 6;\lsdpriority47 \lsdlocked0 List Table 2 Accent 6;\lsdpriority48 \lsdlocked0 List Table 3 Accent 6;\lsdpriority49 \lsdlocked0 List Table 4 Accent 6;&#xD;&#xA;\lsdpriority50 \lsdlocked0 List Table 5 Dark Accent 6;\lsdpriority51 \lsdlocked0 List Table 6 Colorful Accent 6;\lsdpriority52 \lsdlocked0 List Table 7 Colorful Accent 6;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Mention;&#xD;&#xA;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Smart Hyperlink;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Hashtag;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Unresolved Mention;\lsdsemihidden1 \lsdunhideused1 \lsdlocked0 Smart Link;}}{\*\datastore 01050000&#xD;&#xA;02000000180000004d73786d6c322e534158584d4c5265616465722e362e3000000000000000000000060000&#xD;&#xA;d0cf11e0a1b11ae1000000000000000000000000000000003e000300feff090006000000000000000000000001000000010000000000000000100000feffffff00000000feffffff0000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff&#xD;&#xA;ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff&#xD;&#xA;ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff&#xD;&#xA;ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff&#xD;&#xA;fffffffffffffffffdfffffffeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff&#xD;&#xA;ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff&#xD;&#xA;ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff&#xD;&#xA;ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff&#xD;&#xA;ffffffffffffffffffffffffffffffff52006f006f007400200045006e00740072007900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000016000500ffffffffffffffffffffffff0c6ad98892f1d411a65f0040963251e50000000000000000000000004051&#xD;&#xA;b2d8093cdd01feffffff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffff00000000000000000000000000000000000000000000000000000000&#xD;&#xA;00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffff0000000000000000000000000000000000000000000000000000&#xD;&#xA;000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffff000000000000000000000000000000000000000000000000&#xD;&#xA;0000000000000000000000000000000000000000000000000105000000000000}}" Sunken="yes" TabSkip="no" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="340" Height="15" Text="Please read the following license agreement carefully" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Text="{\WixUI_Font_Title}End-User License Agreement" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="WaitForCostingDlg" X="50" Y="50" Width="260" Height="85" Title="[ProductName] Setup">
+        <Control Id="Return" Type="PushButton" X="102" Y="57" Width="56" Height="17" Text="&amp;Return" TabSkip="no" Default="yes" Cancel="yes">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+        <Control Id="Icon" Type="Icon" X="15" Y="15" Width="24" Height="24" Text="WixUI_Ico_Exclam" Disabled="yes" FixedSize="yes" IconSize="32" ToolTip="Exclamation icon" TabSkip="yes" />
+        <Control Id="Text" Type="Text" X="48" Y="15" Width="194" Height="30" Text="Please wait while the installer finishes determining your disk space requirements." TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="BrowseDlg" X="50" Y="50" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="PathEdit" Type="PathEdit" X="25" Y="202" Width="320" Height="18" Indirect="yes" Property="_BrowseProperty" TabSkip="no" />
+        <Control Id="OK" Type="PushButton" X="240" Y="243" Width="56" Height="17" Text="OK" TabSkip="no" Default="yes">
+          <Publish Event="SetTargetPath" Value="[_BrowseProperty]" />
+          <Publish Event="EndDialog" Value="Return" />
+          <Publish Condition="NOT WIXUI_DONTVALIDATEPATH" Event="DoAction" Value="WixUIValidatePath_X86" />
+          <Publish Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" Event="SpawnDialog" Value="InvalidDirDlg" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" TabSkip="no" Cancel="yes">
+          <Publish Event="Reset" Value="0" />
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="ComboLabel" Type="Text" X="25" Y="58" Width="44" Height="10" Text="&amp;Look in:" TabSkip="no" />
+        <Control Id="DirectoryCombo" Type="DirectoryCombo" X="70" Y="55" Width="220" Height="80" Indirect="yes" Fixed="yes" Remote="yes" Property="_BrowseProperty" TabSkip="no">
+          <Subscribe Event="IgnoreChange" Attribute="IgnoreChange" />
+        </Control>
+        <Control Id="WixUI_Bmp_Up" Type="PushButton" X="298" Y="55" Width="19" Height="19" Text="WixUI_Bmp_Up" Icon="yes" FixedSize="yes" IconSize="16" ToolTip="Up one level" TabSkip="no">
+          <Publish Event="DirectoryListUp" Value="0" />
+        </Control>
+        <Control Id="NewFolder" Type="PushButton" X="325" Y="55" Width="19" Height="19" Text="WixUI_Bmp_New" Icon="yes" FixedSize="yes" IconSize="16" ToolTip="Create a new folder" TabSkip="no">
+          <Publish Event="DirectoryListNew" Value="0" />
+        </Control>
+        <Control Id="DirectoryList" Type="DirectoryList" X="25" Y="83" Width="320" Height="98" Indirect="yes" Sunken="yes" Property="_BrowseProperty" TabSkip="no" />
+        <Control Id="PathLabel" Type="Text" X="25" Y="190" Width="320" Height="10" Text="&amp;Folder name:" TabSkip="no" />
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" Disabled="yes" TabSkip="no" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Text="Browse to the destination folder" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Text="{\WixUI_Font_Title}Change destination folder" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="InstallDirDlg" X="50" Y="50" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Next" TabSkip="no" Default="yes">
+          <Publish Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" />
+          <Publish Condition="NOT WIXUI_DONTVALIDATEPATH" Event="DoAction" Value="WixUIValidatePath_X86" />
+          <Publish Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" Event="SpawnDialog" Value="InvalidDirDlg" />
+          <Publish Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" Event="NewDialog" Value="VerifyReadyDlg" />
+        </Control>
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back" TabSkip="no">
+          <Publish Event="NewDialog" Value="LicenseAgreementDlg" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" TabSkip="no" Cancel="yes">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" Disabled="yes" TabSkip="no" />
+        <Control Id="Folder" Type="PathEdit" X="20" Y="100" Width="320" Height="18" Indirect="yes" Property="WIXUI_INSTALLDIR" TabSkip="no" />
+        <Control Id="ChangeFolder" Type="PushButton" X="20" Y="120" Width="56" Height="17" Text="&amp;Change..." TabSkip="no">
+          <Publish Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" />
+          <Publish Event="SpawnDialog" Value="BrowseDlg" />
+        </Control>
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Text="Click Next to install to the default folder or click Change to choose another." Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Text="{\WixUI_Font_Title}Destination Folder" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="FolderLabel" Type="Text" X="20" Y="60" Width="290" Height="30" Text="Install [ProductName] to:" NoPrefix="yes" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="DiskCostDlg" X="50" Y="50" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="OK" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="OK" TabSkip="no" Default="yes" Cancel="yes">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" Disabled="yes" TabSkip="no" />
+        <Control Id="Description" Type="Text" X="20" Y="20" Width="280" Height="20" Text="The disk space required for the installation of the selected features." Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Text="{\WixUI_Font_Title}Disk Space Requirements" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Text" Type="Text" X="20" Y="53" Width="330" Height="50" Text="Highlighted volumes do not have enough disk space available for selected features. You can either remove some files from the highlighted volumes, install fewer features, or select different destination drives." TabSkip="yes" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="VolumeList" Type="VolumeCostList" X="20" Y="100" Width="330" Height="120" Text="{120}{70}{70}{70}{70}" Sunken="yes" Fixed="yes" Remote="yes" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="FatalError" X="50" Y="50" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="Finish" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Finish" TabSkip="no" Default="yes" Cancel="yes">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" Disabled="yes" TabSkip="no" />
+        <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" Text="WixUI_Bmp_Dialog" Disabled="yes" TabSkip="no" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back" Disabled="yes" TabSkip="no" />
+        <Control Id="Description" Type="Text" X="135" Y="70" Width="220" Height="80" Text="[ProductName] Setup Wizard ended prematurely because of an error. Your system has not been modified. To install this program at a later time, run Setup Wizard again. Click the Finish button to exit the Setup Wizard." Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="135" Y="20" Width="220" Height="60" Text="{\WixUI_Font_Bigger}[ProductName] Setup Wizard ended prematurely" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="FilesInUse" X="50" Y="50" Width="370" Height="270" KeepModeless="yes" Title="[ProductName] Setup">
+        <Control Id="Retry" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="&amp;Retry" TabSkip="no" Default="yes" Cancel="yes">
+          <Publish Event="EndDialog" Value="Retry" />
+        </Control>
+        <Control Id="Ignore" Type="PushButton" X="235" Y="243" Width="56" Height="17" Text="&amp;Ignore" TabSkip="no">
+          <Publish Event="EndDialog" Value="Ignore" />
+        </Control>
+        <Control Id="Exit" Type="PushButton" X="166" Y="243" Width="56" Height="17" Text="E&amp;xit" TabSkip="no">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" Disabled="yes" TabSkip="no" />
+        <Control Id="Description" Type="Text" X="20" Y="23" Width="280" Height="20" Text="Some files that need to be updated are currently in use." Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Text="{\WixUI_Font_Title}Files in Use" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Text" Type="Text" X="20" Y="55" Width="330" Height="30" Text="The following applications are using files that need to be updated by this setup. Close these applications and then click &amp;Retry to continue setup or Exit to exit it." TabSkip="yes" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="List" Type="ListBox" X="20" Y="87" Width="330" Height="130" Sunken="yes" Property="FileInUseProcess" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="MsiRMFilesInUse" X="50" Y="50" Width="370" Height="270" KeepModeless="yes" Title="[ProductName] Setup">
+        <Control Id="OK" Type="PushButton" X="240" Y="243" Width="56" Height="17" Text="OK" TabSkip="no" Default="yes">
+          <Publish Event="EndDialog" Value="Return" />
+          <Publish Condition="WixUIRMOption~=&quot;UseRM&quot;" Event="RMShutdownAndRestart" Value="0" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" TabSkip="no" Cancel="yes">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+        <Control Id="ShutdownOption" Type="RadioButtonGroup" X="26" Y="190" Width="305" Height="45" Property="WixUIRMOption" TabSkip="no" />
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" Disabled="yes" TabSkip="no" />
+        <Control Id="Description" Type="Text" X="20" Y="23" Width="280" Height="20" Text="Some files that need to be updated are currently in use." Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Text="{\WixUI_Font_Title}Files in Use" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Text" Type="Text" X="20" Y="55" Width="330" Height="45" Text="The following applications are using files that need to be updated by this setup. You can let Setup Wizard close them and attempt to restart them or reboot the machine later." TabSkip="yes" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="List" Type="ListBox" X="20" Y="100" Width="330" Height="80" Sunken="yes" Property="FileInUseProcess" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="PrepareDlg" X="50" Y="50" Width="370" Height="270" Modeless="yes" Title="[ProductName] Setup">
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" TabSkip="no" Default="yes" Cancel="yes">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" Text="WixUI_Bmp_Dialog" Disabled="yes" TabSkip="no" />
+        <Control Id="Description" Type="Text" X="135" Y="70" Width="220" Height="20" Text="Please wait while the Setup Wizard prepares to guide you through the installation." Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="135" Y="20" Width="220" Height="60" Text="{\WixUI_Font_Bigger}Welcome to the [ProductName] Setup Wizard" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Next" Disabled="yes" TabSkip="yes" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back" Disabled="yes" TabSkip="yes" />
+        <Control Id="ActionText" Type="Text" X="135" Y="100" Width="220" Height="20" Transparent="yes" NoPrefix="yes" TabSkip="yes">
+          <Subscribe Event="ActionText" Attribute="Text" />
+        </Control>
+        <Control Id="ActionData" Type="Text" X="135" Y="125" Width="220" Height="30" Transparent="yes" NoPrefix="yes" TabSkip="yes">
+          <Subscribe Event="ActionData" Attribute="Text" />
+        </Control>
+      </Dialog>
+      <Dialog Id="ResumeDlg" X="50" Y="50" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="Install" Type="PushButton" X="212" Y="243" Width="80" Height="17" Text="&amp;Install" Hidden="yes" ElevationShield="yes" ShowCondition="ALLUSERS" TabSkip="no">
+          <Publish Condition="1 OR CostingComplete = 1" Event="SpawnWaitDialog" Value="WaitForCostingDlg" />
+          <Publish Condition="OutOfDiskSpace &lt;&gt; 1" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST=&quot;P&quot; OR NOT PROMPTROLLBACKCOST)" Event="SpawnDialog" Value="OutOfRbDiskDlg" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EnableRollback" Value="False" />
+          <Publish Condition="(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST=&quot;F&quot;)" Event="SpawnDialog" Value="OutOfDiskDlg" />
+        </Control>
+        <Control Id="InstallNoShield" Type="PushButton" X="212" Y="243" Width="80" Height="17" Text="&amp;Install" Hidden="yes" ShowCondition="NOT ALLUSERS" TabSkip="no" Default="yes">
+          <Publish Condition="1 OR CostingComplete = 1" Event="SpawnWaitDialog" Value="WaitForCostingDlg" />
+          <Publish Condition="OutOfDiskSpace &lt;&gt; 1" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST=&quot;P&quot; OR NOT PROMPTROLLBACKCOST)" Event="SpawnDialog" Value="OutOfRbDiskDlg" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EnableRollback" Value="False" />
+          <Publish Condition="(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST=&quot;F&quot;)" Event="SpawnDialog" Value="OutOfDiskDlg" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" TabSkip="no" Cancel="yes">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" Text="WixUI_Bmp_Dialog" Disabled="yes" TabSkip="no" />
+        <Control Id="Back" Type="PushButton" X="156" Y="243" Width="56" Height="17" Text="&amp;Back" Disabled="yes" TabSkip="no" />
+        <Control Id="Description" Type="Text" X="135" Y="80" Width="220" Height="60" Text="The Setup Wizard will complete the installation of [ProductName] on your computer. Click Install to continue or Cancel to exit the Setup Wizard." Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="135" Y="20" Width="220" Height="60" Text="{\WixUI_Font_Bigger}Resuming the [ProductName] Setup Wizard" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="OutOfRbDiskDlg" X="50" Y="50" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="No" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="&amp;No" TabSkip="no" Default="yes" Cancel="yes">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Yes" Type="PushButton" X="240" Y="243" Width="56" Height="17" Text="&amp;Yes" TabSkip="no">
+          <Publish Event="EnableRollback" Value="False" />
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" Disabled="yes" TabSkip="no" />
+        <Control Id="Description" Type="Text" X="20" Y="20" Width="280" Height="20" Text="Disk space required for the installation exceeds available disk space." Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Text="{\WixUI_Font_Title}Out of Disk Space" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Text" Type="Text" X="20" Y="53" Width="330" Height="90" Text="The highlighted volumes do not have enough disk space available for the currently selected features. You can remove some files from the highlighted volumes, install fewer features, or select a different destination drive. Alternatively, you may choose to disable the installer's rollback functionality. Disabling rollback prevents the installer from restoring your computer's original state should the installation be interrupted in any way. Click Yes if you wish to take the risk of disabling rollback." TabSkip="yes" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="VolumeList" Type="VolumeCostList" X="20" Y="150" Width="330" Height="70" Text="{120}{70}{70}{70}{70}" Sunken="yes" Fixed="yes" Remote="yes" ShowRollbackCost="yes" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="OutOfDiskDlg" X="50" Y="50" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="OK" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="OK" TabSkip="no" Default="yes" Cancel="yes">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" Disabled="yes" TabSkip="no" />
+        <Control Id="Description" Type="Text" X="20" Y="20" Width="280" Height="20" Text="Disk space required for the installation exceeds available disk space." Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Text="{\WixUI_Font_Title}Out of Disk Space" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Text" Type="Text" X="20" Y="53" Width="330" Height="60" Text="The highlighted volumes do not have enough disk space available for the currently selected features. You can remove some files from the highlighted volumes, install fewer features, or select a different destination drive." TabSkip="yes" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="VolumeList" Type="VolumeCostList" X="20" Y="120" Width="330" Height="100" Text="{120}{70}{70}{70}{70}" Sunken="yes" Fixed="yes" Remote="yes" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="UserExit" X="50" Y="50" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="Finish" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Finish" TabSkip="no" Default="yes" Cancel="yes">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" Disabled="yes" TabSkip="no" />
+        <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" Text="WixUI_Bmp_Dialog" Disabled="yes" TabSkip="no" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back" Disabled="yes" TabSkip="no" />
+        <Control Id="Description" Type="Text" X="135" Y="80" Width="220" Height="80" Text="[ProductName] setup was interrupted. Your system has not been modified. To install this program at a later time, please run the installation again. Click the Finish button to exit the Setup Wizard." Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="135" Y="20" Width="220" Height="60" Text="{\WixUI_Font_Bigger}[ProductName] Setup Wizard was interrupted" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="InvalidDirDlg" X="50" Y="50" Width="260" Height="85" Title="[ProductName] Setup">
+        <Control Id="OK" Type="PushButton" X="102" Y="57" Width="56" Height="17" Text="OK" TabSkip="no" Default="yes" Cancel="yes">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Icon" Type="Icon" X="15" Y="15" Width="24" Height="24" Text="WixUI_Ico_Info" Disabled="yes" FixedSize="yes" IconSize="32" ToolTip="Information icon" TabSkip="yes" />
+        <Control Id="Text" Type="Text" X="48" Y="22" Width="194" Height="30" Text="Installation directory must be on a local hard drive." TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="VerifyReadyDlg" X="50" Y="50" Width="370" Height="270" TrackDiskSpace="yes" Title="[ProductName] Setup">
+        <Control Id="Install" Type="PushButton" X="212" Y="243" Width="80" Height="17" Text="&amp;Install" Disabled="yes" Hidden="yes" ElevationShield="yes" ShowCondition="NOT Installed AND ALLUSERS" EnableCondition="NOT Installed" DefaultCondition="NOT Installed" TabSkip="no">
+          <Publish Condition="OutOfDiskSpace &lt;&gt; 1" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST=&quot;P&quot; OR NOT PROMPTROLLBACKCOST)" Event="SpawnDialog" Value="OutOfRbDiskDlg" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EnableRollback" Value="False" />
+          <Publish Condition="(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST=&quot;F&quot;)" Event="SpawnDialog" Value="OutOfDiskDlg" />
+        </Control>
+        <Control Id="InstallNoShield" Type="PushButton" X="212" Y="243" Width="80" Height="17" Text="&amp;Install" Disabled="yes" Hidden="yes" ShowCondition="NOT Installed AND NOT ALLUSERS" EnableCondition="NOT Installed" DefaultCondition="NOT Installed" TabSkip="no">
+          <Publish Condition="OutOfDiskSpace &lt;&gt; 1" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST=&quot;P&quot; OR NOT PROMPTROLLBACKCOST)" Event="SpawnDialog" Value="OutOfRbDiskDlg" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EnableRollback" Value="False" />
+          <Publish Condition="(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST=&quot;F&quot;)" Event="SpawnDialog" Value="OutOfDiskDlg" />
+        </Control>
+        <Control Id="Change" Type="PushButton" X="212" Y="243" Width="80" Height="17" Text="&amp;Change" Disabled="yes" Hidden="yes" ElevationShield="yes" ShowCondition="WixUI_InstallMode = &quot;Change&quot; AND ALLUSERS AND (ADDLOCAL OR REMOVE)" EnableCondition="WixUI_InstallMode = &quot;Change&quot;" DefaultCondition="WixUI_InstallMode = &quot;Change&quot;" TabSkip="no">
+          <Publish Condition="OutOfDiskSpace &lt;&gt; 1" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST=&quot;P&quot; OR NOT PROMPTROLLBACKCOST)" Event="SpawnDialog" Value="OutOfRbDiskDlg" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EnableRollback" Value="False" />
+          <Publish Condition="(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST=&quot;F&quot;)" Event="SpawnDialog" Value="OutOfDiskDlg" />
+        </Control>
+        <Control Id="ChangeNoShield" Type="PushButton" X="212" Y="243" Width="80" Height="17" Text="&amp;Change" Disabled="yes" Hidden="yes" ShowCondition="WixUI_InstallMode = &quot;Change&quot; AND (NOT ALLUSERS OR (NOT ADDLOCAL AND NOT REMOVE))" EnableCondition="WixUI_InstallMode = &quot;Change&quot;" DefaultCondition="WixUI_InstallMode = &quot;Change&quot;" TabSkip="no">
+          <Publish Condition="OutOfDiskSpace &lt;&gt; 1" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST=&quot;P&quot; OR NOT PROMPTROLLBACKCOST)" Event="SpawnDialog" Value="OutOfRbDiskDlg" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EnableRollback" Value="False" />
+          <Publish Condition="(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST=&quot;F&quot;)" Event="SpawnDialog" Value="OutOfDiskDlg" />
+        </Control>
+        <Control Id="Repair" Type="PushButton" X="212" Y="243" Width="80" Height="17" Text="Re&amp;pair" Disabled="yes" Hidden="yes" ShowCondition="WixUI_InstallMode = &quot;Repair&quot;" EnableCondition="WixUI_InstallMode = &quot;Repair&quot;" DefaultCondition="WixUI_InstallMode = &quot;Repair&quot;" TabSkip="no" Default="yes">
+          <Publish Condition="OutOfDiskSpace &lt;&gt; 1" Event="ReinstallMode" Value="ecmus" />
+          <Publish Condition="OutOfDiskSpace &lt;&gt; 1" Event="Reinstall" Value="All" />
+          <Publish Condition="OutOfDiskSpace &lt;&gt; 1" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST=&quot;P&quot; OR NOT PROMPTROLLBACKCOST)" Event="SpawnDialog" Value="OutOfRbDiskDlg" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EnableRollback" Value="False" />
+          <Publish Condition="(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST=&quot;F&quot;)" Event="SpawnDialog" Value="OutOfDiskDlg" />
+        </Control>
+        <Control Id="Remove" Type="PushButton" X="212" Y="243" Width="80" Height="17" Text="&amp;Remove" Disabled="yes" Hidden="yes" ElevationShield="yes" ShowCondition="WixUI_InstallMode = &quot;Remove&quot; AND ALLUSERS" EnableCondition="WixUI_InstallMode = &quot;Remove&quot;" TabSkip="no">
+          <Publish Condition="OutOfDiskSpace &lt;&gt; 1" Event="Remove" Value="All" />
+          <Publish Condition="OutOfDiskSpace &lt;&gt; 1" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST=&quot;P&quot; OR NOT PROMPTROLLBACKCOST)" Event="SpawnDialog" Value="OutOfRbDiskDlg" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EnableRollback" Value="False" />
+          <Publish Condition="(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST=&quot;F&quot;)" Event="SpawnDialog" Value="OutOfDiskDlg" />
+        </Control>
+        <Control Id="RemoveNoShield" Type="PushButton" X="212" Y="243" Width="80" Height="17" Text="&amp;Remove" Disabled="yes" Hidden="yes" ShowCondition="WixUI_InstallMode = &quot;Remove&quot; AND NOT ALLUSERS" EnableCondition="WixUI_InstallMode = &quot;Remove&quot;" TabSkip="no">
+          <Publish Condition="OutOfDiskSpace &lt;&gt; 1" Event="Remove" Value="All" />
+          <Publish Condition="OutOfDiskSpace &lt;&gt; 1" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST=&quot;P&quot; OR NOT PROMPTROLLBACKCOST)" Event="SpawnDialog" Value="OutOfRbDiskDlg" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EnableRollback" Value="False" />
+          <Publish Condition="(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST=&quot;F&quot;)" Event="SpawnDialog" Value="OutOfDiskDlg" />
+        </Control>
+        <Control Id="Update" Type="PushButton" X="212" Y="243" Width="80" Height="17" Text="&amp;Update" Disabled="yes" Hidden="yes" ElevationShield="yes" ShowCondition="WixUI_InstallMode = &quot;Update&quot; AND ALLUSERS" EnableCondition="WixUI_InstallMode = &quot;Update&quot;" TabSkip="no">
+          <Publish Condition="OutOfDiskSpace &lt;&gt; 1" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST=&quot;P&quot; OR NOT PROMPTROLLBACKCOST)" Event="SpawnDialog" Value="OutOfRbDiskDlg" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EnableRollback" Value="False" />
+          <Publish Condition="(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST=&quot;F&quot;)" Event="SpawnDialog" Value="OutOfDiskDlg" />
+        </Control>
+        <Control Id="UpdateNoShield" Type="PushButton" X="212" Y="243" Width="80" Height="17" Text="&amp;Update" Disabled="yes" Hidden="yes" ShowCondition="WixUI_InstallMode = &quot;Update&quot; AND NOT ALLUSERS" EnableCondition="WixUI_InstallMode = &quot;Update&quot;" TabSkip="no">
+          <Publish Condition="OutOfDiskSpace &lt;&gt; 1" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND (PROMPTROLLBACKCOST=&quot;P&quot; OR NOT PROMPTROLLBACKCOST)" Event="SpawnDialog" Value="OutOfRbDiskDlg" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EndDialog" Value="Return" />
+          <Publish Condition="OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 0 AND PROMPTROLLBACKCOST=&quot;D&quot;" Event="EnableRollback" Value="False" />
+          <Publish Condition="(OutOfDiskSpace = 1 AND OutOfNoRbDiskSpace = 1) OR (OutOfDiskSpace = 1 AND PROMPTROLLBACKCOST=&quot;F&quot;)" Event="SpawnDialog" Value="OutOfDiskDlg" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" TabSkip="no" Cancel="yes">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="Back" Type="PushButton" X="156" Y="243" Width="56" Height="17" Text="&amp;Back" DefaultCondition="WixUI_InstallMode = &quot;Remove&quot;" TabSkip="no">
+          <Publish Condition="NOT Installed" Event="NewDialog" Value="InstallDirDlg" />
+          <Publish Condition="Installed AND NOT PATCH" Event="NewDialog" Value="MaintenanceTypeDlg" />
+          <Publish Condition="Installed AND PATCH" Event="NewDialog" Value="WelcomeDlg" />
+        </Control>
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" Disabled="yes" TabSkip="no" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="InstallTitle" Type="Text" X="15" Y="15" Width="300" Height="15" Text="{\WixUI_Font_Title}Ready to install [ProductName]" Hidden="yes" Transparent="yes" NoPrefix="yes" ShowCondition="NOT Installed" TabSkip="yes" />
+        <Control Id="InstallText" Type="Text" X="25" Y="70" Width="320" Height="80" Text="Click Install to begin the installation. Click Back to review or change any of your installation settings. Click Cancel to exit the wizard." Hidden="yes" ShowCondition="NOT Installed" TabSkip="yes" />
+        <Control Id="ChangeTitle" Type="Text" X="15" Y="15" Width="300" Height="15" Text="{\WixUI_Font_Title}Ready to change [ProductName]" Hidden="yes" Transparent="yes" NoPrefix="yes" ShowCondition="WixUI_InstallMode = &quot;Change&quot;" TabSkip="yes" />
+        <Control Id="ChangeText" Type="Text" X="25" Y="70" Width="320" Height="80" Text="Click Change to begin the installation. Click Back to review or change any of your installation settings. Click Cancel to exit the wizard." Hidden="yes" ShowCondition="WixUI_InstallMode = &quot;Change&quot;" TabSkip="yes" />
+        <Control Id="RepairTitle" Type="Text" X="15" Y="15" Width="300" Height="15" Text="{\WixUI_Font_Title}Ready to repair [ProductName]" Hidden="yes" Transparent="yes" NoPrefix="yes" ShowCondition="WixUI_InstallMode = &quot;Repair&quot;" TabSkip="yes" />
+        <Control Id="RepairText" Type="Text" X="25" Y="70" Width="320" Height="80" Text="Click Repair to repair the installation of [ProductName]. Click Back to review or change any of your installation settings. Click Cancel to exit the wizard." Hidden="yes" NoPrefix="yes" ShowCondition="WixUI_InstallMode = &quot;Repair&quot;" TabSkip="yes" />
+        <Control Id="RemoveTitle" Type="Text" X="15" Y="15" Width="300" Height="15" Text="{\WixUI_Font_Title}Ready to remove [ProductName]" Hidden="yes" Transparent="yes" NoPrefix="yes" ShowCondition="WixUI_InstallMode = &quot;Remove&quot;" TabSkip="yes" />
+        <Control Id="RemoveText" Type="Text" X="25" Y="70" Width="320" Height="80" Text="Click Remove to remove [ProductName] from your computer. Click Back to review or change any of your installation settings. Click Cancel to exit the wizard." Hidden="yes" NoPrefix="yes" ShowCondition="WixUI_InstallMode = &quot;Remove&quot;" TabSkip="yes" />
+        <Control Id="UpdateTitle" Type="Text" X="15" Y="15" Width="300" Height="15" Text="{\WixUI_Font_Title}Ready to update [ProductName]" Hidden="yes" Transparent="yes" NoPrefix="yes" ShowCondition="WixUI_InstallMode = &quot;Update&quot;" TabSkip="yes" />
+        <Control Id="UpdateText" Type="Text" X="25" Y="70" Width="320" Height="80" Text="Click Update to update [ProductName] from your computer. Click Back to review or change any of your installation settings. Click Cancel to exit the wizard." Hidden="yes" NoPrefix="yes" ShowCondition="WixUI_InstallMode = &quot;Update&quot;" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="MaintenanceTypeDlg" X="50" Y="50" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="ChangeButton" Type="PushButton" X="40" Y="65" Width="80" Height="17" Text="&amp;Change" ToolTip="Change Installation" DisableCondition="ARPNOMODIFY OR BURNMSIREPAIR OR BURNMSIUNINSTALL" TabSkip="no" Default="yes">
+          <Publish Property="WixUI_InstallMode" Value="Change" />
+        </Control>
+        <Control Id="RepairButton" Type="PushButton" X="40" Y="118" Width="80" Height="17" Text="Re&amp;pair" ToolTip="Repair Installation" DisableCondition="ARPNOREPAIR OR BURNMSIMODIFY OR BURNMSIUNINSTALL" TabSkip="no">
+          <Publish Property="WixUI_InstallMode" Value="Repair" />
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" />
+        </Control>
+        <Control Id="RemoveButton" Type="PushButton" X="40" Y="171" Width="80" Height="17" Text="&amp;Remove" ToolTip="Remove Installation" DisableCondition="ARPNOREMOVE OR BURNMSIREPAIR OR BURNMSIMODIFY" TabSkip="no">
+          <Publish Property="WixUI_InstallMode" Value="Remove" />
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" />
+        </Control>
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back" TabSkip="no">
+          <Publish Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Next" Disabled="yes" TabSkip="no" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" TabSkip="no" Cancel="yes">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="WixUI_Bmp_Banner" Disabled="yes" TabSkip="no" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="340" Height="20" Text="Select the operation you wish to perform." Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Text="{\WixUI_Font_Title}Change, repair, or remove installation" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+        <Control Id="ChangeText" Type="Text" X="60" Y="85" Width="280" Height="20" Text="Lets you change the way features are installed." HideCondition="ARPNOMODIFY OR BURNMSIREPAIR OR BURNMSIUNINSTALL" TabSkip="yes" />
+        <Control Id="RepairText" Type="Text" X="60" Y="138" Width="280" Height="30" Text="Repairs errors in the most recent installation by fixing missing and corrupt files, shortcuts, and registry entries." HideCondition="ARPNOREPAIR OR BURNMSIMODIFY OR BURNMSIUNINSTALL" TabSkip="yes" />
+        <Control Id="RemoveText" Type="Text" X="60" Y="191" Width="280" Height="20" Text="Removes [ProductName] from your computer." NoPrefix="yes" HideCondition="ARPNOREMOVE OR BURNMSIREPAIR OR BURNMSIMODIFY" TabSkip="yes" />
+        <Control Id="ChangeDisabledText" Type="Text" X="60" Y="85" Width="280" Height="20" Text="[ProductName] has no independently selectable features." Hidden="yes" NoPrefix="yes" ShowCondition="ARPNOMODIFY OR BURNMSIREPAIR OR BURNMSIUNINSTALL" TabSkip="yes" />
+        <Control Id="RepairDisabledText" Type="Text" X="60" Y="138" Width="280" Height="30" Text="[ProductName] cannot be repaired." Hidden="yes" NoPrefix="yes" ShowCondition="ARPNOREPAIR OR BURNMSIMODIFY OR BURNMSIUNINSTALL" TabSkip="yes" />
+        <Control Id="RemoveDisabledText" Type="Text" X="60" Y="191" Width="280" Height="20" Text="[ProductName] cannot be removed." Hidden="yes" NoPrefix="yes" ShowCondition="ARPNOREMOVE OR BURNMSIREPAIR OR BURNMSIMODIFY" TabSkip="yes" />
+      </Dialog>
+      <Dialog Id="MaintenanceWelcomeDlg" X="50" Y="50" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Text="&amp;Next" TabSkip="no" Default="yes">
+          <Publish Event="NewDialog" Value="MaintenanceTypeDlg" />
+          <Publish Condition="1 OR CostingComplete = 1" Event="SpawnWaitDialog" Value="WaitForCostingDlg" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Text="Cancel" TabSkip="no" Cancel="yes">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" Text="WixUI_Bmp_Dialog" Disabled="yes" TabSkip="no" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back" Disabled="yes" TabSkip="no" />
+        <Control Id="Description" Type="Text" X="135" Y="70" Width="220" Height="60" Text="Version 1.2.0  |  Build date 2026-09-09&#xD;&#xA;&#xD;&#xA;The Setup Wizard lets you change, repair, or remove [ProductName]. Click Next to continue or Cancel to exit the Setup Wizard." Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="Title" Type="Text" X="135" Y="20" Width="220" Height="60" Text="{\WixUI_Font_Bigger}Welcome to the [ProductName] Setup Wizard" Transparent="yes" NoPrefix="yes" TabSkip="yes" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" Disabled="yes" TabSkip="yes" />
+      </Dialog>
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <RadioButtonGroup Property="WixUIRMOption">
+        <RadioButton Value="UseRM" X="0" Y="0" Width="295" Height="16" Text="&amp;Close the applications and attempt to restart them." />
+        <RadioButton Value="DontUseRM" X="0" Y="20" Width="295" Height="16" Text="&amp;Do not close applications. A reboot will be required." />
+      </RadioButtonGroup>
+      <UIText Id="NewFolder" Value="Folder|New Folder" />
+      <UIText Id="AbsentPath" />
+      <UIText Id="bytes" Value="bytes" />
+      <UIText Id="GB" Value="GB" />
+      <UIText Id="KB" Value="KB" />
+      <UIText Id="MB" Value="MB" />
+      <UIText Id="MenuAbsent" Value="Entire feature will be unavailable" />
+      <UIText Id="MenuAdvertise" Value="Feature will be installed when required" />
+      <UIText Id="MenuAllCD" Value="Entire feature will be installed to run from CD" />
+      <UIText Id="MenuAllLocal" Value="Entire feature will be installed on local hard drive" />
+      <UIText Id="MenuAllNetwork" Value="Entire feature will be installed to run from network" />
+      <UIText Id="MenuCD" Value="Will be installed to run from CD" />
+      <UIText Id="MenuLocal" Value="Will be installed on local hard drive" />
+      <UIText Id="MenuNetwork" Value="Will be installed to run from network" />
+      <UIText Id="ScriptInProgress" Value="Gathering required information..." />
+      <UIText Id="SelAbsentAbsent" Value="This feature will remain uninstalled" />
+      <UIText Id="SelAbsentAdvertise" Value="This feature will be set to be installed when required" />
+      <UIText Id="SelAbsentCD" Value="This feature will be installed to run from CD" />
+      <UIText Id="SelAbsentLocal" Value="This feature will be installed on the local hard drive" />
+      <UIText Id="SelAbsentNetwork" Value="This feature will be installed to run from the network" />
+      <UIText Id="SelAdvertiseAbsent" Value="This feature will become unavailable" />
+      <UIText Id="SelAdvertiseAdvertise" Value="Will be installed when required" />
+      <UIText Id="SelAdvertiseCD" Value="This feature will be available to run from CD" />
+      <UIText Id="SelAdvertiseLocal" Value="This feature will be installed on your local hard drive" />
+      <UIText Id="SelAdvertiseNetwork" Value="This feature will be available to run from the network" />
+      <UIText Id="SelCDAbsent" Value="This feature will be uninstalled completely, you won't be able to run it from CD" />
+      <UIText Id="SelCDAdvertise" Value="This feature will change from run from CD state to set to be installed when required" />
+      <UIText Id="SelCDCD" Value="This feature will remain to be run from CD" />
+      <UIText Id="SelCDLocal" Value="This feature will change from run from CD state to be installed on the local hard drive" />
+      <UIText Id="SelChildCostNeg" Value="This feature frees up [1] on your hard drive." />
+      <UIText Id="SelChildCostPos" Value="This feature requires [1] on your hard drive." />
+      <UIText Id="SelCostPending" Value="Compiling cost for this feature..." />
+      <UIText Id="SelLocalAbsent" Value="This feature will be completely removed" />
+      <UIText Id="SelLocalAdvertise" Value="This feature will be removed from your local hard drive, but will be set to be installed when required" />
+      <UIText Id="SelLocalCD" Value="This feature will be removed from your local hard drive, but will be still available to run from CD" />
+      <UIText Id="SelLocalLocal" Value="This feature will remain on your local hard drive" />
+      <UIText Id="SelLocalNetwork" Value="This feature will be removed from your local hard drive, but will be still available to run from the network" />
+      <UIText Id="SelNetworkAbsent" Value="This feature will be uninstalled completely, you won't be able to run it from the network" />
+      <UIText Id="SelNetworkAdvertise" Value="This feature will change from run from network state to set to be installed when required" />
+      <UIText Id="SelNetworkLocal" Value="This feature will change from run from network state to be installed on the local hard drive" />
+      <UIText Id="SelNetworkNetwork" Value="This feature will remain to be run from the network" />
+      <UIText Id="SelParentCostNegNeg" Value="This feature frees up [1] on your hard drive. It has [2] of [3] subfeatures selected. The subfeatures free up [4] on your hard drive." />
+      <UIText Id="SelParentCostNegPos" Value="This feature frees up [1] on your hard drive. It has [2] of [3] subfeatures selected. The subfeatures require [4] on your hard drive." />
+      <UIText Id="SelParentCostPosNeg" Value="This feature requires [1] on your hard drive. It has [2] of [3] subfeatures selected. The subfeatures free up [4] on your hard drive." />
+      <UIText Id="SelParentCostPosPos" Value="This feature requires [1] on your hard drive. It has [2] of [3] subfeatures selected. The subfeatures require [4] on your hard drive." />
+      <UIText Id="TimeRemaining" Value="Time remaining:{ [1] minutes}{ [2] seconds}" />
+      <UIText Id="VolumeCostAvailable" Value="Available" />
+      <UIText Id="VolumeCostDifference" Value="Difference" />
+      <UIText Id="VolumeCostRequired" Value="Required" />
+      <UIText Id="VolumeCostSize" Value="Disk Size" />
+      <UIText Id="VolumeCostVolume" Value="Volume" />
+    </UI>
+    <Binary Id="Wix4UtilCA_X86" SourceFile="FILE NOT EXPORTED" />
+    <Binary Id="WixUiCa_X86" SourceFile="FILE NOT EXPORTED" />
+    <Binary Id="WixUI_Bmp_Banner" SourceFile="FILE NOT EXPORTED" />
+    <Binary Id="WixUI_Bmp_Dialog" SourceFile="FILE NOT EXPORTED" />
+    <Binary Id="WixUI_Ico_Info" SourceFile="FILE NOT EXPORTED" />
+    <Binary Id="WixUI_Ico_Exclam" SourceFile="FILE NOT EXPORTED" />
+    <Binary Id="WixUI_Bmp_Up" SourceFile="FILE NOT EXPORTED" />
+    <Binary Id="WixUI_Bmp_New" SourceFile="FILE NOT EXPORTED" />
+    <Media Id="1" EmbedCab="yes" Cabinet="cab1.cab" />
+    <SummaryInformation Description="MultiExplorer dual-pane file explorer" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of MultiExplorer is already installed." Schedule="afterInstallFinalize" />
+    <AdminUISequence>
+      <Show Dialog="FatalError" OnExit="error" />
+      <Show Dialog="UserExit" OnExit="cancel" />
+      <Show Dialog="ExitDialog" OnExit="success" />
+    </AdminUISequence>
+    <InstallUISequence>
+      <Show Dialog="FatalError" OnExit="error" />
+      <Show Dialog="UserExit" OnExit="cancel" />
+      <Show Dialog="ExitDialog" OnExit="success" />
+      <Show Dialog="PrepareDlg" Before="AppSearch" />
+      <Custom Action="SetINSTALLFOLDER" Condition="PREVIOUSINSTALLPATH" After="CostFinalize" />
+      <Show Dialog="WelcomeDlg" Condition="NOT Installed OR PATCH" Before="ResumeDlg" />
+      <Show Dialog="ResumeDlg" Condition="Installed AND (RESUME OR Preselected)" Before="MaintenanceWelcomeDlg" />
+      <Show Dialog="MaintenanceWelcomeDlg" Condition="Installed AND NOT RESUME AND NOT Preselected AND NOT PATCH" Before="ProgressDlg" />
+      <Show Dialog="ProgressDlg" Before="ExecuteAction" />
+    </InstallUISequence>
+    <InstallExecuteSequence>
+      <Custom Action="Wix4RemoveFoldersEx_X86" Before="CostInitialize" />
+      <Custom Action="SetINSTALLFOLDER" Condition="PREVIOUSINSTALLPATH" After="CostFinalize" />
+      <Custom Action="Wix4CloseApplications_X86" Condition="VersionNT &gt; 400" Before="InstallFiles" />
+      <Custom Action="Wix4CheckRebootRequired_X86" Condition="NOT REMOVE~=&quot;ALL&quot; AND VersionNT &gt; 400" After="InstallFinalize" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

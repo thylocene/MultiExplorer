@@ -1,0 +1,63 @@
+{
+  "format": 1,
+  "restore": {
+    "C:\\Projects\\MultiExplorer\\MultiExplorer.Installer\\MultiExplorer.Installer.wixproj": {}
+  },
+  "projects": {
+    "C:\\Projects\\MultiExplorer\\MultiExplorer.Installer\\MultiExplorer.Installer.wixproj": {
+      "version": "1.4.8",
+      "restore": {
+        "projectUniqueName": "C:\\Projects\\MultiExplorer\\MultiExplorer.Installer\\MultiExplorer.Installer.wixproj",
+        "projectName": "MultiExplorer-Setup",
+        "projectPath": "C:\\Projects\\MultiExplorer\\MultiExplorer.Installer\\MultiExplorer.Installer.wixproj",
+        "packagesPath": "C:\\Users\\piscda\\.nuget\\packages\\",
+        "outputPath": "C:\\Projects\\MultiExplorer\\MultiExplorer.Installer\\obj\\",
+        "projectStyle": "PackageReference",
+        "UsingMicrosoftNETSdk": false,
+        "fallbackFolders": [
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
+        ],
+        "configFilePaths": [
+          "C:\\Users\\piscda\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "native"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "native": {
+            "framework": "native",
+            "targetAlias": "native",
+            "projectReferences": {}
+          }
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "native": {
+          "framework": "native",
+          "targetAlias": "native",
+          "dependencies": {
+            "WixToolset.UI.wixext": {
+              "target": "Package",
+              "version": "[4.0.5, )"
+            },
+            "WixToolset.Util.wixext": {
+              "target": "Package",
+              "version": "[4.0.5, )"
+            }
+          }
+        }
+      }
+    }
+  }
+}

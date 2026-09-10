@@ -18,14 +18,13 @@
       LaunchConditions before our version-choice dialog can be displayed. A separate
       detect-only Upgrade row distinguishes newer products so the dialog can warn
       that continuing will install an older version.
-      Schedule afterInstallInitialize so a downgrade removes the newer files before
-      Windows Installer applies its file-version rules to the older payload. Because
-      removal happens after InstallInitialize, Windows Installer can roll it back if
-      installing the selected version fails.
+      Remove the previous product only after the incoming files have been installed.
+      Removal is still inside the installer transaction and can be rolled back if
+      the upgrade fails.
     -->
     <MajorUpgrade
       AllowDowngrades="yes"
-      Schedule="afterInstallInitialize" />
+      Schedule="afterInstallExecute" />
 
     <Upgrade Id="{C1965219-E757-47A2-AA69-F84F693B94DC}">
       <UpgradeVersion Minimum="$(var.Version)"
@@ -36,20 +35,50 @@
 
     <!--
       MultiExplorer can intentionally remain alive in the notification area when
-      its window is closed, so terminate every instance before files are changed.
-      Use WiX's in-process native custom action: launching powershell.exe here creates
-      a console window, and same-version upgrades can run that action once for the
-      incoming MSI and again while uninstalling the previous MSI.
+      its window is closed. Prompt while it is still running so setup never looks
+      stalled behind a locked executable. The end-session message asks the app to
+      exit normally even when its close button is configured to minimize to the
+      notification area. If it remains running, Retry lets the user close it
+      manually; Ignore explicitly allows setup to stop it before files are changed.
     -->
     <util:CloseApplication Id="CloseMultiExplorer"
                            Target="MultiExplorer.exe"
+                           Description="MultiExplorer is still running. Click Ignore to let Setup close it, or close it yourself (after finishing or cancelling active file operations) and click Retry."
+                           PromptToContinue="yes"
                            CloseMessage="no"
-                           EndSessionMessage="no"
+                           EndSessionMessage="yes"
                            ElevatedCloseMessage="no"
                            ElevatedEndSessionMessage="no"
                            Timeout="1"
                            TerminateProcess="0"
                            RebootPrompt="no" />
+
+    <!--
+      File operations run out of process and may intentionally survive the main
+      window. Give the user an explicit chance to let them complete. Choosing
+      Ignore is an informed force-stop fallback, rather than leaving Windows
+      Installer waiting indefinitely on the operation host's locked files.
+    -->
+    <util:CloseApplication Id="CloseOperationHost"
+                           Target="MultiExplorer.OperationHost.exe"
+                           Description="A MultiExplorer copy, move, or delete operation is still running. Let it finish or cancel it, then click Retry. Choosing Ignore will forcibly stop the operation."
+                           PromptToContinue="yes"
+                           CloseMessage="no"
+                           EndSessionMessage="no"
+                           ElevatedCloseMessage="no"
+                           ElevatedEndSessionMessage="no"
+                           Timeout="5"
+                           TerminateProcess="1"
+                           RebootPrompt="no" />
+
+    <!--
+      Keep the util extension's standard scheduling immediately before
+      InstallFiles. Wix4CloseApplications may schedule its deferred force-close
+      action when the user chooses Ignore, so it must run after InstallInitialize
+      has started the Windows Installer transaction. Scheduling it before
+      InstallValidate (and therefore before InstallInitialize) makes that path fail
+      with MSI error 2762, "Cannot write script record. Transaction not started."
+    -->
 
     <!--
       Read the install path persisted by the MainExe component's registry KeyPath.

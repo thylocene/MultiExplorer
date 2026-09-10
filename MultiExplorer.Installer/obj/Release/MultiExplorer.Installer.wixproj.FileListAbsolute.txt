@@ -1,0 +1,8 @@
+C:\Projects\MultiExplorer\MultiExplorer.Installer\bin\Release\en-US\MultiExplorer-Setup.msi
+C:\Projects\MultiExplorer\MultiExplorer.Installer\bin\Release\en-US\MultiExplorer-Setup.wixpdb
+C:\Projects\MultiExplorer\MultiExplorer.Installer\obj\Release\MultiExplorer.Installer.wixproj.CoreCompileInputs.cache
+C:\Projects\MultiExplorer\MultiExplorer.Installer\obj\Release\en-US\MultiExplorer-Setup.msi
+C:\Projects\MultiExplorer\MultiExplorer.Installer\obj\Release\en-US\MultiExplorer-Setup.wixpdb
+C:\Projects\MultiExplorer\MultiExplorer.Installer\obj\Release\MultiExplorer.Installer.wixproj.BindTracking-en-US.txt
+C:\Projects\MultiExplorer\bin\InstallerCheck\en-US\MultiExplorer-Setup.msi
+C:\Projects\MultiExplorer\bin\InstallerCheck\en-US\MultiExplorer-Setup.wixpdb
