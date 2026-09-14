@@ -61,4 +61,29 @@ public class MainFormLayoutTests
     {
         Assert.Equal(expected, MainForm.ConstrainSplitterLeft(splitterLeft, layoutWidth));
     }
+
+    [Theory]
+    [InlineData(0.5, 1200, 593)]
+    [InlineData(0.25, 1200, 296)]
+    [InlineData(0.5, 800, 393)]
+    public void SplitterLeftFromRatio_PreservesRelativePosition(
+        double ratio, int layoutWidth, int expected)
+    {
+        Assert.Equal(expected, MainForm.SplitterLeftFromRatio(ratio, layoutWidth));
+    }
+
+    [Theory]
+    [InlineData(0.01, 800, 100)]
+    [InlineData(0.99, 800, 686)]
+    public void SplitterLeftFromRatio_KeepsBothPanelsUsable(
+        double ratio, int layoutWidth, int expected)
+    {
+        Assert.Equal(expected, MainForm.SplitterLeftFromRatio(ratio, layoutWidth));
+    }
+
+    [Fact]
+    public void CalculateSplitterRatio_UsesWidthExcludingSplitterBar()
+    {
+        Assert.Equal(0.5, MainForm.CalculateSplitterRatio(593, 1200), precision: 3);
+    }
 }

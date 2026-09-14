@@ -45,6 +45,9 @@ public sealed class PanelView : UserControl
     /// <summary>Raised when the user chooses "Set show-window hotkey…" from the command bar.</summary>
     public event EventHandler? SetHotkeyRequested;
 
+    /// <summary>Raised when the user asks to toggle launch at Windows sign-in.</summary>
+    public event EventHandler? StartWithWindowsToggled;
+
     /// <summary>Raised when either panel's Appearance menu selects a theme.</summary>
     public event EventHandler<ApplicationTheme>? ThemeSelected;
 
@@ -55,7 +58,7 @@ public sealed class PanelView : UserControl
     private readonly Panel    _filterBar;
     private readonly Label    _filterPrefix;
     private readonly TextBox  _filterTextBox;
-    private readonly Button   _clearBtn;
+    private readonly RoundedButton _clearBtn;
     private readonly ListView _filterListView;
     private string _filterText = "";
     private readonly System.Windows.Forms.Timer _filterDebounce;
@@ -190,14 +193,12 @@ public sealed class PanelView : UserControl
     {
         BackColor = ThemeManager.Background;
         ForeColor = ThemeManager.Text;
-        _tabBar.BackColor = ThemeManager.Background;
+        _tabBar.ApplyTheme();
         _pathBar.ApplyTheme();
         _content.BackColor = ThemeManager.Window;
         _hostContainer.BackColor = ThemeManager.Window;
-        _detailsPanel.BackColor = ThemeManager.Window;
-        _detailsPanel.ForeColor = ThemeManager.Text;
-        _previewPanel.BackColor = ThemeManager.Window;
-        _previewPanel.ForeColor = ThemeManager.Text;
+        _detailsPanel.ApplyTheme();
+        _previewPanel.ApplyTheme();
         _filterBar.BackColor = ThemeManager.Filter;
         _filterPrefix.BackColor = ThemeManager.Filter;
         _filterPrefix.ForeColor = ThemeManager.MutedText;
@@ -209,9 +210,11 @@ public sealed class PanelView : UserControl
         _filterListView.ForeColor = ThemeManager.Text;
         _commandBar.SetThemeSelection(ThemeManager.Current);
         _commandBar.ApplyTheme();
-        foreach (var host in _hosts) host.ApplyTheme();
         Invalidate(true);
     }
+
+    internal void SetStartWithWindowsChecked(bool enabled) =>
+        _commandBar.SetStartWithWindowsChecked(enabled);
 
     protected override void Dispose(bool disposing)
     {
@@ -267,6 +270,10 @@ public sealed class PanelView : UserControl
 
     public List<string> GetAllPaths()
         => _hosts.Select(h => h.GetCurrentPath()).ToList();
+
+    public void SetPathHistory(IEnumerable<string>? paths) => _pathBar.SetHistory(paths);
+
+    public List<string> GetPathHistory() => _pathBar.GetHistory();
 
     internal void RefreshCurrentFolder() => ActiveHost?.RefreshShellView();
 
@@ -324,7 +331,6 @@ public sealed class PanelView : UserControl
         AttachHostEvents(host);
         _hostContainer.Controls.Add(host);
         _hosts.Add(host);
-        host.ApplyTheme();
     }
 
     private void AttachHostEvents(ExplorerHost host)
@@ -333,6 +339,7 @@ public sealed class PanelView : UserControl
         host.FilterBackspaceTyped += OnFilterBackspaceTyped;
         host.FilterEscapePressed += OnHostFilterEscapePressed;
         host.ApplicationShortcutRequested += OnHostApplicationShortcutRequested;
+        host.ShellMouseDown += OnHostShellMouseDown;
         host.QuickLookUnavailable += OnHostQuickLookUnavailable;
         host.InitialNavigationCompleted += OnHostInitialNavigationCompleted;
     }
@@ -343,6 +350,7 @@ public sealed class PanelView : UserControl
         host.FilterBackspaceTyped -= OnFilterBackspaceTyped;
         host.FilterEscapePressed -= OnHostFilterEscapePressed;
         host.ApplicationShortcutRequested -= OnHostApplicationShortcutRequested;
+        host.ShellMouseDown -= OnHostShellMouseDown;
         host.QuickLookUnavailable -= OnHostQuickLookUnavailable;
         host.InitialNavigationCompleted -= OnHostInitialNavigationCompleted;
     }
@@ -351,6 +359,9 @@ public sealed class PanelView : UserControl
 
     private void OnHostApplicationShortcutRequested(object? sender, CommandBar.Cmd command) =>
         ExecuteCommand(command);
+
+    private void OnHostShellMouseDown(object? sender, EventArgs e) =>
+        _pathBar.DismissHistoryPopup();
 
     private void OnHostQuickLookUnavailable(object? sender, QuickLookFailure failure) =>
         ShowQuickLookUnavailable(failure);
@@ -908,6 +919,9 @@ public sealed class PanelView : UserControl
             case CommandBar.Cmd.About:          ShowAbout();              break;
             case CommandBar.Cmd.ViewLog:        AppLog.OpenLogFile();                        break;
             case CommandBar.Cmd.SetHotkey:      SetHotkeyRequested?.Invoke(this, EventArgs.Empty); break;
+            case CommandBar.Cmd.ToggleStartWithWindows:
+                StartWithWindowsToggled?.Invoke(this, EventArgs.Empty);
+                break;
             case CommandBar.Cmd.GoToParent:     host?.NavigateUp();                               break;
             case CommandBar.Cmd.MirrorToOther:
                 MirrorToOtherRequested?.Invoke(this, CurrentPath());

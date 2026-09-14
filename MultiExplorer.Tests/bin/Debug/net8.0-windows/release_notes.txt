@@ -1,0 +1,27 @@
+MultiExplorer 1.5.2
+Release date: 11 September 2026
+
+Highlights
+----------
+
+- Added a per-user "Start MultiExplorer with Windows" option to the More (...)
+  menu in both explorer panes.
+- Windows sign-in launches now start MultiExplorer quietly in the system tray.
+- Added a Windows notification confirming that MultiExplorer started in the tray;
+  clicking the notification or tray icon opens the application.
+- Startup registration automatically follows the installed executable location and
+  does not require administrator rights.
+- Improved single-instance handling so a Windows startup invocation does not bring
+  an already-running MultiExplorer window to the foreground.
+- Corrected the initial vertical splitter position for existing installations while
+  continuing to preserve later user adjustments.
+- Corrected installer upgrade detection so a normal upgrade from an older release no
+  longer displays the downgrade/reinstall warning.
+
+Installation notes
+------------------
+
+- Application settings and saved panel state are preserved during upgrades.
+- MultiExplorer is a per-user installation and includes its required .NET runtime.
+- The start-with-Windows option is disabled by default and can be changed at any time
+  from either pane's More (...) menu.

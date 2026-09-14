@@ -54,6 +54,9 @@
 
   <ItemGroup>
     <Content Include="MultiExplorer-Installer.ico" />
+    <None Update="release_notes.txt"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <Target Name="CopyOperationHostForBuild" AfterTargets="Build">

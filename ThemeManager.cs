@@ -32,6 +32,9 @@ internal static class ThemeManager
     internal static Color MutedText  => IsDark ? Color.FromArgb(190, 190, 190) : Color.FromArgb(96, 96, 96);
     internal static Color Border     => IsDark ? Color.FromArgb(82, 82, 82) : Color.FromArgb(190, 190, 190);
     internal static Color Hover      => IsDark ? Color.FromArgb(62, 62, 62) : Color.FromArgb(224, 224, 224);
+    // Explorer-style selection colour requested for every application menu.
+    internal static Color MenuHighlight => Color.FromArgb(229, 243, 255); // #e5f3ff
+    internal static Color MenuHighlightText => Color.FromArgb(25, 25, 25);
     internal static Color Pressed    => IsDark ? Color.FromArgb(76, 76, 76) : Color.FromArgb(207, 207, 207);
     internal static Color Accent     => Color.FromArgb(0, 120, 212);
     // The standard accent is intended primarily for filled controls.  Use a
@@ -124,6 +127,8 @@ internal static class ThemeManager
     {
         strip.BackColor = Surface;
         strip.ForeColor = Text;
+        if (strip is ToolStripDropDown rootDropDown)
+            rootDropDown.DropShadowEnabled = false;
         strip.RenderMode = ToolStripRenderMode.ManagerRenderMode;
         strip.Renderer = new ThemeRenderer();
         ApplyToolStripItems(strip.Items);
@@ -138,6 +143,7 @@ internal static class ThemeManager
             {
                 dropDown.DropDown.BackColor = Surface;
                 dropDown.DropDown.ForeColor = Text;
+                dropDown.DropDown.DropShadowEnabled = false;
                 dropDown.DropDown.RenderMode = ToolStripRenderMode.ManagerRenderMode;
                 dropDown.DropDown.Renderer = new ThemeRenderer();
                 ApplyToolStripItems(dropDown.DropDownItems);
@@ -221,7 +227,10 @@ internal static class ThemeManager
 
     private sealed class ThemeRenderer : ToolStripProfessionalRenderer
     {
-        internal ThemeRenderer() : base(new ThemeColorTable()) { RoundedEdges = false; }
+        internal ThemeRenderer() : base(new ThemeColorTable())
+        {
+            RoundedEdges = false;
+        }
 
         protected override void OnRenderButtonBackground(ToolStripItemRenderEventArgs e) =>
             DrawThemedButtonBackground(e);
@@ -229,7 +238,7 @@ internal static class ThemeManager
         protected override void OnRenderDropDownButtonBackground(ToolStripItemRenderEventArgs e) =>
             DrawThemedButtonBackground(e);
 
-        private static void DrawThemedButtonBackground(ToolStripItemRenderEventArgs e)
+        private void DrawThemedButtonBackground(ToolStripItemRenderEventArgs e)
         {
             bool isChecked = e.Item is ToolStripButton button && button.Checked;
             bool drawBorder = e.Item.Selected || e.Item.Pressed || isChecked;
@@ -255,8 +264,71 @@ internal static class ThemeManager
 
         protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
         {
-            e.TextColor = e.Item.Enabled ? Text : MutedText;
+            bool highlightedMenuItem = e.Item.Selected && e.ToolStrip is ToolStripDropDown;
+            e.TextColor = highlightedMenuItem
+                ? MenuHighlightText
+                : e.Item.Enabled ? Text : MutedText;
             base.OnRenderItemText(e);
+        }
+
+        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+        {
+            if (!e.Item.Selected)
+            {
+                base.OnRenderMenuItemBackground(e);
+                return;
+            }
+
+            using var brush = new SolidBrush(MenuHighlight);
+            if (e.ToolStrip is ToolStripDropDown && IsLastVisibleItem(e.Item))
+            {
+                int radius = Math.Max(8,
+                    PopupVisuals.CornerRadiusLogical * e.ToolStrip.DeviceDpi / 96);
+                using GraphicsPath path = PopupVisuals.CreateBottomRoundedPath(
+                    new RectangleF(1, 0, Math.Max(1, e.Item.Width - 2f),
+                        Math.Max(1, e.Item.Height - 1f)), Math.Max(1, radius - 1));
+                SmoothingMode previousMode = e.Graphics.SmoothingMode;
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                e.Graphics.FillPath(brush, path);
+                e.Graphics.SmoothingMode = previousMode;
+            }
+            else
+            {
+                e.Graphics.FillRectangle(brush,
+                    new Rectangle(Point.Empty, e.Item.Size));
+            }
+        }
+
+        private static bool IsLastVisibleItem(ToolStripItem item)
+        {
+            if (item.Owner is null) return false;
+            for (int index = item.Owner.Items.Count - 1; index >= 0; index--)
+            {
+                ToolStripItem candidate = item.Owner.Items[index];
+                if (candidate.Available) return ReferenceEquals(candidate, item);
+            }
+            return false;
+        }
+
+        protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
+        {
+            if (e.ToolStrip is not ToolStripDropDown)
+            {
+                base.OnRenderToolStripBorder(e);
+                return;
+            }
+
+            int radius = Math.Max(8,
+                PopupVisuals.CornerRadiusLogical * e.ToolStrip.DeviceDpi / 96);
+            var bounds = new RectangleF(0.5f, 0.5f,
+                Math.Max(1, e.ToolStrip.Width - 1f),
+                Math.Max(1, e.ToolStrip.Height - 1f));
+            using GraphicsPath path = PopupVisuals.CreateBottomRoundedPath(bounds, radius);
+            using var pen = new Pen(Border);
+            SmoothingMode previousMode = e.Graphics.SmoothingMode;
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.DrawPath(pen, path);
+            e.Graphics.SmoothingMode = previousMode;
         }
 
         protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e)
@@ -294,10 +366,10 @@ internal static class ThemeManager
         public override Color ImageMarginGradientMiddle => Surface;
         public override Color ImageMarginGradientEnd => Surface;
         public override Color MenuBorder => Border;
-        public override Color MenuItemBorder => Border;
-        public override Color MenuItemSelected => Hover;
-        public override Color MenuItemSelectedGradientBegin => Hover;
-        public override Color MenuItemSelectedGradientEnd => Hover;
+        public override Color MenuItemBorder => MenuHighlight;
+        public override Color MenuItemSelected => MenuHighlight;
+        public override Color MenuItemSelectedGradientBegin => MenuHighlight;
+        public override Color MenuItemSelectedGradientEnd => MenuHighlight;
         public override Color MenuItemPressedGradientBegin => Pressed;
         public override Color MenuItemPressedGradientMiddle => Pressed;
         public override Color MenuItemPressedGradientEnd => Pressed;

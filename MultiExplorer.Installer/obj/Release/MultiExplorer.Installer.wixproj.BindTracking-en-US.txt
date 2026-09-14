@@ -55,6 +55,7 @@ Input	C:\Projects\MultiExplorer\MultiExplorer.Installer\..\bin\Release\net8.0-wi
 Input	C:\Projects\MultiExplorer\MultiExplorer.Installer\..\bin\Release\net8.0-windows\win-x64\publish\PresentationNative_cor3.dll
 Input	C:\Projects\MultiExplorer\MultiExplorer.Installer\..\bin\Release\net8.0-windows\win-x64\publish\PresentationUI.dll
 Input	C:\Projects\MultiExplorer\MultiExplorer.Installer\..\bin\Release\net8.0-windows\win-x64\publish\ReachFramework.dll
+Input	C:\Projects\MultiExplorer\MultiExplorer.Installer\..\bin\Release\net8.0-windows\win-x64\publish\release_notes.txt
 Input	C:\Projects\MultiExplorer\MultiExplorer.Installer\..\bin\Release\net8.0-windows\win-x64\publish\System.AppContext.dll
 Input	C:\Projects\MultiExplorer\MultiExplorer.Installer\..\bin\Release\net8.0-windows\win-x64\publish\System.Buffers.dll
 Input	C:\Projects\MultiExplorer\MultiExplorer.Installer\..\bin\Release\net8.0-windows\win-x64\publish\System.CodeDom.dll

@@ -28,9 +28,12 @@ public class SettingsManagerTests : IDisposable
             WindowHeight         = 800,
             WindowState          = "Maximized",
             SplitterDistance     = 640,
+            SplitterRatio        = 0.5,
+            SplitterPositionVersion = AppSettings.CurrentSplitterPositionVersion,
             LeftPanelPath        = @"C:\Foo",
             RightPanelPath       = @"D:\Bar",
             MinimizeToTray       = false,
+            StartWithWindows     = true,
             QuickLookEnabled     = false,
             ApplicationTheme     = "Dark",
             ShowWindowModifiers  = NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT,
@@ -47,9 +50,12 @@ public class SettingsManagerTests : IDisposable
         Assert.Equal(original.WindowHeight,        loaded.WindowHeight);
         Assert.Equal(original.WindowState,         loaded.WindowState);
         Assert.Equal(original.SplitterDistance,    loaded.SplitterDistance);
+        Assert.Equal(original.SplitterRatio,       loaded.SplitterRatio);
+        Assert.Equal(original.SplitterPositionVersion, loaded.SplitterPositionVersion);
         Assert.Equal(original.LeftPanelPath,       loaded.LeftPanelPath);
         Assert.Equal(original.RightPanelPath,      loaded.RightPanelPath);
         Assert.Equal(original.MinimizeToTray,      loaded.MinimizeToTray);
+        Assert.Equal(original.StartWithWindows,    loaded.StartWithWindows);
         Assert.Equal(original.QuickLookEnabled,    loaded.QuickLookEnabled);
         Assert.Equal(original.ApplicationTheme,    loaded.ApplicationTheme);
         Assert.Equal(original.ShowWindowModifiers, loaded.ShowWindowModifiers);

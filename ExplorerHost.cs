@@ -62,6 +62,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
     private long                           _nextPathRefreshTick;
     private int                            _initialNavigationReported;
     private int                            _quickLookAlertPending;
+    private int                            _navigationClickGeneration;
     private ShellFileDropTarget?           _fileDropTarget;
     private IntPtr                         _fileDropTargetWindow;
     private bool                           _browserWasLaunched;
@@ -96,6 +97,13 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
     /// <summary>Raised on the WinForms thread for an application-wide Ctrl shortcut.</summary>
     internal event EventHandler<CommandBar.Cmd>? ApplicationShortcutRequested;
+
+    /// <summary>
+    /// Raised on the WinForms thread when the user presses a mouse button in
+    /// either native Explorer pane.  Managed sibling controls cannot otherwise
+    /// observe mouse input sent directly to ExplorerBrowser child HWNDs.
+    /// </summary>
+    internal event EventHandler? ShellMouseDown;
 
     /// <summary>Raised on the WinForms thread when QuickLook cannot preview the selection.</summary>
     internal event EventHandler<QuickLookFailure>? QuickLookUnavailable;
@@ -277,7 +285,9 @@ public sealed class ExplorerHost : Control, IMessageFilter
             BeginInvoke(() =>
             {
                 if (IsHandleCreated && !Disposing && !IsDisposed)
+                {
                     ThemeManager.ApplyNativeWindow(Handle);
+                }
             });
     }
 
@@ -511,6 +521,29 @@ public sealed class ExplorerHost : Control, IMessageFilter
         const int WM_SYSKEYDOWN    = 0x0104;
         const int WM_LBUTTONDOWN   = 0x0201;
         const int WM_LBUTTONDBLCLK = 0x0203;
+        const int WM_RBUTTONDOWN   = 0x0204;
+        const int WM_MBUTTONDOWN   = 0x0207;
+        const int WM_XBUTTONDOWN   = 0x020B;
+
+        bool isBrowserMouseDown =
+            m.Msg is WM_LBUTTONDOWN or WM_RBUTTONDOWN or WM_MBUTTONDOWN or WM_XBUTTONDOWN
+            && _browser != null
+            && Visible
+            && (m.HWnd == Handle || NativeMethods.IsChild(Handle, m.HWnd));
+        if (isBrowserMouseDown)
+            PostToUi(() => ShellMouseDown?.Invoke(this, EventArgs.Empty));
+
+        bool isBrowserNavigationMouseDown = m.Msg == WM_LBUTTONDOWN
+            && _browser != null
+            && Visible
+            && (m.HWnd == Handle || NativeMethods.IsChild(Handle, m.HWnd))
+            && IsInNavigationTree(m.HWnd);
+        if (isBrowserNavigationMouseDown)
+        {
+            bool isExpandButton = IsNavigationTreeExpandButtonAtCursor();
+            if (!isExpandButton)
+                QueueNavigationTreeFallback();
+        }
 
         // Double-click on blank space → navigate to parent folder.
         //
@@ -1600,6 +1633,145 @@ public sealed class ExplorerHost : Control, IMessageFilter
         return IntPtr.Zero;
     }
 
+    private bool IsInNavigationTree(IntPtr hwnd)
+    {
+        IntPtr tree = FindDescendant(Handle, "SysTreeView32");
+        return tree != IntPtr.Zero
+            && (hwnd == tree || NativeMethods.IsChild(tree, hwnd));
+    }
+
+    private bool IsNavigationTreeExpandButtonAtCursor()
+    {
+        IntPtr tree = FindDescendant(Handle, "SysTreeView32");
+        if (tree == IntPtr.Zero) return false;
+
+        var hit = new NativeMethods.TVHITTESTINFO
+        {
+            pt = new NativeMethods.POINT(Cursor.Position.X, Cursor.Position.Y),
+        };
+        if (!NativeMethods.ScreenToClient(tree, ref hit.pt)) return false;
+
+        IntPtr buffer = Marshal.AllocHGlobal(Marshal.SizeOf<NativeMethods.TVHITTESTINFO>());
+        try
+        {
+            Marshal.StructureToPtr(hit, buffer, false);
+            NativeMethods.SendMessageI(tree, NativeMethods.TVM_HITTEST, IntPtr.Zero, buffer);
+            hit = Marshal.PtrToStructure<NativeMethods.TVHITTESTINFO>(buffer);
+            return (hit.flags & NativeMethods.TVHT_ONITEMBUTTON) != 0;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    private void QueueNavigationTreeFallback()
+    {
+        BrowserThread? thread = _browserThread;
+        if (thread == null) return;
+
+        int generation = Interlocked.Increment(ref _navigationClickGeneration);
+        // ExplorerBrowser commits a tree selection asynchronously.  Some Shell
+        // builds have it ready almost immediately while others can take longer
+        // after the mouse-up, so one fixed-delay probe is unreliable.
+        foreach (int delay in new[] { 100, 350, 750 })
+        {
+            _ = Task.Delay(delay).ContinueWith(_ =>
+            {
+                if (Volatile.Read(ref _navigationClickGeneration) == generation)
+                    thread.Post(() => VerifyNavigationTreePath(generation));
+            }, TaskScheduler.Default);
+        }
+    }
+
+    private void VerifyNavigationTreePath(int generation)
+    {
+        if (_browser == null
+            || Volatile.Read(ref _navigationClickGeneration) != generation)
+            return;
+
+        IntPtr tree = FindDescendant(Handle, "SysTreeView32");
+        if (tree == IntPtr.Zero)
+        {
+            AppLog.Debug(nameof(VerifyNavigationTreePath),
+                $"Could not find SysTreeView32 for verification generation {generation}.");
+            return;
+        }
+
+        IntPtr selected = NativeMethods.SendMessageI(
+            tree, NativeMethods.TVM_GETNEXTITEM,
+            (IntPtr)NativeMethods.TVGN_CARET, IntPtr.Zero);
+        if (selected == IntPtr.Zero)
+        {
+            AppLog.Debug(nameof(VerifyNavigationTreePath),
+                $"Navigation tree has no caret item for verification generation {generation}.");
+            return;
+        }
+
+        var reverseParts = new List<string>();
+        for (IntPtr item = selected; item != IntPtr.Zero;
+             item = NativeMethods.SendMessageI(
+                 tree, NativeMethods.TVM_GETNEXTITEM,
+                 (IntPtr)NativeMethods.TVGN_PARENT, item))
+        {
+            reverseParts.Add(TreeItemText(tree, item));
+        }
+        reverseParts.Reverse();
+
+        string? selectedPath = TryBuildNavigationTreePath(reverseParts);
+        if (selectedPath == null)
+        {
+            AppLog.Debug(nameof(VerifyNavigationTreePath),
+                $"Could not reconstruct a file-system path from navigation selection: " +
+                $"'{string.Join(" > ", reverseParts)}'.");
+            return;
+        }
+
+        string? livePath = QueryLivePath();
+        if (PathsReferToSameFolder(livePath, selectedPath))
+            return;
+
+        // Invalidate the other scheduled probes before navigating. A compare-
+        // exchange prevents an old selection from winning if the user clicked a
+        // different folder while this callback was waiting on the browser STA.
+        if (Interlocked.CompareExchange(ref _navigationClickGeneration,
+                generation + 1, generation) == generation)
+            BrowseTo(selectedPath);
+    }
+
+    internal static string? TryBuildNavigationTreePath(IReadOnlyList<string> parts)
+    {
+        for (int partIndex = 0; partIndex < parts.Count; partIndex++)
+        {
+            string label = parts[partIndex];
+            for (int charIndex = 0; charIndex + 1 < label.Length; charIndex++)
+            {
+                char drive = label[charIndex];
+                if (!char.IsLetter(drive) || label[charIndex + 1] != ':') continue;
+
+                string path = char.ToUpperInvariant(drive) + @":\";
+                for (int childIndex = partIndex + 1; childIndex < parts.Count; childIndex++)
+                {
+                    string child = parts[childIndex].Trim();
+                    if (child.Length == 0) return null;
+                    path = Path.Combine(path, child);
+                }
+                return path;
+            }
+        }
+        return null;
+    }
+
+    internal static bool PathsReferToSameFolder(string? first, string? second)
+    {
+        if (string.IsNullOrWhiteSpace(first) || string.IsNullOrWhiteSpace(second))
+            return false;
+        return string.Equals(
+            first.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            second.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     // Returns the list-view HWND inside the embedded browser, preferring the
     // window that currently has Win32 focus (user's last interaction point).
     private IntPtr FindListView()
@@ -1951,10 +2123,34 @@ public sealed class ExplorerHost : Control, IMessageFilter
         }
     }
 
-    private static NativeMethods.INameSpaceTreeControl? TryGetNameSpaceTreeControl(
-        NativeMethods.IComServiceProvider sp)
+    private NativeMethods.INameSpaceTreeControl? TryGetNameSpaceTreeControl(
+        NativeMethods.IComServiceProvider? sp)
     {
         var treeId = new Guid("028212A3-B627-47E9-8855-9F598112A7AB");
+        const int OBJID_NATIVEOM = unchecked((int)0xFFFFFFF0);
+
+        // The navigation control exposes its native automation object directly
+        // from its HWND.  Prefer this route because service exposure differs
+        // between Windows Shell builds and configurations.
+        IntPtr namespaceTreeHwnd = FindDescendant(Handle, "NamespaceTreeControl");
+        if (namespaceTreeHwnd != IntPtr.Zero)
+        {
+            if (NativeMethods.AccessibleObjectFromWindow(
+                    namespaceTreeHwnd, OBJID_NATIVEOM, ref treeId,
+                    out IntPtr hwndTreePtr) >= 0
+                && hwndTreePtr != IntPtr.Zero)
+            {
+                try
+                {
+                    return (NativeMethods.INameSpaceTreeControl)
+                        Marshal.GetObjectForIUnknown(hwndTreePtr);
+                }
+                finally { Marshal.Release(hwndTreePtr); }
+            }
+        }
+
+
+        if (sp == null) return null;
 
         // Some ExplorerBrowser versions expose the namespace tree directly.
         if (sp.QueryService(ref treeId, ref treeId, out IntPtr treePtr) >= 0
@@ -1985,7 +2181,6 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
         if (controlResult < 0 || treeHwnd == IntPtr.Zero) return null;
 
-        const int OBJID_NATIVEOM = unchecked((int)0xFFFFFFF0);
         if (NativeMethods.AccessibleObjectFromWindow(
                 treeHwnd, OBJID_NATIVEOM, ref treeId, out IntPtr nativeTreePtr) < 0
             || nativeTreePtr == IntPtr.Zero)
@@ -2335,15 +2530,18 @@ internal sealed class BrowserSiteImpl : NativeMethods.IServiceProvider
 
     public int QueryService(ref Guid guidService, ref Guid riid, out IntPtr ppvObject)
     {
-        if (guidService == _sidFolderViewSettings)
+        if (guidService == _sidFolderViewSettings && riid == _sidFolderViewSettings)
         {
             ppvObject = Marshal.GetComInterfaceForObject(
                 _fvs, typeof(NativeMethods.IFolderViewSettings));
             return 0;
         }
         ppvObject = IntPtr.Zero;
-        return unchecked((int)0x80004001);
+        // QueryService requires E_NOINTERFACE for an unsupported service/IID pair.
+        // E_NOTIMPL is not equivalent and is handled differently by some Shell builds.
+        return unchecked((int)0x80004002);
     }
+
 }
 
 // Non-nested for the same reason as BrowserSiteImpl: private nested callback classes

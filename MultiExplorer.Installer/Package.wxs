@@ -234,7 +234,7 @@
       <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
       <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
 
-      <!-- Ask before replacing an older installation or reinstalling this product. -->
+      <!-- Ask before downgrading or explicitly reinstalling this product. -->
       <Dialog Id="ExistingVersionDlg"
               Width="370"
               Height="270"
@@ -264,7 +264,7 @@
                  X="25" Y="75" Width="320" Height="70"
                  Hidden="yes"
                  NoPrefix="yes"
-                 Text="The installed version of MultiExplorer is the same as or older than this setup package. Continuing will replace the existing installation with this version. Your application settings will be preserved."
+                 Text="This version of MultiExplorer is already installed. Continuing will reinstall it. Your application settings will be preserved."
                  ShowCondition="NOT NEWER_VERSION_DETECTED" />
         <Control Id="NewerMessage"
                  Type="Text"
@@ -310,9 +310,10 @@
       </Dialog>
 
       <!--
-        This project owns the WixUI_InstallDir navigation so an existing product can
-        be routed through ExistingVersionDlg from both major-upgrade and maintenance
-        entry points. The dialog definitions themselves still come from WixToolset.UI.
+        This project owns the WixUI_InstallDir navigation so downgrade and explicit
+        maintenance entry points can be routed through ExistingVersionDlg. Normal
+        upgrades proceed through the standard setup flow. The dialog definitions
+        themselves still come from WixToolset.UI.
       -->
       <DialogRef Id="BrowseDlg" />
       <DialogRef Id="DiskCostDlg" />
@@ -335,12 +336,12 @@
                Control="Next"
                Event="NewDialog"
                Value="ExistingVersionDlg"
-               Condition="(WIX_UPGRADE_DETECTED OR NEWER_VERSION_DETECTED) AND NOT Installed" />
+               Condition="NEWER_VERSION_DETECTED AND NOT Installed" />
       <Publish Dialog="WelcomeDlg"
                Control="Next"
                Event="NewDialog"
                Value="LicenseAgreementDlg"
-               Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED AND NOT NEWER_VERSION_DETECTED" />
+               Condition="NOT Installed AND NOT NEWER_VERSION_DETECTED" />
       <Publish Dialog="WelcomeDlg"
                Control="Next"
                Event="NewDialog"

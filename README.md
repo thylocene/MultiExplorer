@@ -32,6 +32,7 @@ The path bar beneath the tab bar renders the current folder path as clickable br
 
 - **Click a segment**: navigate directly to that ancestor folder.
 - **Click a chevron**: open a dropdown menu listing the immediate sub-folders of the folder to its left.
+- **Click empty path-bar space or press F4**: edit the path manually. The dropdown lists recently visited paths for that pane, with the most recent first.
 - **Click blank space, press F4, or press Enter**: switch to a plain text editor for typing or pasting any path. Environment variables (e.g. `%USERPROFILE%`) are expanded on Enter. UNC paths (e.g. `\\server\share`) are supported. Press **Escape** to cancel.
 
 ### Toolbar (command bar)
@@ -204,7 +205,10 @@ Keep every published file and language subfolder beside `MultiExplorer.exe`.
 The small entry executable avoids the long first-launch scan incurred by a
 single 160+ MB executable.
 
-To launch MultiExplorer at login without the installer, place a shortcut in `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`.
+Enable **… → Start MultiExplorer with Windows** to launch MultiExplorer automatically
+when you sign in. Sign-in launches start quietly in the system tray and show a notification;
+click the notification or tray icon to open the window. This is a per-user preference and
+does not require administrator rights.
 
 ---
 
@@ -269,10 +273,13 @@ The script publishes the app, builds the MSI with WiX, and signs it with a self-
 | `WindowWidth` / `WindowHeight` | int | 0 | Size of the restored window (0 = first-run default: 80% of screen) |
 | `WindowState` | string | `"Normal"` | `"Normal"` or `"Maximized"` |
 | `SplitterDistance` | int | 1034 | Pixel position of the vertical splitter |
+| `SplitterRatio` | double | 0 | Relative splitter position saved after layout (0 indicates legacy settings) |
+| `SplitterPositionVersion` | int | 0 | Internal one-time migration marker for product-defined splitter defaults |
 | `LeftPanelCollapsed` / `RightPanelCollapsed` | bool | `false` | Whether each panel is collapsed |
 | `LeftPanelPath` / `RightPanelPath` | string | `"C:\"` | Active folder path for each panel |
 | `LeftPanelTabs` / `RightPanelTabs` | string[] | `["C:\\"]` | Folder path for every open tab in each panel |
 | `MinimizeToTray` | bool | `true` | Whether closing the window hides to tray |
+| `StartWithWindows` | bool | `false` | Whether MultiExplorer starts when the current user signs in |
 | `QuickLookEnabled` | bool | auto-detected | Whether Space triggers QuickLook preview |
 | `ApplicationTheme` | string | `"Light"` | Selected `Light` or `Dark` application appearance |
 | `ShowWindowModifiers` | int | `0x000B` | Modifier flags for the global hotkey (Win\|Ctrl\|Alt) |
@@ -286,25 +293,150 @@ Warnings and errors appear in the status bar at the bottom of the window and are
 
 ## Architecture overview
 
+MultiExplorer is a Windows desktop application with two runtime process types:
+
+1. **`MultiExplorer.exe`** is the long-lived WinForms UI process. It owns the
+   application lifecycle, dual-pane window, tabs, managed overlays, tray icon,
+   settings, theming, logging, and coordination of file operations.
+2. **`MultiExplorer.OperationHost.exe`** is a short-lived worker process launched
+   once per copy, move, or delete request. It performs the operation through the
+   Windows Shell and reports progress back to the UI through per-operation files.
+
+The Windows Shell, registry, file system, preview handlers, and optional QuickLook
+process are external runtime dependencies on the same workstation.
+
+![MultiExplorer application architecture diagram](docs/images/application-architecture.png)
+
+### Diagram notes
+
+- **Process 1 - `MultiExplorer.exe`:** the main WinForms process owns application
+  startup and lifetime, `MainForm`, both `PanelView` instances, cross-cutting
+  services, and the `OperationManager`.
+- **Explorer thread boundaries:** every tab has an `ExplorerHost` with a dedicated
+  `BrowserThread` STA. `IExplorerBrowser` runs in-process and creates a native child
+  window beneath the corresponding WinForms control. The dedicated STA prevents
+  Shell modal loops from blocking the main UI thread.
+- **Managed pane features:** each `PanelView` supplies the tab, breadcrumb, command
+  bar, details pane, preview pane, and type-to-filter overlay around its native Shell
+  view. Mirror events navigate the opposite panel.
+- **Process 2 - `MultiExplorer.OperationHost.exe`:** one short-lived worker is
+  launched for each copy, move, recycle-delete, or permanent-delete request. It uses
+  Windows `IFileOperation` and remains independent of the UI process lifetime.
+- **Operation IPC:** the UI and worker exchange atomic request and state JSON files
+  in `%LOCALAPPDATA%\MultiExplorer\Operations`. Cancellation is signalled with a
+  sentinel file. These asynchronous file exchanges are shown with dashed arrows.
+- **Windows platform dependencies:** solid arrows show direct ownership or calls to
+  Windows Shell COM, the file system, registry, settings, and logging. The optional
+  QuickLook integration uses a separate SID-scoped named pipe.
+
+### Main components
+
 | Component | File | Role |
 |-----------|------|------|
-| `Program` | `Program.cs` | Entry point; single-instance mutex; DPI setup |
-| `MainForm` | `MainForm.cs` | Top-level window; splitter; panel collapse; tray icon; status bar; global hotkey |
-| `PanelView` | `PanelView.cs` | One explorer pane; tab management; type-to-filter overlay; command dispatch |
-| `ExplorerHost` | `ExplorerHost.cs` | Embeds `IExplorerBrowser` COM; file operations; view-mode control; keyboard routing |
+| `Program` | `Program.cs` | Entry point; single-instance mutex; settings and theme bootstrap; PerMonitorV2 DPI setup |
+| `MainForm` | `MainForm.cs` | Top-level window; dual-pane layout; splitter; tray icon; status bar; global hotkey; operation-exit policy |
+| `PanelView` | `PanelView.cs` | One explorer pane; tab management; type-to-filter overlay; optional details and preview panes; command dispatch |
+| `ExplorerHost` | `ExplorerHost.cs` | Owns one native shell view per tab; view-mode control; keyboard routing; drag/drop; QuickLook integration |
+| `BrowserThread` | `BrowserThread.cs` | Dedicated STA thread and message pump for an `ExplorerHost` and its `IExplorerBrowser` COM object |
 | `CommandBar` | `CommandBar.cs` | Toolbar with icon buttons and dropdown menus |
 | `TabBar` | `TabBar.cs` | Custom-drawn tab strip |
 | `PathBar` | `PathBar.cs` | Breadcrumb path bar with inline text editor |
 | `DetailsPanel` | `DetailsPanel.cs` | Bottom pane showing shell icon and file metadata |
 | `PreviewPane` | `PreviewPane.cs` | Right pane hosting the `IPreviewHandler` shell extension |
+| `OperationManager` | `OperationManager.cs` | Writes requests, launches operation hosts, polls progress, handles cancellation, and reports operation state |
+| Operation contracts and store | `OperationContracts.cs` | Shared request/state models and atomic JSON file coordination used by both processes |
+| `OperationHost` | `MultiExplorer.OperationHost/Program.cs` | Short-lived OLE-initialized worker entry point for one file-operation request |
+| `ShellFileOperation` | `MultiExplorer.OperationHost/ShellFileOperation.cs` | Executes copy, move, recycle-delete, and permanent-delete through Windows `IFileOperation` COM |
 | `HotkeyDialog` | `HotkeyDialog.cs` | Modal dialog for choosing a global hotkey combination |
 | `ThemeManager` | `ThemeManager.cs` | Shared palette, menu renderer, and native Windows/Explorer theming |
+| `StartupManager` | `StartupManager.cs` | Maintains the current user's Windows sign-in launch registration |
 | `AppSettings` | `AppSettings.cs` | Settings data model |
 | `SettingsManager` | `SettingsManager.cs` | JSON serialisation to `%APPDATA%\MultiExplorer\settings.json` |
 | `AppLog` | `AppLog.cs` | Static logger; Debug → file only; Warn/Error → file + status bar |
 | `NativeMethods` | `NativeMethods.cs` | P/Invoke declarations and COM interface definitions |
 
-The shell view is hosted by creating an `IExplorerBrowser` (CLSID `71F96385-DDD6-48D3-A0C1-AE06E8B055FB`) as a child window inside each `ExplorerHost` panel. Shell accelerator keys are forwarded from the WinForms message loop to the shell view via `IMessageFilter` and `IShellView::TranslateAccelerator`. The type-to-filter overlay intercepts printable keystrokes before they reach the shell view and renders results in a managed `ListView` that sits above the native shell HWND.
+### Startup and application lifetime
+
+`Program` acquires the named `MultiExplorer.SingleInstance.v1` mutex before any UI
+is created. If another interactive instance is launched, it broadcasts a registered
+Windows message that asks the existing `MainForm` to restore and activate itself;
+a duplicate Windows sign-in launch exits silently.
+
+Settings and the selected theme are loaded before WinForms creates any windows. The
+process then enables PerMonitorV2 DPI awareness, creates `MainForm` on the UI STA
+thread, restores the saved window and pane state, and initializes the tray, hotkey,
+logging, and operation-management services.
+
+### Explorer hosting and threading
+
+Each `PanelView` owns a collection of `ExplorerHost` controls, one for every open
+tab. Only the active tab's host is visible. The two panels exchange mirror-navigation
+events through `MainForm`, while application-wide choices such as theme, QuickLook,
+startup registration, and the global hotkey remain synchronized.
+
+An `ExplorerHost` creates `IExplorerBrowser` (CLSID
+`71F96385-DDD6-48D3-A0C1-AE06E8B055FB`) in-process and parents its native child
+window beneath the WinForms control. Each host uses its own dedicated
+`BrowserThread` STA and message pump. This keeps native Shell modal loops, especially
+drag/drop operations, from blocking the main WinForms message pump.
+
+Shell accelerator keys are forwarded through `IMessageFilter` and
+`IShellView::TranslateAccelerator`. Navigation callbacks update cached path snapshots
+so the UI does not need to make synchronous cross-thread COM calls while polling pane
+state. The optional preview pane resolves the handler registered for the selected file
+in `HKCR`, creates its `IPreviewHandler`, and hosts the preview in its own child window.
+
+Type-to-filter is implemented as a managed layer rather than a second Shell view. It
+intercepts printable keystrokes, asynchronously enumerates the current directory with
+debouncing and cancellation, and renders matching items in a WinForms `ListView`
+above the native Explorer window.
+
+### File-operation process and IPC flow
+
+Copy, move, recycle-delete, and permanent-delete operations use a separate process:
+
+1. `OperationManager` creates a request ID and atomically writes
+   `<id>.request.json` under `%LOCALAPPDATA%\MultiExplorer\Operations`.
+2. The UI launches `MultiExplorer.OperationHost.exe --request <request-path>`.
+3. The host initializes OLE, reads the request, and configures Windows
+   `IFileOperation` with the required Shell flags.
+4. Its progress sink writes `<id>.state.json` snapshots containing status, item
+   counts, the current item, errors, and the host process ID.
+5. `OperationManager` polls state every 500 ms and updates the tray, status UI, and
+   exit behavior. It also detects a host that exits without reporting completion.
+6. Cancellation creates an `<id>.cancel` sentinel file. The worker checks it at
+   throttled intervals and asks `IFileOperation` to abort safely.
+
+The file-based contract keeps the UI and worker lifetimes independent and allows the
+main process to discover operations that were already in progress.
+
+### Persistence and external integrations
+
+| Integration | Direction | Purpose |
+|-------------|-----------|---------|
+| `%APPDATA%\MultiExplorer\settings.json` | Read/write | Window, splitter, tab, theme, hotkey, startup, tray, and QuickLook preferences |
+| `%LOCALAPPDATA%\MultiExplorer\app.log` | Write | Rolling diagnostic log; warnings and errors are also surfaced in the status bar |
+| `%LOCALAPPDATA%\MultiExplorer\Operations` | Read/write | Request, state, and cancellation files shared with operation-host processes |
+| Windows Shell COM | In-process and worker-process calls | Folder views, navigation, thumbnails, context menus, drag/drop, previews, and file operations |
+| Current-user registry | Read/write | Windows sign-in startup registration and selected Explorer display preferences |
+| Classes-root registry | Read | Preview-handler discovery by file extension or ProgID |
+| QuickLook named pipe | Optional outbound IPC | Sends the selected path to a running QuickLook process using a SID-scoped pipe |
+
+### Architectural considerations
+
+- **Responsiveness:** WinForms coordination stays on the main UI thread, each native
+  Explorer view uses a dedicated STA, and managed directory filtering is asynchronous.
+- **Fault containment:** Shell file operations run in a separate executable. Stale
+  state and an unexpectedly exited worker are detected and reported as failures.
+- **Windows fidelity:** Navigation, icons, thumbnails, context menus, drag/drop,
+  preview handlers, and file operations delegate to native Windows Shell interfaces.
+- **Data locality:** MultiExplorer operates offline; settings, logs, and operation
+  coordination remain in the current user's profile.
+- **Theme and DPI:** A shared managed palette is combined with native window theming.
+  Shell views can be recreated for live theme changes, and PerMonitorV2 awareness
+  keeps the WinForms and embedded Shell rendering contexts aligned.
+- **Optional dependency:** QuickLook is feature-detected. If its process or pipe is
+  unavailable, the core explorer continues to operate and reports a targeted message.
 
 ---
 

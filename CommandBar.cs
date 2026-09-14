@@ -19,7 +19,7 @@ public sealed class CommandBar : ToolStrip
         ToggleDetailsPane, TogglePreviewPane,
         ShowNavPane, ShowCompactView, ShowCheckboxes, ShowFileExtensions, ShowHiddenItems,
         ToggleQuickLook,
-        SelectAll, Properties, FolderOptions, About, ViewLog, SetHotkey,
+        SelectAll, Properties, FolderOptions, About, ViewLog, SetHotkey, ToggleStartWithWindows,
         GoToParent, MirrorToOther,
         Exit,
     }
@@ -79,9 +79,11 @@ public sealed class CommandBar : ToolStrip
     private int _iconPx = 24;
 
     // Kept as fields so ApplyDpi() can update sizes and recreate icons on DPI change.
-    private readonly ToolStripDropDownButton _more;
+    private readonly ToolStripButton _more;
     private readonly ToolStripDropDownMenu   _viewMenu;
     private readonly ToolStripDropDownMenu   _showMenu;
+    private MoreMenuPopup? _morePopup;
+    private AppearanceMenuPopup? _appearancePopup;
 
     // Maps each item that carries a glyph to that glyph so icons can be recreated at new DPI.
     private readonly List<(ToolStripItem Item, char Glyph)> _glyphItems = new();
@@ -97,6 +99,7 @@ public sealed class CommandBar : ToolStrip
     private readonly ToolStripMenuItem _miQuickLook;
     private readonly ToolStripMenuItem _miLightTheme;
     private readonly ToolStripMenuItem _miDarkTheme;
+    private readonly ToolStripMenuItem _miStartWithWindows;
 
     public CommandBar()
     {
@@ -184,23 +187,22 @@ public sealed class CommandBar : ToolStrip
         IconBtn(GlyphGoUp,   "Go to parent folder",                   Cmd.GoToParent);
         IconBtn(GlyphMirror, "Copy this folder to the opposite pane", Cmd.MirrorToOther);
 
-        // Spring pushes the see-more button to the far right.
-        Items.Add(new ToolStripSpring());
-
-        _more = new ToolStripDropDownButton("…  ▾")
+        _more = new ToolStripButton("…  ▾")
         {
             AutoToolTip       = false,
             DisplayStyle      = ToolStripItemDisplayStyle.Text,
-            ShowDropDownArrow = false,
+            // ToolStrip's built-in right alignment is stable across the two
+            // independently sized panes.  A spring item can briefly consume
+            // the available width during initial layout and send this button
+            // to the native overflow chevron, where it then remains.
+            Alignment         = ToolStripItemAlignment.Right,
+            Overflow          = ToolStripItemOverflow.Never,
             Font              = _moreButtonFont,
             AutoSize          = false,
             Width             = LogicalToDeviceUnits(66),
             Height            = LogicalToDeviceUnits(38),
             TextAlign         = ContentAlignment.MiddleCenter,
         };
-        DropItem(_more, "Options", Cmd.FolderOptions, "Ctrl+O");
-        _more.DropDownItems.Add(new ToolStripSeparator());
-        var appearance = new ToolStripMenuItem("Appearance") { Font = Font };
         _miLightTheme = new ToolStripMenuItem("Light")
         {
             Font = Font,
@@ -211,19 +213,13 @@ public sealed class CommandBar : ToolStrip
             Font = Font,
             CheckOnClick = false,
         };
-        _miLightTheme.Click += (_, _) => ThemeSelected?.Invoke(this, ApplicationTheme.Light);
-        _miDarkTheme.Click  += (_, _) => ThemeSelected?.Invoke(this, ApplicationTheme.Dark);
-        appearance.DropDownItems.Add(_miLightTheme);
-        appearance.DropDownItems.Add(_miDarkTheme);
-        _more.DropDownItems.Add(appearance);
-        _more.DropDownItems.Add(new ToolStripSeparator());
-        DropItem(_more, "View log", Cmd.ViewLog, "Ctrl+L");
-        DropItem(_more, "Set show-window hotkey…", Cmd.SetHotkey);
-        _more.DropDownItems.Add(new ToolStripSeparator());
-        DropItem(_more, "About MultiExplorer", Cmd.About);
-        _more.DropDownItems.Add(new ToolStripSeparator());
-        DropItem(_more, "Exit", Cmd.Exit, "Ctrl+Q");
+        _miStartWithWindows = new ToolStripMenuItem("Start MultiExplorer with Windows")
+        {
+            Font = Font,
+            CheckOnClick = false,
+        };
         Items.Add(_more);
+        _more.Click += (_, _) => ShowMoreMenu();
         SetThemeSelection(ThemeManager.Current);
     }
 
@@ -232,6 +228,9 @@ public sealed class CommandBar : ToolStrip
         _miLightTheme.Checked = theme == ApplicationTheme.Light;
         _miDarkTheme.Checked  = theme == ApplicationTheme.Dark;
     }
+
+    public void SetStartWithWindowsChecked(bool enabled) =>
+        _miStartWithWindows.Checked = enabled;
 
     public void ApplyTheme()
     {
@@ -296,10 +295,64 @@ public sealed class CommandBar : ToolStrip
         foreach (var img in old) img.Dispose();
     }
 
+    private void ShowMoreMenu(bool selectExit = false)
+    {
+        if (Disposing || IsDisposed) return;
+        _morePopup?.Close();
+
+        var popup = new MoreMenuPopup(_miStartWithWindows.Checked, selectExit);
+        popup.CommandChosen += (_, command) => CommandIssued?.Invoke(this, command);
+        popup.AppearanceRequested += (_, rowBounds) =>
+            BeginInvoke(() => ShowAppearanceMenu(rowBounds));
+        popup.FormClosed += (_, _) =>
+        {
+            if (ReferenceEquals(_morePopup, popup)) _morePopup = null;
+        };
+        _morePopup = popup;
+
+        Point location = PointToScreen(new Point(
+            _more.Bounds.Right - popup.Width, _more.Bounds.Bottom));
+        Rectangle workingArea = Screen.FromControl(this).WorkingArea;
+        location.X = Math.Max(workingArea.Left,
+            Math.Min(location.X, workingArea.Right - popup.Width));
+        if (location.Y + popup.Height > workingArea.Bottom)
+            location.Y = PointToScreen(new Point(_more.Bounds.Left, _more.Bounds.Top)).Y - popup.Height;
+        popup.Location = location;
+        Form? owner = FindForm();
+        if (owner != null) popup.Show(owner); else popup.Show();
+        popup.Activate();
+    }
+
+    private void ShowAppearanceMenu(Rectangle appearanceRow)
+    {
+        _appearancePopup?.Close();
+        var popup = new AppearanceMenuPopup(ThemeManager.Current);
+        popup.ThemeChosen += (_, theme) => ThemeSelected?.Invoke(this, theme);
+        popup.FormClosed += (_, _) =>
+        {
+            if (ReferenceEquals(_appearancePopup, popup)) _appearancePopup = null;
+        };
+        _appearancePopup = popup;
+
+        Rectangle workingArea = Screen.FromControl(this).WorkingArea;
+        Point location = new(appearanceRow.Right - 8, appearanceRow.Top);
+        if (location.X + popup.Width > workingArea.Right)
+            location.X = appearanceRow.Left - popup.Width + 8;
+        location.X = Math.Max(workingArea.Left, location.X);
+        location.Y = Math.Max(workingArea.Top,
+            Math.Min(location.Y, workingArea.Bottom - popup.Height));
+        popup.Location = location;
+        Form? owner = FindForm();
+        if (owner != null) popup.Show(owner); else popup.Show();
+        popup.Activate();
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
+            _morePopup?.Dispose();
+            _appearancePopup?.Dispose();
             foreach (var img in _ownedImages) img.Dispose();
             _moreButtonFont.Dispose();
         }
@@ -376,6 +429,18 @@ public sealed class CommandBar : ToolStrip
         return item;
     }
 
+    private ToolStripMenuItem DropCheckItem(ToolStripDropDownItem parent, string text, Cmd cmd)
+    {
+        var item = new ToolStripMenuItem(text)
+        {
+            Font         = Font,
+            CheckOnClick = false,
+        };
+        item.Click += (_, _) => CommandIssued?.Invoke(this, cmd);
+        parent.DropDownItems.Add(item);
+        return item;
+    }
+
     // Renders one glyph from _iconFont at _iconPx size using AntiAliasGridFit.
     // Segoe MDL2/Fluent Icons carry pixel-grid hints at 16, 20, 24, 32 px so
     // rendering at the exact device size is always sharper than upscaling.
@@ -409,19 +474,313 @@ public sealed class CommandBar : ToolStrip
         _ownedImages.Add(bmp);
         return bmp;
     }
-}
 
-// Expands to fill remaining horizontal space, right-aligning items that follow it.
-file sealed class ToolStripSpring : ToolStripLabel
-{
-    public override Size GetPreferredSize(Size constrainingSize)
+    private sealed class MoreMenuPopup : LayeredPopupForm
     {
-        if (Owner is null) return base.GetPreferredSize(constrainingSize);
-        int used = Owner.Padding.Horizontal;
-        foreach (ToolStripItem item in Owner.Items)
-            if (item != this && !item.IsOnOverflow)
-                used += item.Width + item.Margin.Horizontal;
-        return new Size(Math.Max(2, Owner.DisplayRectangle.Width - used),
-                        base.GetPreferredSize(constrainingSize).Height);
+        private readonly List<MenuRow> _rows = new();
+        private readonly Font _font;
+        private readonly Font _shortcutFont;
+        private int _hovered = -1;
+
+        internal event EventHandler<Cmd>? CommandChosen;
+        internal event EventHandler<Rectangle>? AppearanceRequested;
+
+        internal MoreMenuPopup(bool startWithWindows, bool selectExit)
+        {
+            _font = new Font("Segoe UI", 10f);
+            _shortcutFont = new Font("Segoe UI", 9f);
+            int rowHeight = LogicalToDeviceUnits(29);
+            int separatorHeight = Math.Max(1, LogicalToDeviceUnits(1));
+            int y = LogicalToDeviceUnits(3);
+            Width = LogicalToDeviceUnits(318);
+
+            AddRow("Options", "Ctrl+O", Cmd.FolderOptions, rowHeight, ref y);
+            AddSeparator(separatorHeight, ref y);
+            AddRow("Appearance", null, null, rowHeight, ref y, isAppearance: true);
+            AddSeparator(separatorHeight, ref y);
+            AddRow("Start MultiExplorer with Windows", null,
+                Cmd.ToggleStartWithWindows, rowHeight, ref y, isChecked: startWithWindows);
+            AddSeparator(separatorHeight, ref y);
+            AddRow("View log", "Ctrl+L", Cmd.ViewLog, rowHeight, ref y);
+            AddRow("Set show-window hotkey…", null, Cmd.SetHotkey, rowHeight, ref y);
+            AddSeparator(separatorHeight, ref y);
+            AddRow("About MultiExplorer", null, Cmd.About, rowHeight, ref y);
+            AddSeparator(separatorHeight, ref y);
+            AddRow("Exit", "Ctrl+Q", Cmd.Exit, rowHeight, ref y);
+            Height = y + LogicalToDeviceUnits(4);
+            if (selectExit) _hovered = _rows.FindLastIndex(row => row.Command == Cmd.Exit);
+
+            MouseMove += OnPopupMouseMove;
+            MouseLeave += (_, _) => SetHovered(-1);
+            MouseDown += OnPopupMouseDown;
+            KeyDown += OnPopupKeyDown;
+            Deactivate += (_, _) => Close();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _font.Dispose();
+                _shortcutFont.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+
+        protected override void RenderSurface(Graphics graphics)
+        {
+            graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+            int lastActionableRow = _rows.FindLastIndex(row => !row.IsSeparator);
+            bool lastRowSelected = lastActionableRow >= 0 && _hovered == lastActionableRow;
+            using GraphicsPath outline = PopupVisuals.CreateBottomRoundedPath(
+                new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f), CornerRadius);
+            using (var brush = new SolidBrush(lastRowSelected
+                ? ThemeManager.MenuHighlight : ThemeManager.Surface))
+                graphics.FillPath(brush, outline);
+            if (lastRowSelected)
+            {
+                // The final highlighted row shares the popup's outer contour.
+                // Painting the rows above it back to the surface colour avoids a
+                // second, slightly different rounded path at the lower-right edge.
+                using var surface = new SolidBrush(ThemeManager.Surface);
+                graphics.FillRectangle(surface, new RectangleF(1, 1, Width - 2f,
+                    Math.Max(0, _rows[lastActionableRow].Bounds.Top - 1f)));
+            }
+            using (var pen = new Pen(ThemeManager.Border))
+                graphics.DrawPath(pen, outline);
+
+            for (int index = 0; index < _rows.Count; index++)
+            {
+                MenuRow row = _rows[index];
+                if (row.IsSeparator)
+                {
+                    using var pen = new Pen(ThemeManager.Border);
+                    int inset = LogicalToDeviceUnits(16);
+                    graphics.DrawLine(pen, inset, row.Bounds.Top + row.Bounds.Height / 2,
+                        Width - inset, row.Bounds.Top + row.Bounds.Height / 2);
+                    continue;
+                }
+
+                bool selected = index == _hovered;
+                if (selected && !lastRowSelected)
+                {
+                    using var brush = new SolidBrush(ThemeManager.MenuHighlight);
+                    graphics.FillRectangle(brush, row.Bounds);
+                }
+
+                Color textColor = selected ? ThemeManager.MenuHighlightText : ThemeManager.Text;
+                int left = LogicalToDeviceUnits(row.IsChecked ? 34 : 16);
+                var textBounds = new Rectangle(left, row.Bounds.Top,
+                    Math.Max(1, Width - left - LogicalToDeviceUnits(82)), row.Bounds.Height);
+                DrawText(graphics, row.Text!, _font, textBounds, textColor, StringAlignment.Near);
+
+                if (row.Shortcut is not null)
+                {
+                    var shortcutBounds = new Rectangle(Width - LogicalToDeviceUnits(82),
+                        row.Bounds.Top, LogicalToDeviceUnits(66), row.Bounds.Height);
+                    DrawText(graphics, row.Shortcut, _shortcutFont, shortcutBounds, textColor,
+                        StringAlignment.Far);
+                }
+                if (row.IsChecked)
+                    DrawCheckmark(graphics, row.Bounds, textColor);
+                if (row.IsAppearance)
+                    DrawArrow(graphics, row.Bounds, textColor);
+            }
+        }
+
+        private void AddRow(string text, string? shortcut, Cmd? command, int height, ref int y,
+            bool isChecked = false, bool isAppearance = false)
+        {
+            _rows.Add(new MenuRow(new Rectangle(0, y, Width, height), text, shortcut,
+                command, false, isChecked, isAppearance));
+            y += height;
+        }
+
+        private void AddSeparator(int height, ref int y)
+        {
+            _rows.Add(new MenuRow(new Rectangle(0, y, Width, height), null, null,
+                null, true, false, false));
+            y += height;
+        }
+
+        private void OnPopupMouseMove(object? sender, MouseEventArgs e)
+        {
+            int index = _rows.FindIndex(row => !row.IsSeparator && row.Bounds.Contains(e.Location));
+            SetHovered(index);
+        }
+
+        private void OnPopupMouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || _hovered < 0) return;
+            MenuRow row = _rows[_hovered];
+            if (row.IsAppearance)
+            {
+                AppearanceRequested?.Invoke(this, RectangleToScreen(row.Bounds));
+                Close();
+                return;
+            }
+            if (row.Command is Cmd command)
+            {
+                CommandChosen?.Invoke(this, command);
+                Close();
+            }
+        }
+
+        private void OnPopupKeyDown(object? sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Escape) { Close(); return; }
+            if (e.KeyCode is Keys.Down or Keys.Up)
+            {
+                int direction = e.KeyCode == Keys.Down ? 1 : -1;
+                int index = _hovered;
+                do { index = (index + direction + _rows.Count) % _rows.Count; }
+                while (_rows[index].IsSeparator);
+                SetHovered(index);
+                e.SuppressKeyPress = true;
+                return;
+            }
+            if (e.KeyCode == Keys.Enter && _hovered >= 0)
+                OnPopupMouseDown(this, new MouseEventArgs(MouseButtons.Left, 1, 0, 0, 0));
+        }
+
+        private void SetHovered(int index)
+        {
+            if (_hovered == index) return;
+            _hovered = index;
+            RefreshSurface();
+        }
+
+        private void DrawCheckmark(Graphics graphics, Rectangle bounds, Color color)
+        {
+            int centerX = LogicalToDeviceUnits(22);
+            int centerY = bounds.Top + bounds.Height / 2;
+            using var pen = new Pen(color, Math.Max(1.5f, DeviceDpi * 1.6f / 96));
+            graphics.DrawLines(pen, new[]
+            {
+                new Point(centerX - 5, centerY), new Point(centerX - 1, centerY + 4),
+                new Point(centerX + 6, centerY - 5),
+            });
+        }
+
+        private void DrawArrow(Graphics graphics, Rectangle bounds, Color color)
+        {
+            int x = Width - LogicalToDeviceUnits(17);
+            int y = bounds.Top + bounds.Height / 2;
+            using var brush = new SolidBrush(color);
+            graphics.FillPolygon(brush, new[]
+            {
+                new Point(x - 2, y - 5), new Point(x - 2, y + 5), new Point(x + 3, y),
+            });
+        }
+
+        private static void DrawText(Graphics graphics, string text, Font font,
+            Rectangle bounds, Color color, StringAlignment alignment)
+        {
+            using var format = new StringFormat
+            {
+                Alignment = alignment,
+                LineAlignment = StringAlignment.Center,
+                FormatFlags = StringFormatFlags.NoWrap,
+                Trimming = StringTrimming.EllipsisCharacter,
+            };
+            using var brush = new SolidBrush(color);
+            graphics.DrawString(text, font, brush, bounds, format);
+        }
+
+        private sealed record MenuRow(Rectangle Bounds, string? Text, string? Shortcut,
+            Cmd? Command, bool IsSeparator, bool IsChecked, bool IsAppearance);
+    }
+
+    private sealed class AppearanceMenuPopup : LayeredPopupForm
+    {
+        private readonly Font _font = new("Segoe UI", 10f);
+        private readonly ApplicationTheme _selectedTheme;
+        private int _hovered = -1;
+
+        internal event EventHandler<ApplicationTheme>? ThemeChosen;
+
+        internal AppearanceMenuPopup(ApplicationTheme selectedTheme)
+        {
+            _selectedTheme = selectedTheme;
+            Width = LogicalToDeviceUnits(150);
+            Height = LogicalToDeviceUnits(62);
+            MouseMove += (_, e) =>
+            {
+                int next = e.Y < Height / 2 ? 0 : 1;
+                if (_hovered == next) return;
+                _hovered = next;
+                RefreshSurface();
+            };
+            MouseLeave += (_, _) => { _hovered = -1; RefreshSurface(); };
+            MouseDown += (_, e) =>
+            {
+                if (e.Button != MouseButtons.Left) return;
+                ThemeChosen?.Invoke(this, e.Y < Height / 2
+                    ? ApplicationTheme.Light : ApplicationTheme.Dark);
+                Close();
+            };
+            Deactivate += (_, _) => Close();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _font.Dispose();
+            base.Dispose(disposing);
+        }
+
+        protected override void RenderSurface(Graphics graphics)
+        {
+            graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+            bool lastRowSelected = _hovered == 1;
+            using GraphicsPath outline = PopupVisuals.CreateBottomRoundedPath(
+                new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f), CornerRadius);
+            using (var brush = new SolidBrush(lastRowSelected
+                ? ThemeManager.MenuHighlight : ThemeManager.Surface))
+                graphics.FillPath(brush, outline);
+            if (lastRowSelected)
+            {
+                using var surface = new SolidBrush(ThemeManager.Surface);
+                graphics.FillRectangle(surface, new RectangleF(1, 1, Width - 2f,
+                    Height / 2f - 1));
+            }
+            using (var pen = new Pen(ThemeManager.Border)) graphics.DrawPath(pen, outline);
+
+            for (int index = 0; index < 2; index++)
+            {
+                int top = index * Height / 2;
+                bool hover = _hovered == index;
+                if (hover && !lastRowSelected)
+                {
+                    using var brush = new SolidBrush(ThemeManager.MenuHighlight);
+                    graphics.FillRectangle(brush, 1, top, Width - 2, Height / 2);
+                }
+                bool checkedItem = (index == 0 ? ApplicationTheme.Light : ApplicationTheme.Dark) == _selectedTheme;
+                Color textColor = hover ? ThemeManager.MenuHighlightText : ThemeManager.Text;
+                using (var format = new StringFormat
+                {
+                    Alignment = StringAlignment.Near,
+                    LineAlignment = StringAlignment.Center,
+                    FormatFlags = StringFormatFlags.NoWrap,
+                })
+                using (var brush = new SolidBrush(textColor))
+                {
+                    graphics.DrawString(index == 0 ? "Light" : "Dark", _font, brush,
+                        new Rectangle(LogicalToDeviceUnits(34), top,
+                            Width - LogicalToDeviceUnits(46), Height / 2), format);
+                }
+                if (checkedItem)
+                {
+                    int y = top + Height / 4;
+                    using var pen = new Pen(textColor, Math.Max(1.5f, DeviceDpi * 1.6f / 96));
+                    graphics.DrawLines(pen, new[]
+                    {
+                        new Point(LogicalToDeviceUnits(18), y), new Point(LogicalToDeviceUnits(22), y + 4),
+                        new Point(LogicalToDeviceUnits(29), y - 5),
+                    });
+                }
+            }
+        }
     }
 }

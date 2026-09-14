@@ -16,13 +16,17 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        bool startedWithWindows = IsStartupLaunch(args);
+
         // Single-instance guard: if another instance is already running, signal it to
-        // show its window and then exit immediately.
+        // show its window and then exit immediately. A Windows sign-in launch is
+        // intentionally silent if the application is already running.
         using var mutex = new Mutex(true, "MultiExplorer.SingleInstance.v1", out bool ownsMutex);
         if (!ownsMutex)
         {
-            NativeMethods.PostMessage(NativeMethods.HWND_BROADCAST, WM_SHOW_INSTANCE,
-                                      IntPtr.Zero, IntPtr.Zero);
+            if (!startedWithWindows)
+                NativeMethods.PostMessage(NativeMethods.HWND_BROADCAST, WM_SHOW_INSTANCE,
+                                          IntPtr.Zero, IntPtr.Zero);
             return;
         }
 
@@ -44,8 +48,8 @@ static class Program
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        var form = new MainForm(settings);
         int captureIndex = Array.FindIndex(args, a => a == "--capture");
+        var form = new MainForm(settings, startedWithWindows);
         if (captureIndex >= 0 && captureIndex + 1 < args.Length)
         {
             string capturePath = args[captureIndex + 1];
@@ -84,6 +88,9 @@ static class Program
         }
         Application.Run(form);
     }
+
+    internal static bool IsStartupLaunch(IEnumerable<string> args) =>
+        args.Any(arg => string.Equals(arg, "--startup", StringComparison.OrdinalIgnoreCase));
 
     private static IEnumerable<T> FindControls<T>(Control root) where T : Control
     {

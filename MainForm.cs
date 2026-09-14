@@ -20,11 +20,13 @@ public class MainForm : Form, IMessageFilter
     private readonly PanelView   _rightPanel;
 
     private int  _splitterLeft;
-    private int  _savedSplitterLeft;
+    private double _splitterRatio = 0.5;
+    private bool _splitterInitialized;
     private bool _leftCollapsed;
     private bool _rightCollapsed;
     private readonly System.Windows.Forms.Timer _pathPollTimer;
     private readonly AppSettings    _settings;
+    private readonly bool           _startInSystemTray;
 
     private readonly StatusStrip                  _statusBar;
     private readonly ToolStripStatusLabel         _statusIcon;
@@ -48,12 +50,24 @@ public class MainForm : Form, IMessageFilter
     private int _registeredModifiers;
     private int _registeredVk;
 
-    public MainForm() : this(SettingsManager.Load()) { }
+    public MainForm() : this(SettingsManager.Load(), startInSystemTray: false) { }
 
-    internal MainForm(AppSettings settings)
+    internal MainForm(AppSettings settings) : this(settings, startInSystemTray: false) { }
+
+    internal MainForm(AppSettings settings, bool startInSystemTray)
     {
         _settings = settings;
+        _startInSystemTray = startInSystemTray;
         _operations = new OperationManager();
+
+        if (_startInSystemTray)
+        {
+            // Keep the initial window out of both the taskbar and the visible desktop.
+            // Opacity is restored after the first Shown event so later user activation
+            // displays the window normally.
+            ShowInTaskbar = false;
+            Opacity = 0;
+        }
 
         Text = "MultiExplorer";
         using var iconStream = GetType().Assembly.GetManifestResourceStream(ApplicationIconResourceName);
@@ -70,7 +84,6 @@ public class MainForm : Form, IMessageFilter
         _leftPanel   = new PanelView();
         _rightPanel  = new PanelView();
         _splitterBar = new SplitterBar();
-
         _splitterBar.CollapseLeftClicked  += (_, _) => ToggleCollapseLeft();
         _splitterBar.CollapseRightClicked += (_, _) => ToggleCollapseRight();
         _splitterBar.DragMoved            += OnSplitterDragMoved;
@@ -92,6 +105,9 @@ public class MainForm : Form, IMessageFilter
         // Hotkey configuration
         _leftPanel.SetHotkeyRequested  += (_, _) => OnSetHotkeyRequested();
         _rightPanel.SetHotkeyRequested += (_, _) => OnSetHotkeyRequested();
+
+        _leftPanel.StartWithWindowsToggled  += OnStartWithWindowsToggled;
+        _rightPanel.StartWithWindowsToggled += OnStartWithWindowsToggled;
 
         _leftPanel.ThemeSelected  += (_, theme) => ChangeTheme(theme);
         _rightPanel.ThemeSelected += (_, theme) => ChangeTheme(theme);
@@ -139,7 +155,6 @@ public class MainForm : Form, IMessageFilter
 
         Load        += OnLoad;
         FormClosing += OnFormClosing;
-
         _miMinimizeToTray = new ToolStripMenuItem("Minimize to tray on close")
         {
             Checked      = _settings.MinimizeToTray,
@@ -183,11 +198,15 @@ public class MainForm : Form, IMessageFilter
             Visible          = false,
         };
         _trayIcon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowMainWindow(); };
+        _trayIcon.BalloonTipClicked += (_, _) => ShowMainWindow();
 
         _operations.OperationsChanged += OnOperationsChanged;
         _operations.OperationsBecameIdle += OnOperationsBecameIdle;
         _lastActiveOperationCount = _operations.ActiveCount;
         UpdateOperationTrayStatus();
+
+        UpdateStartWithWindowsUi();
+        SynchronizeStartupRegistration();
 
         RestoreWindowState();
         ApplyApplicationTheme();
@@ -232,10 +251,28 @@ public class MainForm : Form, IMessageFilter
 
         _leftCollapsed     = _settings.LeftPanelCollapsed;
         _rightCollapsed    = _settings.RightPanelCollapsed;
-        _splitterLeft      = _settings.SplitterDistance > 0
-                             ? _settings.SplitterDistance
-                             : _layoutPanel.Width / 2;
-        _savedSplitterLeft = _splitterLeft;
+        if (_settings.SplitterPositionVersion < AppSettings.CurrentSplitterPositionVersion)
+        {
+            // Apply a newly chosen product default once to existing installations.
+            // Merely changing AppSettings.SplitterDistance does not affect an existing
+            // settings file because its saved SplitterRatio otherwise wins here.
+            _splitterLeft = AppSettings.DefaultSplitterDistance;
+            _splitterRatio = CalculateSplitterRatio(_splitterLeft, _layoutPanel.Width);
+            _settings.SplitterPositionVersion = AppSettings.CurrentSplitterPositionVersion;
+        }
+        else if (_settings.SplitterRatio > 0 && _settings.SplitterRatio < 1)
+        {
+            _splitterRatio = _settings.SplitterRatio;
+            _splitterLeft = SplitterLeftFromRatio(_splitterRatio, _layoutPanel.Width);
+        }
+        else
+        {
+            _splitterLeft = _settings.SplitterDistance > 0
+                            ? _settings.SplitterDistance
+                            : _layoutPanel.Width / 2;
+            _splitterRatio = CalculateSplitterRatio(_splitterLeft, _layoutPanel.Width);
+        }
+        _splitterInitialized = true;
 
         // Browsers require non-zero bounds to initialise, so launch with both panels
         // visible at full size, then apply the saved collapse state afterwards.
@@ -252,6 +289,9 @@ public class MainForm : Form, IMessageFilter
                        : new List<string> { _settings.LeftPanelPath };
         var rightPaths = _settings.RightPanelTabs.Count > 0 ? _settings.RightPanelTabs
                        : new List<string> { _settings.RightPanelPath };
+
+        _leftPanel.SetPathHistory(_settings.LeftPathHistory);
+        _rightPanel.SetPathHistory(_settings.RightPathHistory);
 
         // ExplorerBrowser's two navigation trees share Shell image-list state.
         // Initializing both on separate STA threads at exactly the same time can
@@ -274,6 +314,23 @@ public class MainForm : Form, IMessageFilter
             ApplyLayout();
 
         _pathPollTimer.Start();
+        if (_startInSystemTray)
+            BeginInvoke(StartInSystemTray);
+    }
+
+    private void StartInSystemTray()
+    {
+        if (IsDisposed || Disposing) return;
+
+        _pathPollTimer.Stop();
+        _trayIcon.Visible = true;
+        Hide();
+        Opacity = 1;
+        _trayIcon.ShowBalloonTip(
+            5000,
+            "MultiExplorer",
+            "MultiExplorer started with Windows and is running in the system tray.",
+            ToolTipIcon.Info);
     }
 
     private void OnPathPollTick(object? sender, EventArgs e)
@@ -367,6 +424,7 @@ public class MainForm : Form, IMessageFilter
         _settings.WindowHeight     = bounds.Height;
         _settings.WindowState      = WindowState == FormWindowState.Maximized ? "Maximized" : "Normal";
         _settings.SplitterDistance    = _splitterLeft;
+        _settings.SplitterRatio       = _splitterRatio;
         _settings.LeftPanelCollapsed  = _leftCollapsed;
         _settings.RightPanelCollapsed = _rightCollapsed;
 
@@ -374,12 +432,16 @@ public class MainForm : Form, IMessageFilter
         _settings.RightPanelTabs = _rightPanel.GetAllPaths();
         _settings.LeftPanelPath  = _leftPanel.CurrentPath();
         _settings.RightPanelPath = _rightPanel.CurrentPath();
+        _settings.LeftPathHistory  = _leftPanel.GetPathHistory();
+        _settings.RightPathHistory = _rightPanel.GetPathHistory();
 
         SettingsManager.Save(_settings);
     }
 
     private void ShowMainWindow()
     {
+        ShowInTaskbar = true;
+        Opacity = 1;
         Show();
         WindowState = _settings.WindowState == "Maximized"
                           ? FormWindowState.Maximized
@@ -606,6 +668,8 @@ public class MainForm : Form, IMessageFilter
         }
         else
         {
+            if (_splitterInitialized)
+                _splitterLeft = SplitterLeftFromRatio(_splitterRatio, tw);
             _splitterLeft = ConstrainSplitterLeft(_splitterLeft, tw);
 
             _leftPanel.Visible  = true;
@@ -628,16 +692,29 @@ public class MainForm : Form, IMessageFilter
     internal static bool CanLayoutExpandedPanels(int layoutWidth) =>
         layoutWidth >= MinimumPanelWidth * 2 + SplitterBar.BarWidth;
 
+    internal static double CalculateSplitterRatio(int splitterLeft, int layoutWidth)
+    {
+        int usableWidth = layoutWidth - SplitterBar.BarWidth;
+        if (usableWidth <= 0) return 0.5;
+        return Math.Clamp((double)splitterLeft / usableWidth, 0, 1);
+    }
+
+    internal static int SplitterLeftFromRatio(double ratio, int layoutWidth)
+    {
+        int usableWidth = Math.Max(0, layoutWidth - SplitterBar.BarWidth);
+        int splitterLeft = (int)Math.Round(usableWidth * Math.Clamp(ratio, 0, 1));
+        return ConstrainSplitterLeft(splitterLeft, layoutWidth);
+    }
+
     private void ToggleCollapseLeft()
     {
         if (_leftCollapsed)
         {
             _leftCollapsed = false;
-            _splitterLeft  = _savedSplitterLeft > 0 ? _savedSplitterLeft : _layoutPanel.Width / 2;
+            _splitterLeft = SplitterLeftFromRatio(_splitterRatio, _layoutPanel.Width);
         }
         else if (!_rightCollapsed)
         {
-            _savedSplitterLeft = _splitterLeft;
             _leftCollapsed     = true;
         }
         ApplyLayout();
@@ -648,11 +725,10 @@ public class MainForm : Form, IMessageFilter
         if (_rightCollapsed)
         {
             _rightCollapsed = false;
-            _splitterLeft   = _savedSplitterLeft > 0 ? _savedSplitterLeft : _layoutPanel.Width / 2;
+            _splitterLeft = SplitterLeftFromRatio(_splitterRatio, _layoutPanel.Width);
         }
         else if (!_leftCollapsed)
         {
-            _savedSplitterLeft = _splitterLeft;
             _rightCollapsed    = true;
         }
         ApplyLayout();
@@ -661,7 +737,8 @@ public class MainForm : Form, IMessageFilter
     private void OnSplitterDragMoved(object? sender, int newLeft)
     {
         if (_leftCollapsed || _rightCollapsed) return;
-        _splitterLeft = newLeft;
+        _splitterLeft = ConstrainSplitterLeft(newLeft, _layoutPanel.Width);
+        _splitterRatio = CalculateSplitterRatio(_splitterLeft, _layoutPanel.Width);
         ApplyLayout();
     }
 
@@ -690,6 +767,34 @@ public class MainForm : Form, IMessageFilter
     {
         _settings.QuickLookEnabled = ExplorerHost.QuickLookEnabled;
         SettingsManager.Save(_settings);
+    }
+
+    private void OnStartWithWindowsToggled(object? sender, EventArgs e)
+    {
+        bool enabled = !_settings.StartWithWindows;
+        if (!StartupManager.TrySetEnabled(enabled, out Exception? error))
+        {
+            AppLog.Warn(error!, nameof(OnStartWithWindowsToggled),
+                $"Could not {(enabled ? "enable" : "disable")} start with Windows.");
+            return;
+        }
+
+        _settings.StartWithWindows = enabled;
+        SettingsManager.Save(_settings);
+        UpdateStartWithWindowsUi();
+    }
+
+    private void SynchronizeStartupRegistration()
+    {
+        if (!StartupManager.TrySetEnabled(_settings.StartWithWindows, out Exception? error))
+            AppLog.Warn(error!, nameof(SynchronizeStartupRegistration),
+                "Could not synchronize the start-with-Windows preference.");
+    }
+
+    private void UpdateStartWithWindowsUi()
+    {
+        _leftPanel.SetStartWithWindowsChecked(_settings.StartWithWindows);
+        _rightPanel.SetStartWithWindowsChecked(_settings.StartWithWindows);
     }
 
     private void ClearStatus()

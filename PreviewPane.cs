@@ -91,6 +91,15 @@ internal sealed class PreviewPane : Panel
         }
     }
 
+    internal void ApplyTheme()
+    {
+        BackColor = ThemeManager.Window;
+        ForeColor = ThemeManager.Text;
+        if (IsHandleCreated)
+            ThemeManager.ApplyNativeWindow(Handle);
+        Invalidate();
+    }
+
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);

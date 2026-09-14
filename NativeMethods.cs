@@ -73,6 +73,18 @@ public static class NativeMethods
     public const uint LVHT_NOWHERE = 0x0001;
     public const uint LVHT_ONITEM  = 0x000E; // LVHT_ONITEMICON | LVHT_ONITEMLABEL | LVHT_ONITEMSTATEICON
 
+    // Used with TVM_HITTEST to distinguish a folder label from its
+    // expand/collapse button in the Explorer navigation tree.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TVHITTESTINFO
+    {
+        public POINT  pt;
+        public uint   flags;
+        public IntPtr hItem;
+    }
+
+    public const uint TVHT_ONITEMBUTTON = 0x0010;
+
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT
     {
@@ -196,6 +208,7 @@ public static class NativeMethods
     {
         [PreserveSig] int QueryService(ref Guid guidService, ref Guid riid, out IntPtr ppvObject);
     }
+
 
     // ── IShellView — called by us to select items ────────────────────────────
     //
@@ -572,12 +585,14 @@ public static class NativeMethods
     public const uint TVGN_ROOT  = 0x0000; // first root item
     public const uint TVGN_NEXT  = 0x0001; // next sibling
     public const uint TVGN_CHILD = 0x0004; // first child
+    public const uint TVGN_PARENT = 0x0003; // parent item
     public const uint TVGN_CARET = 0x0009; // currently selected (keyboard caret) item
 
     public const uint TVE_EXPAND    = 0x0002;
     public const uint TVM_EXPAND        = 0x1102;
     public const uint TVM_GETNEXTITEM   = 0x110A;
     public const uint TVM_SELECTITEM    = 0x110B;
+    public const uint TVM_HITTEST       = 0x1111;
     public const uint TVM_GETITEM       = 0x113E; // TVM_GETITEMW (Unicode)
     public const uint TVM_ENSUREVISIBLE = 0x1114;
 
@@ -913,15 +928,6 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool DestroyIcon(IntPtr hIcon);
-
-    // ── Layered-window helpers (Windows 8+: WS_EX_LAYERED on child windows) ─────
-
-    /// <summary>Sets window opacity / colour-key for a WS_EX_LAYERED window.</summary>
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
-
-    public const uint LWA_ALPHA = 0x00000002; // bAlpha controls per-window opacity
 
     /// <summary>Retrieves a window's style or extended style word.</summary>
     [DllImport("user32.dll", SetLastError = true)]

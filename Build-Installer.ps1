@@ -62,6 +62,13 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
     }
 }
 
+$VersionedMsiPath = Join-Path (Split-Path -Parent $MsiPath) "MultiExplorer-Setup-$Version.msi"
+
+function Publish-VersionedInstaller {
+    Copy-Item -LiteralPath $MsiPath -Destination $VersionedMsiPath -Force
+    Write-Host "   Versioned copy: $VersionedMsiPath" -ForegroundColor Green
+}
+
 Write-Host "`n>> Package metadata" -ForegroundColor Cyan
 Write-Host "   Version    : $Version"
 Write-Host "   Build date : $BuildDate"
@@ -71,12 +78,6 @@ $PublishDir = Join-Path $Root "bin\Release\net8.0-windows\win-x64\publish"
 $PublishExe = Join-Path $PublishDir "MultiExplorer.exe"
 
 if (-not $SkipPublish) {
-    # Check for a running instance — Windows Installer cannot replace a locked exe.
-    $running = Get-Process -Name "MultiExplorer", "MultiExplorer.OperationHost" -ErrorAction SilentlyContinue
-    if ($running) {
-        throw "MultiExplorer or one of its file operations is currently running (PID $($running.Id -join ', ')). Close it or let the operations finish before building the installer."
-    }
-
     Write-Host "`n>> Publishing MultiExplorer..." -ForegroundColor Cyan
 
     # Start from an empty, validated publish directory so WiX cannot harvest stale
@@ -157,9 +158,61 @@ if (-not (Test-Path $MsiPath)) {
 }
 Write-Host "   Built: $MsiPath" -ForegroundColor Green
 
+# Validate what WiX actually put in the MSI. Checking timestamps or the publish
+# directory alone cannot detect an incrementally reused cabinet containing an
+# older executable.
+Write-Host "`n>> Validating installer payload..." -ForegroundColor Cyan
+$validationDir = Join-Path $Root "MultiExplorer.Installer\obj\PayloadValidation"
+$validationFull = [IO.Path]::GetFullPath($validationDir)
+$expectedValidationParent = [IO.Path]::GetFullPath((Join-Path $Root "MultiExplorer.Installer\obj"))
+if ([IO.Path]::GetDirectoryName($validationFull) -ne $expectedValidationParent) {
+    throw "Refusing to clean unexpected validation directory: $validationFull"
+}
+if (Test-Path -LiteralPath $validationFull) {
+    Remove-Item -LiteralPath $validationFull -Recurse -Force
+}
+New-Item -ItemType Directory -Path $validationFull | Out-Null
+
+$msiexec = Join-Path $env:SystemRoot "System32\msiexec.exe"
+$validationProcess = Start-Process -FilePath $msiexec -Wait -PassThru -WindowStyle Hidden -ArgumentList @(
+    "/a", "`"$MsiPath`"", "/qn", "TARGETDIR=`"$validationFull`""
+)
+if ($validationProcess.ExitCode -ne 0) {
+    throw "MSI payload extraction failed (msiexec exit $($validationProcess.ExitCode))."
+}
+
+$packagedExe = Get-ChildItem -LiteralPath $validationFull -Recurse -Filter "MultiExplorer.exe" -File |
+    Select-Object -First 1
+if (-not $packagedExe) {
+    throw "The built MSI does not contain MultiExplorer.exe."
+}
+
+$packagedRoot = $packagedExe.Directory.FullName
+$publishedFiles = Get-ChildItem -LiteralPath $PublishDir -Recurse -File
+foreach ($publishedFile in $publishedFiles) {
+    $relativePath = $publishedFile.FullName.Substring($PublishDir.Length).TrimStart('\')
+    $packagedPath = Join-Path $packagedRoot $relativePath
+    if (-not (Test-Path -LiteralPath $packagedPath -PathType Leaf)) {
+        throw "Installer payload validation failed: missing published file '$relativePath'."
+    }
+
+    $publishedHash = (Get-FileHash -LiteralPath $publishedFile.FullName -Algorithm SHA256).Hash
+    $packagedHash = (Get-FileHash -LiteralPath $packagedPath -Algorithm SHA256).Hash
+    if ($publishedHash -ne $packagedHash) {
+        throw @"
+Installer payload validation failed for '$relativePath':
+  Published SHA-256: $publishedHash
+  Packaged SHA-256 : $packagedHash
+"@
+    }
+}
+Write-Host "   All $($publishedFiles.Count) embedded application files match the fresh publish." -ForegroundColor Green
+Remove-Item -LiteralPath $validationFull -Recurse -Force
+
 if ($SkipSigning) {
+    Publish-VersionedInstaller
     Write-Host "`nDone (signing skipped)." -ForegroundColor Green
-    Write-Host "Installer: $MsiPath"
+    Write-Host "Installer: $VersionedMsiPath"
     exit 0
 }
 
@@ -210,6 +263,7 @@ Install the Windows 10/11 SDK (https://developer.microsoft.com/windows/downloads
 to enable code signing.  The unsigned MSI is still usable:
   $MsiPath
 "@
+    Publish-VersionedInstaller
     exit 0
 }
 
@@ -234,4 +288,5 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "   Signed successfully." -ForegroundColor Green
-Write-Host "`nDone. Installer: $MsiPath" -ForegroundColor Green
+Publish-VersionedInstaller
+Write-Host "`nDone. Installer: $VersionedMsiPath" -ForegroundColor Green

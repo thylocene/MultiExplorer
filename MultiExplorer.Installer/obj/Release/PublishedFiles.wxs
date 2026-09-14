@@ -54,6 +54,7 @@
         <File Id="PublishedFile_265B345A39F6D71A8825" Source="$(var.PublishDir)PresentationNative_cor3.dll" />
         <File Id="PublishedFile_1EFD8EE56FB1A97D737A" Source="$(var.PublishDir)PresentationUI.dll" />
         <File Id="PublishedFile_04678FC9C14EECF56909" Source="$(var.PublishDir)ReachFramework.dll" />
+        <File Id="PublishedFile_3C86F520C95AAF218062" Source="$(var.PublishDir)release_notes.txt" />
         <File Id="PublishedFile_5C75F878B42E2BE09005" Source="$(var.PublishDir)System.AppContext.dll" />
         <File Id="PublishedFile_683F01FA4F33538FFE5C" Source="$(var.PublishDir)System.Buffers.dll" />
         <File Id="PublishedFile_74C85702DB6BBCF50912" Source="$(var.PublishDir)System.CodeDom.dll" />
