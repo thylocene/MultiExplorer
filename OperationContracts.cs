@@ -118,6 +118,29 @@ internal static class FileOperationStore
     internal static bool IsCancellationRequested(Guid id) =>
         File.Exists(CancelPath(id));
 
+    /// <summary>Removes the short-lived command and cancellation files for a finished operation.</summary>
+    internal static void RemoveTransientArtifacts(Guid id)
+    {
+        TryDeleteFile(RequestPath(id));
+        TryDeleteFile(CancelPath(id));
+    }
+
+    /// <summary>Removes a retained status record once its retention period has elapsed.</summary>
+    internal static void RemoveState(Guid id) => TryDeleteFile(StatePath(id));
+
+    internal static void TryDeleteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"Could not delete MultiExplorer operation artifact '{path}': {ex}");
+        }
+    }
+
     private static void WriteJsonAtomically<T>(string path, T value)
     {
         string temporaryPath = path + $".{Environment.ProcessId}.tmp";

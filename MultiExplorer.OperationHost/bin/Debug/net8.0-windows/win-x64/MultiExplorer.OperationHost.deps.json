@@ -7,7 +7,7 @@
   "targets": {
     ".NETCoreApp,Version=v8.0": {},
     ".NETCoreApp,Version=v8.0/win-x64": {
-      "MultiExplorer.OperationHost/1.5.8": {
+      "MultiExplorer.OperationHost/1.5.9": {
         "runtime": {
           "MultiExplorer.OperationHost.dll": {}
         }
@@ -15,7 +15,7 @@
     }
   },
   "libraries": {
-    "MultiExplorer.OperationHost/1.5.8": {
+    "MultiExplorer.OperationHost/1.5.9": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

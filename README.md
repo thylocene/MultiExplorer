@@ -48,7 +48,7 @@ The path bar beneath the tab bar renders the current folder path as clickable br
 | Delete | Del | Delete the selected item(s) |
 | View ▾ | — | Change view mode and toggle panes (see below) |
 | ↑ (Go up) | — | Navigate to the parent folder |
-| ⇄ (Mirror) | — | Navigate the **opposite** pane to the same folder as the active pane |
+| ⇄ (Open in other pane) | — | Open the active pane's current folder in the opposite pane |
 | **… ▾** | — | Options, light/dark appearance, log viewer, hotkey settings, About, Exit |
 
 ### Application appearance
@@ -86,7 +86,8 @@ Start typing any printable character while the file list has focus to instantly 
 A yellow **Contains:** bar appears at the bottom of the panel showing the current filter text, and a results list overlays the shell view:
 
 - Results show **Name**, **Type**, **Size**, and **Date modified** columns. Folders are listed first (alphabetically), followed by files (alphabetically).
-- **Double-click or Enter**: navigate into the matched folder, or open the matched file with its default application.
+- Results have a theme-aware hover treatment and keep normal selection feedback without repainting the full list.
+- **Double-click or Enter**: navigate into the matched folder, or open the matched file with its default application. When a file opens, that same item becomes selected in the underlying Explorer view as the filter closes.
 - **Right-click**: shows the full Windows shell context menu for the item (copy, delete, properties, open with, etc.).
 - **Backspace**: removes the last character from the filter.
 - **Escape** or click **×**: clears the filter and returns focus to the shell view.
@@ -132,7 +133,7 @@ Hosts the shell `IPreviewHandler` COM extension registered for the selected file
 
 When [QuickLook](https://github.com/QL-Win/QuickLook) is installed, pressing **Space** sends the currently selected file to QuickLook for an instant preview in a floating window. Enable or disable this from **View → QuickLook preview (Space)**. The setting is saved across sessions.
 
-MultiExplorer first tries to communicate with a running QuickLook instance via its named pipe; if QuickLook is not running it attempts to launch it automatically.
+MultiExplorer communicates with a running QuickLook instance through its named pipe. If QuickLook is not installed, not running, or its pipe is unavailable, MultiExplorer reports the specific condition without starting a separate third-party process.
 
 ### Global show-window hotkey
 
@@ -222,8 +223,17 @@ does not require administrator rights.
 **Development build**
 
 ```bat
-dotnet build
+dotnet build .\MultiExplorer.csproj
 ```
+
+`dotnet build` uses the **Debug** configuration by default. From PowerShell, set the
+.NET telemetry preference for the current shell before building:
+
+```powershell
+$env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; dotnet build .\MultiExplorer.csproj
+```
+
+Output: `bin\Debug\net8.0-windows\win-x64\`
 
 **Release — self-contained ReadyToRun folder**
 
@@ -280,7 +290,7 @@ The script publishes the app, builds the MSI with WiX, and signs it with a self-
 | `LeftPanelTabs` / `RightPanelTabs` | string[] | `["C:\\"]` | Folder path for every open tab in each panel |
 | `MinimizeToTray` | bool | `true` | Whether closing the window hides to tray |
 | `StartWithWindows` | bool | `false` | Whether MultiExplorer starts when the current user signs in |
-| `QuickLookEnabled` | bool | auto-detected | Whether Space triggers QuickLook preview |
+| `QuickLookEnabled` | bool | `false` | Whether Space triggers QuickLook preview |
 | `ApplicationTheme` | string | `"Light"` | Selected `Light` or `Dark` application appearance |
 | `ShowWindowModifiers` | int | `0x000B` | Modifier flags for the global hotkey (Win\|Ctrl\|Alt) |
 | `ShowWindowVk` | int | `0x4D` | Virtual-key code for the global hotkey (`0x4D` = M) |
@@ -307,6 +317,12 @@ process are external runtime dependencies on the same workstation.
 
 ![MultiExplorer application architecture diagram](docs/images/application-architecture.png)
 
+The diagram is generated from [`docs/application-architecture.dot`](docs/application-architecture.dot).
+For the complete component, thread, filtering/input, file-operation IPC, persistence,
+and design reference, see [`docs/MultiExplorer-Application-Architecture.md`](docs/MultiExplorer-Application-Architecture.md)
+and its [printable PDF](docs/MultiExplorer-Application-Architecture.pdf). Render the Graphviz sources under [`docs/architecture`](docs/architecture)
+whenever the runtime design changes so the diagrams remain aligned.
+
 ### Diagram notes
 
 - **Process 1 - `MultiExplorer.exe`:** the main WinForms process owns application
@@ -318,7 +334,9 @@ process are external runtime dependencies on the same workstation.
   Shell modal loops from blocking the main UI thread.
 - **Managed pane features:** each `PanelView` supplies the tab, breadcrumb, command
   bar, details pane, preview pane, and type-to-filter overlay around its native Shell
-  view. Mirror events navigate the opposite panel.
+  view. The filter result list is double-buffered and owner-drawn for stable hover
+  feedback; opening a filtered file synchronizes that selection back to the Shell view.
+  The opposite-pane command opens the current folder in the other pane.
 - **Process 2 - `MultiExplorer.OperationHost.exe`:** one short-lived worker is
   launched for each copy, move, recycle-delete, or permanent-delete request. It uses
   Windows `IFileOperation` and remains independent of the UI process lifetime.
@@ -335,10 +353,10 @@ process are external runtime dependencies on the same workstation.
 |-----------|------|------|
 | `Program` | `Program.cs` | Entry point; single-instance mutex; settings and theme bootstrap; PerMonitorV2 DPI setup |
 | `MainForm` | `MainForm.cs` | Top-level window; dual-pane layout; splitter; tray icon; status bar; global hotkey; operation-exit policy |
-| `PanelView` | `PanelView.cs` | One explorer pane; tab management; type-to-filter overlay; optional details and preview panes; command dispatch |
-| `ExplorerHost` | `ExplorerHost.cs` | Owns one native shell view per tab; view-mode control; keyboard routing; drag/drop; QuickLook integration |
+| `PanelView` | `PanelView.cs` | One explorer pane; tab management; owner-drawn type-to-filter overlay; optional details/preview panes; command dispatch |
+| `ExplorerHost` | `ExplorerHost.cs` | Owns one native shell view per tab; selection and view-mode control; keyboard routing; drag/drop; QuickLook integration |
 | `BrowserThread` | `BrowserThread.cs` | Dedicated STA thread and message pump for an `ExplorerHost` and its `IExplorerBrowser` COM object |
-| `CommandBar` | `CommandBar.cs` | Toolbar with icon buttons and dropdown menus |
+| `CommandBar` | `CommandBar.cs` | Toolbar with icon buttons plus custom layered More and Appearance popups |
 | `TabBar` | `TabBar.cs` | Custom-drawn tab strip |
 | `PathBar` | `PathBar.cs` | Breadcrumb path bar with inline text editor |
 | `DetailsPanel` | `DetailsPanel.cs` | Bottom pane showing shell icon and file metadata |
@@ -349,6 +367,7 @@ process are external runtime dependencies on the same workstation.
 | `ShellFileOperation` | `MultiExplorer.OperationHost/ShellFileOperation.cs` | Executes copy, move, recycle-delete, and permanent-delete through Windows `IFileOperation` COM |
 | `HotkeyDialog` | `HotkeyDialog.cs` | Modal dialog for choosing a global hotkey combination |
 | `ThemeManager` | `ThemeManager.cs` | Shared palette, menu renderer, and native Windows/Explorer theming |
+| `LayeredPopupForm` / `PopupVisuals` | `LayeredPopupForm.cs` / `PopupVisuals.cs` | DPI-aware alpha-composited popup surface and shared rounded-menu rendering |
 | `StartupManager` | `StartupManager.cs` | Maintains the current user's Windows sign-in launch registration |
 | `AppSettings` | `AppSettings.cs` | Settings data model |
 | `SettingsManager` | `SettingsManager.cs` | JSON serialisation to `%APPDATA%\MultiExplorer\settings.json` |
@@ -388,8 +407,11 @@ in `HKCR`, creates its `IPreviewHandler`, and hosts the preview in its own child
 
 Type-to-filter is implemented as a managed layer rather than a second Shell view. It
 intercepts printable keystrokes, asynchronously enumerates the current directory with
-debouncing and cancellation, and renders matching items in a WinForms `ListView`
-above the native Explorer window.
+debouncing and cancellation, and renders matching items in a double-buffered,
+owner-drawn `FilterListView` above the native Explorer window. This gives the filter
+results a theme-aware hover state without whole-list flicker. When a filtered file is
+opened, `ExplorerHost` selects the same path in the underlying Shell view before the
+overlay yields focus, preserving the user's selection context.
 
 ### File-operation process and IPC flow
 

@@ -182,3 +182,4 @@ C:\Projects\MultiExplorer\bin\BottomCornerTests\MultiExplorer.Tests.deps.json
 C:\Projects\MultiExplorer\bin\BottomCornerTests\MultiExplorer.Tests.runtimeconfig.json
 C:\Projects\MultiExplorer\bin\BottomCornerTests\MultiExplorer.Tests.dll
 C:\Projects\MultiExplorer\bin\BottomCornerTests\MultiExplorer.Tests.pdb
+C:\Projects\MultiExplorer\MultiExplorer.Tests\bin\Debug\net8.0-windows\MultiExplorer.Help.html

@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
     <!-- Shared by the application and installer so their displayed versions cannot drift. -->
-    <Version>1.5.8</Version>
+    <Version>1.5.9</Version>
   </PropertyGroup>
 </Project>

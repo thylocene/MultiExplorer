@@ -742,6 +742,14 @@ public sealed class ExplorerHost : Control, IMessageFilter
         t.Start();
     }
 
+    /// <summary>Selects a file-system item in the current shell view.</summary>
+    internal void SelectItemPath(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        Volatile.Write(ref _cachedSelectedItemPath, path);
+        SelectItem(path, edit: false);
+    }
+
     private void SelectItem(string path, bool edit)
     {
         if (SwitchToBrowserThread(() => SelectItem(path, edit))) return;

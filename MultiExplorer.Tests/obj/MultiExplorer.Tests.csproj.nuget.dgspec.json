@@ -5,7 +5,7 @@
   },
   "projects": {
     "C:\\Projects\\MultiExplorer\\MultiExplorer.csproj": {
-      "version": "1.4.7",
+      "version": "1.5.9",
       "restore": {
         "projectUniqueName": "C:\\Projects\\MultiExplorer\\MultiExplorer.csproj",
         "projectName": "MultiExplorer",
@@ -98,7 +98,7 @@
       }
     },
     "C:\\Projects\\MultiExplorer\\MultiExplorer.Tests\\MultiExplorer.Tests.csproj": {
-      "version": "1.4.7",
+      "version": "1.5.9",
       "restore": {
         "projectUniqueName": "C:\\Projects\\MultiExplorer\\MultiExplorer.Tests\\MultiExplorer.Tests.csproj",
         "projectName": "MultiExplorer.Tests",

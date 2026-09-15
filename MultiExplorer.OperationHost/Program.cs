@@ -17,6 +17,8 @@ internal static class Program
         {
             FileOperationRequest request = FileOperationStore.ReadRequest(requestPath);
             FileOperationState state = ShellFileOperation.Execute(request);
+            if (state.IsTerminal)
+                FileOperationStore.RemoveTransientArtifacts(request.Id);
             return state.Status == FileOperationStatus.Completed ? 0
                 : state.Status == FileOperationStatus.Cancelled ? 3 : 1;
         }
@@ -47,8 +49,13 @@ internal static class Program
                 HostProcessId = Environment.ProcessId,
                 UpdatedUtc = DateTime.UtcNow,
             });
+            FileOperationStore.RemoveTransientArtifacts(request.Id);
         }
-        catch { }
+        catch (Exception cleanupException)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"Could not publish operation failure state: {cleanupException}");
+        }
     }
 
     [DllImport("ole32.dll")]

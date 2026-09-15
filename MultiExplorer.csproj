@@ -54,6 +54,9 @@
 
   <ItemGroup>
     <Content Include="MultiExplorer-Installer.ico" />
+    <None Update="MultiExplorer.Help.html"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
     <None Update="release_notes.txt"
           CopyToOutputDirectory="PreserveNewest"
           CopyToPublishDirectory="PreserveNewest" />

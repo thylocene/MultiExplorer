@@ -1,5 +1,5 @@
-MultiExplorer 1.5.2
-Release date: 11 September 2026
+MultiExplorer 1.5.9
+Release date: 15 September 2026
 
 Highlights
 ----------

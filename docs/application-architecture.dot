@@ -1,0 +1,171 @@
+digraph MultiExplorerRuntime {
+    graph [
+        bgcolor="#FFFFFF",
+        fontname="Segoe UI",
+        fontcolor="#17253D",
+        fontsize=24,
+        label=<<B>MultiExplorer - Runtime Application Architecture</B><BR/><FONT POINT-SIZE="13">Windows 10/11 x64 | C# .NET 8 WinForms | Version 1.5.9</FONT>>,
+        labelloc="t",
+        labeljust="l",
+        margin="0.22",
+        nodesep="0.35",
+        ranksep="0.65",
+        pad="0.22",
+        newrank="true",
+        splines="polyline"
+    ];
+
+    node [fontname="Segoe UI", fontsize=10, shape=plain];
+    edge [fontname="Segoe UI", fontsize=9, color="#52657D", fontcolor="#334155", penwidth=1.4, arrowsize=0.7];
+
+    user [label=<
+        <TABLE BORDER="2" COLOR="#2563EB" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#E8F0FF">
+            <TR><TD><FONT COLOR="#1D4ED8" POINT-SIZE="14"><B>User</B></FONT><BR/><FONT COLOR="#52657D">mouse, keyboard, tray, global hotkey</FONT></TD></TR>
+        </TABLE>
+    >];
+
+    subgraph cluster_ui {
+        label="PROCESS 1 - MultiExplorer.exe     WinForms UI process";
+        labelloc="t";
+        labeljust="l";
+        fontname="Segoe UI";
+        fontsize=15;
+        fontcolor="#17253D";
+        color="#17253D";
+        penwidth=2;
+        style="rounded,filled";
+        fillcolor="#F4F7FB";
+        margin=16;
+
+        program [label=<
+            <TABLE BORDER="2" COLOR="#2563EB" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#E8F0FF">
+                <TR><TD><FONT COLOR="#1D4ED8" POINT-SIZE="13"><B>Program / lifecycle</B></FONT><BR/><FONT COLOR="#52657D">single-instance mutex<BR/>settings + theme bootstrap<BR/>PerMonitorV2 DPI</FONT></TD></TR>
+            </TABLE>
+        >];
+
+        mainform [label=<
+            <TABLE BORDER="2" COLOR="#00869A" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#E4F7F8">
+                <TR><TD><FONT COLOR="#007589" POINT-SIZE="14"><B>MainForm</B></FONT><BR/><FONT COLOR="#52657D">dual-pane layout and splitter<BR/>tray, global hotkey, status and exit policy<BR/>application-wide theme and startup coordination</FONT></TD></TR>
+            </TABLE>
+        >];
+
+        leftpanel [label=<
+            <TABLE BORDER="2" COLOR="#00869A" CELLBORDER="0" CELLPADDING="6" BGCOLOR="#FFFFFF">
+                <TR><TD ALIGN="LEFT"><FONT COLOR="#007589" POINT-SIZE="13"><B>Left PanelView</B></FONT></TD></TR>
+                <TR><TD ALIGN="LEFT" BGCOLOR="#E4F7F8"><B>Managed UI chrome</B><BR/><FONT COLOR="#52657D">TabBar | PathBar | CommandBar<BR/>More / Appearance layered popups</FONT></TD></TR>
+                <TR><TD ALIGN="LEFT" BGCOLOR="#EDF4FF"><B>ExplorerHost per tab</B><BR/><FONT COLOR="#52657D">dedicated BrowserThread (STA)<BR/>IExplorerBrowser child window</FONT></TD></TR>
+                <TR><TD ALIGN="LEFT" BGCOLOR="#FFF4D9"><B>Managed overlays</B><BR/><FONT COLOR="#52657D">FilterResultsListView | Details | Preview</FONT></TD></TR>
+            </TABLE>
+        >];
+
+        rightpanel [label=<
+            <TABLE BORDER="2" COLOR="#00869A" CELLBORDER="0" CELLPADDING="6" BGCOLOR="#FFFFFF">
+                <TR><TD ALIGN="LEFT"><FONT COLOR="#007589" POINT-SIZE="13"><B>Right PanelView</B></FONT></TD></TR>
+                <TR><TD ALIGN="LEFT" BGCOLOR="#E4F7F8"><B>Managed UI chrome</B><BR/><FONT COLOR="#52657D">TabBar | PathBar | CommandBar<BR/>More / Appearance layered popups</FONT></TD></TR>
+                <TR><TD ALIGN="LEFT" BGCOLOR="#EDF4FF"><B>ExplorerHost per tab</B><BR/><FONT COLOR="#52657D">dedicated BrowserThread (STA)<BR/>IExplorerBrowser child window</FONT></TD></TR>
+                <TR><TD ALIGN="LEFT" BGCOLOR="#FFF4D9"><B>Managed overlays</B><BR/><FONT COLOR="#52657D">FilterResultsListView | Details | Preview</FONT></TD></TR>
+            </TABLE>
+        >];
+
+        services [label=<
+            <TABLE BORDER="2" COLOR="#7654CC" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#F0ECFF">
+                <TR><TD><FONT COLOR="#6541C4" POINT-SIZE="13"><B>Cross-cutting services</B></FONT><BR/><FONT COLOR="#52657D">ThemeManager | SettingsManager<BR/>StartupManager | AppLog | HotkeyDialog</FONT></TD></TR>
+            </TABLE>
+        >];
+
+        operations [label=<
+            <TABLE BORDER="2" COLOR="#17834D" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#E7F6ED">
+                <TR><TD><FONT COLOR="#13723F" POINT-SIZE="13"><B>OperationManager</B></FONT><BR/><FONT COLOR="#52657D">writes requests, launches workers<BR/>polls state, cancels and reports status</FONT></TD></TR>
+            </TABLE>
+        >];
+
+        program -> mainform [label=" creates", color="#2563EB", fontcolor="#1D4ED8"];
+        { rank=same; leftpanel; rightpanel; services; operations; }
+        mainform -> leftpanel [label=" owns", color="#00869A", fontcolor="#007589"];
+        mainform -> rightpanel [label=" owns", color="#00869A", fontcolor="#007589"];
+        leftpanel -> rightpanel [label=" mirror current folder", color="#00869A", fontcolor="#007589", constraint=false];
+        mainform -> services [label=" uses", color="#7654CC", fontcolor="#6541C4"];
+        mainform -> operations [label=" coordinates", color="#17834D", fontcolor="#13723F"];
+    }
+
+    subgraph cluster_worker {
+        label="PROCESS 2 - one MultiExplorer.OperationHost.exe per operation";
+        labelloc="t";
+        labeljust="l";
+        fontname="Segoe UI";
+        fontsize=14;
+        fontcolor="#13723F";
+        color="#17834D";
+        penwidth=2;
+        style="rounded,filled";
+        fillcolor="#EEF9F2";
+        margin=16;
+
+        operationhost [label=<
+            <TABLE BORDER="2" COLOR="#17834D" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#FFFFFF">
+                <TR><TD><FONT COLOR="#13723F" POINT-SIZE="13"><B>OperationHost</B></FONT><BR/><FONT COLOR="#52657D">reads one request<BR/>initializes OLE and reports progress</FONT></TD></TR>
+            </TABLE>
+        >];
+        shelloperation [label=<
+            <TABLE BORDER="2" COLOR="#17834D" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#E7F6ED">
+                <TR><TD><FONT COLOR="#13723F" POINT-SIZE="13"><B>ShellFileOperation</B></FONT><BR/><FONT COLOR="#52657D">Windows IFileOperation COM<BR/>copy, move, recycle/permanent delete<BR/>progress and cancellation probe</FONT></TD></TR>
+            </TABLE>
+        >];
+        operationhost -> shelloperation [label=" executes", color="#17834D", fontcolor="#13723F"];
+    }
+
+    subgraph cluster_external {
+        label="WINDOWS PLATFORM AND USER DATA";
+        labelloc="t";
+        labeljust="l";
+        fontname="Segoe UI";
+        fontsize=14;
+        fontcolor="#FFFFFF";
+        color="#17253D";
+        penwidth=2;
+        style="rounded,filled";
+        fillcolor="#17253D";
+        margin=15;
+
+        shell [label=<
+            <TABLE BORDER="1" COLOR="#D9E2EF" CELLBORDER="0" CELLPADDING="7" BGCOLOR="#FFFFFF">
+                <TR><TD><FONT COLOR="#17253D" POINT-SIZE="12"><B>Windows Shell</B></FONT><BR/><FONT COLOR="#52657D">ExplorerBrowser, Shell views, context menus<BR/>preview handlers and IFileOperation</FONT></TD></TR>
+            </TABLE>
+        >];
+        filesystem [label=<
+            <TABLE BORDER="1" COLOR="#D9E2EF" CELLBORDER="0" CELLPADDING="7" BGCOLOR="#FFFFFF">
+                <TR><TD><FONT COLOR="#17253D" POINT-SIZE="12"><B>File system</B></FONT><BR/><FONT COLOR="#52657D">folders, files and Recycle Bin</FONT></TD></TR>
+            </TABLE>
+        >];
+        registry [label=<
+            <TABLE BORDER="1" COLOR="#D9E2EF" CELLBORDER="0" CELLPADDING="7" BGCOLOR="#FFFFFF">
+                <TR><TD><FONT COLOR="#17253D" POINT-SIZE="12"><B>Windows Registry</B></FONT><BR/><FONT COLOR="#52657D">startup, Explorer preferences<BR/>preview-handler registrations</FONT></TD></TR>
+            </TABLE>
+        >];
+        userdata [label=<
+            <TABLE BORDER="1" COLOR="#D9E2EF" CELLBORDER="0" CELLPADDING="7" BGCOLOR="#FFFFFF">
+                <TR><TD><FONT COLOR="#17253D" POINT-SIZE="12"><B>Per-user data</B></FONT><BR/><FONT COLOR="#52657D">settings.json, app.log<BR/>operation request/state/cancel files</FONT></TD></TR>
+            </TABLE>
+        >];
+        quicklook [label=<
+            <TABLE BORDER="1" COLOR="#D9E2EF" CELLBORDER="0" CELLPADDING="7" BGCOLOR="#FFFFFF">
+                <TR><TD><FONT COLOR="#17253D" POINT-SIZE="12"><B>QuickLook (optional)</B></FONT><BR/><FONT COLOR="#52657D">separate running process<BR/>SID-scoped named pipe</FONT></TD></TR>
+            </TABLE>
+        >];
+        { rank=same; shell; filesystem; registry; userdata; quicklook; }
+    }
+
+    user -> mainform [label=" interacts", color="#2563EB", fontcolor="#1D4ED8"];
+    operations -> operationhost [label=" launch", color="#17834D", fontcolor="#13723F"];
+    operations -> userdata [label=" request / state / cancel JSON", style="dashed", color="#17834D", fontcolor="#13723F"];
+    operationhost -> userdata [label=" atomic state", style="dashed", color="#17834D", fontcolor="#13723F"];
+    leftpanel -> shell [label=" COM", color="#2563EB", fontcolor="#1D4ED8"];
+    rightpanel -> shell [label=" COM", color="#2563EB", fontcolor="#1D4ED8"];
+    leftpanel -> filesystem [label=" enumerate / navigate", color="#00869A", fontcolor="#007589"];
+    shelloperation -> shell [label=" COM", color="#17834D", fontcolor="#13723F"];
+    shelloperation -> filesystem [label=" file operations", color="#17834D", fontcolor="#13723F"];
+    services -> registry [label=" read / write", color="#7654CC", fontcolor="#6541C4"];
+    services -> userdata [label=" settings / log", color="#7654CC", fontcolor="#6541C4"];
+    leftpanel -> quicklook [label=" named pipe", style="dashed", color="#C26A00", fontcolor="#A85B00"];
+    rightpanel -> quicklook [label=" named pipe", style="dashed", color="#C26A00", fontcolor="#A85B00"];
+}

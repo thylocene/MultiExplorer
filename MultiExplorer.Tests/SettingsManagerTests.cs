@@ -61,4 +61,26 @@ public class SettingsManagerTests : IDisposable
         Assert.Equal(original.ShowWindowModifiers, loaded.ShowWindowModifiers);
         Assert.Equal(original.ShowWindowVk,        loaded.ShowWindowVk);
     }
+
+    [Fact]
+    public void WriteAtomically_ReplacesExistingSettingsWithoutLeavingTemporaryFiles()
+    {
+        string testDirectory = Path.Combine(Path.GetTempPath(),
+            "MultiExplorer.Settings.Tests", Guid.NewGuid().ToString("N"));
+        string settingsPath = Path.Combine(testDirectory, "settings.json");
+        Directory.CreateDirectory(testDirectory);
+        File.WriteAllText(settingsPath, "{\"version\":1}");
+
+        try
+        {
+            SettingsManager.WriteAtomically(settingsPath, "{\"version\":2}");
+
+            Assert.Equal("{\"version\":2}", File.ReadAllText(settingsPath));
+            Assert.Empty(Directory.EnumerateFiles(testDirectory, "settings.json.*.tmp"));
+        }
+        finally
+        {
+            if (Directory.Exists(testDirectory)) Directory.Delete(testDirectory, recursive: true);
+        }
+    }
 }

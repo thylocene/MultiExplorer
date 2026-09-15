@@ -5,7 +5,7 @@
   },
   "projects": {
     "C:\\Projects\\MultiExplorer\\MultiExplorer.Installer\\MultiExplorer.Installer.wixproj": {
-      "version": "1.5.8",
+      "version": "1.5.9",
       "restore": {
         "projectUniqueName": "C:\\Projects\\MultiExplorer\\MultiExplorer.Installer\\MultiExplorer.Installer.wixproj",
         "projectName": "MultiExplorer-Setup",

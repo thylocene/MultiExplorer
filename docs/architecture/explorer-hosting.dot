@@ -1,0 +1,53 @@
+digraph ExplorerHosting {
+    graph [bgcolor="#FFFFFF", fontname="Segoe UI", rankdir="TB", nodesep="0.42", ranksep="0.55", pad="0.18", splines="polyline"];
+    node [fontname="Segoe UI", fontsize=11, shape=plain];
+    edge [fontname="Segoe UI", fontsize=9, color="#52657D", fontcolor="#334155", penwidth=1.5, arrowsize=0.7];
+
+    subgraph cluster_ui {
+        label="WinForms UI thread - MultiExplorer.exe";
+        fontname="Segoe UI"; fontsize=14; fontcolor="#007589"; color="#00869A"; penwidth=2; style="rounded,filled"; fillcolor="#F1FAFA"; margin=15;
+        panel [label=<
+            <TABLE BORDER="2" COLOR="#00869A" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#E4F7F8">
+              <TR><TD><FONT COLOR="#007589" POINT-SIZE="13"><B>PanelView</B></FONT><BR/><FONT COLOR="#52657D">TabBar | PathBar | CommandBar<BR/>filter overlay | details | preview</FONT></TD></TR>
+            </TABLE>>];
+        host [label=<
+            <TABLE BORDER="2" COLOR="#2563EB" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#EDF4FF">
+              <TR><TD><FONT COLOR="#1D4ED8" POINT-SIZE="13"><B>ExplorerHost</B></FONT><BR/><FONT COLOR="#52657D">one instance per tab<BR/>cached path and selection snapshots<BR/>command / drag-drop / keyboard routing</FONT></TD></TR>
+            </TABLE>>];
+        panel -> host [label="active tab host"];
+        { rank=same; preview; details; }
+    }
+
+    subgraph cluster_sta {
+        label="Dedicated BrowserThread - STA + OLE message pump";
+        fontname="Segoe UI"; fontsize=14; fontcolor="#6541C4"; color="#7654CC"; penwidth=2; style="rounded,filled"; fillcolor="#F5F2FF"; margin=15;
+        queue [label=<
+            <TABLE BORDER="2" COLOR="#7654CC" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#F0ECFF">
+              <TR><TD><FONT COLOR="#6541C4" POINT-SIZE="13"><B>Work queue and MessageHook</B></FONT><BR/><FONT COLOR="#52657D">Invoke for COM work<BR/>Post for non-blocking layout</FONT></TD></TR>
+            </TABLE>>];
+        browser [label=<
+            <TABLE BORDER="2" COLOR="#2563EB" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#EDF4FF">
+              <TR><TD><FONT COLOR="#1D4ED8" POINT-SIZE="13"><B>IExplorerBrowser</B></FONT><BR/><FONT COLOR="#52657D">in-process COM object<BR/>native child HWND under ExplorerHost</FONT></TD></TR>
+            </TABLE>>];
+        shellview [label=<
+            <TABLE BORDER="2" COLOR="#2563EB" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#FFFFFF">
+              <TR><TD><FONT COLOR="#1D4ED8" POINT-SIZE="13"><B>Windows Shell view</B></FONT><BR/><FONT COLOR="#52657D">SHELLDLL_DefView / DirectUI<BR/>context menu, thumbnails, drag/drop</FONT></TD></TR>
+            </TABLE>>];
+        queue -> browser [label="marshalled commands"];
+        browser -> shellview [label="creates / hosts"];
+    }
+
+    preview [label=<
+        <TABLE BORDER="2" COLOR="#C26A00" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#FFF4D9">
+          <TR><TD><FONT COLOR="#A85B00" POINT-SIZE="13"><B>PreviewPane</B></FONT><BR/><FONT COLOR="#52657D">resolves IPreviewHandler from HKCR<BR/>hosts handler in a child HWND</FONT></TD></TR>
+        </TABLE>>];
+    details [label=<
+        <TABLE BORDER="2" COLOR="#C26A00" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#FFF4D9">
+          <TR><TD><FONT COLOR="#A85B00" POINT-SIZE="13"><B>DetailsPanel</B></FONT><BR/><FONT COLOR="#52657D">Shell icon and file metadata</FONT></TD></TR>
+        </TABLE>>];
+
+    host -> queue [label="Invoke / Post", color="#7654CC", fontcolor="#6541C4"];
+    host -> preview [label="selection", color="#C26A00", fontcolor="#A85B00"];
+    host -> details [label="selection", color="#C26A00", fontcolor="#A85B00"];
+    shellview -> host [label="navigation callbacks", color="#2563EB", fontcolor="#1D4ED8", constraint=false];
+}

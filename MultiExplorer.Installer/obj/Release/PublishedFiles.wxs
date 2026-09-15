@@ -30,6 +30,7 @@
         <File Id="PublishedFile_0BD7B8E834D81AEE2E99" Source="$(var.PublishDir)msquic.dll" />
         <File Id="PublishedFile_DE645FB8ED10C1E013E7" Source="$(var.PublishDir)MultiExplorer.deps.json" />
         <File Id="PublishedFile_8A077C2DF0F225CDF8AF" Source="$(var.PublishDir)MultiExplorer.dll" />
+        <File Id="PublishedFile_03B5F23A3BAAD7B03D0F" Source="$(var.PublishDir)MultiExplorer.Help.html" />
         <File Id="PublishedFile_73A4BDB22F855A0DB457" Source="$(var.PublishDir)MultiExplorer.OperationHost.deps.json" />
         <File Id="PublishedFile_E298F94A7A3327FAAA84" Source="$(var.PublishDir)MultiExplorer.OperationHost.dll" />
         <File Id="PublishedFile_D9AB5541A8535BC77DEA" Source="$(var.PublishDir)MultiExplorer.OperationHost.exe" />

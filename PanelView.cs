@@ -60,6 +60,7 @@ public sealed class PanelView : UserControl
     private readonly TextBox  _filterTextBox;
     private readonly RoundedButton _clearBtn;
     private readonly ListView _filterListView;
+    private ListViewItem? _hoveredFilterItem;
     private string _filterText = "";
     private readonly System.Windows.Forms.Timer _filterDebounce;
     private CancellationTokenSource? _filterCancellation;
@@ -136,7 +137,7 @@ public sealed class PanelView : UserControl
         // ── Filter overlay ListView (inside _hostContainer) ───────────────────
         // Shown on top of ExplorerHost when a filter is active. Populated from
         // Directory.GetFiles/GetDirectories — no shell navigation, no new windows.
-        _filterListView = new ListView
+        _filterListView = new FilterListView
         {
             View          = View.Details,
             FullRowSelect = true,
@@ -153,6 +154,12 @@ public sealed class PanelView : UserControl
         _filterListView.KeyPress    += OnFilterListKeyPress;
         _filterListView.KeyDown     += OnFilterListKeyDown;
         _filterListView.MouseDown   += OnFilterListMouseDown;
+        _filterListView.MouseMove   += OnFilterListMouseMove;
+        _filterListView.MouseLeave  += OnFilterListMouseLeave;
+        _filterListView.ItemSelectionChanged += (_, e) => RedrawFilterItem(e.Item);
+        _filterListView.DrawColumnHeader += OnFilterListDrawColumnHeader;
+        _filterListView.DrawItem         += OnFilterListDrawItem;
+        _filterListView.DrawSubItem      += OnFilterListDrawSubItem;
 
         // Inner _content layout (WinForms dock order: last added = topmost in dock stack)
         // DetailsPanel (outermost bottom) → FilterBar (inner bottom, hidden by default) →
@@ -208,6 +215,7 @@ public sealed class PanelView : UserControl
         _clearBtn.ForeColor = ThemeManager.Text;
         _filterListView.BackColor = ThemeManager.Window;
         _filterListView.ForeColor = ThemeManager.Text;
+        _filterListView.Invalidate();
         _commandBar.SetThemeSelection(ThemeManager.Current);
         _commandBar.ApplyTheme();
         Invalidate(true);
@@ -632,10 +640,14 @@ public sealed class PanelView : UserControl
         string? path = _filterListView.SelectedItems[0].Tag as string;
         if (path == null) return;
 
+        ExplorerHost? host = ActiveHost;
+        bool isDirectory = Directory.Exists(path);
+        if (!isDirectory && File.Exists(path))
+            host?.SelectItemPath(path);
         ClearFilter();
 
-        if (Directory.Exists(path))
-            ActiveHost?.NavigateTo(path);
+        if (isDirectory)
+            host?.NavigateTo(path);
         else if (File.Exists(path))
         {
             try { Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true }); }
@@ -657,6 +669,97 @@ public sealed class PanelView : UserControl
         string? path = hit.Item.Tag as string;
         if (path == null) return;
         ShowShellContextMenu(path, _filterListView, e.Location);
+    }
+
+    private void OnFilterListMouseMove(object? sender, MouseEventArgs e) =>
+        SetHoveredFilterItem(_filterListView.HitTest(e.Location).Item);
+
+    private void OnFilterListMouseLeave(object? sender, EventArgs e) =>
+        SetHoveredFilterItem(null);
+
+    private void SetHoveredFilterItem(ListViewItem? item)
+    {
+        if (ReferenceEquals(_hoveredFilterItem, item)) return;
+
+        ListViewItem? previous = _hoveredFilterItem;
+        _hoveredFilterItem = item;
+        RedrawFilterItem(previous);
+        RedrawFilterItem(item);
+    }
+
+    private void OnFilterListDrawColumnHeader(object? sender,
+        DrawListViewColumnHeaderEventArgs e)
+    {
+        using var brush = new SolidBrush(ThemeManager.Surface);
+        using var pen = new Pen(ThemeManager.Border);
+        e.Graphics.FillRectangle(brush, e.Bounds);
+        e.Graphics.DrawLine(pen, e.Bounds.Left, e.Bounds.Bottom - 1,
+            e.Bounds.Right, e.Bounds.Bottom - 1);
+        TextRenderer.DrawText(e.Graphics, e.Header?.Text ?? string.Empty, _filterListView.Font,
+            Rectangle.Inflate(e.Bounds, -LogicalToDeviceUnits(6), 0), ThemeManager.Text,
+            GetFilterListTextFlags(e.Header?.TextAlign ?? HorizontalAlignment.Left));
+    }
+
+    private void OnFilterListDrawItem(object? sender, DrawListViewItemEventArgs e)
+    {
+        ListViewItem? item = e.Item;
+        if (item is null) return;
+
+        using var brush = new SolidBrush(GetFilterItemBackColor(item));
+        e.Graphics.FillRectangle(brush, new Rectangle(0, e.Bounds.Top,
+            _filterListView.ClientSize.Width, e.Bounds.Height));
+    }
+
+    private void OnFilterListDrawSubItem(object? sender, DrawListViewSubItemEventArgs e)
+    {
+        ListViewItem? item = e.Item;
+        if (item is null) return;
+
+        Color background = GetFilterItemBackColor(item);
+        Color text = item.Selected ? Color.White : ThemeManager.Text;
+        using var brush = new SolidBrush(background);
+        e.Graphics.FillRectangle(brush, e.Bounds);
+        TextRenderer.DrawText(e.Graphics, e.SubItem?.Text ?? string.Empty, _filterListView.Font,
+            Rectangle.Inflate(e.Bounds, -LogicalToDeviceUnits(6), 0), text,
+            GetFilterListTextFlags(e.Header?.TextAlign ?? HorizontalAlignment.Left));
+
+        if (e.ColumnIndex == _filterListView.Columns.Count - 1
+            && item.Selected
+            && item.Focused)
+        {
+            var focusBounds = new Rectangle(1, e.Bounds.Top,
+                Math.Max(1, _filterListView.ClientSize.Width - 2), e.Bounds.Height);
+            ControlPaint.DrawFocusRectangle(e.Graphics, focusBounds, text, background);
+        }
+    }
+
+    private Color GetFilterItemBackColor(ListViewItem item) => item.Selected
+        ? ThemeManager.Accent
+        : ReferenceEquals(item, _hoveredFilterItem)
+            ? ThemeManager.AccentHover
+            : ThemeManager.Window;
+
+    private static TextFormatFlags GetFilterListTextFlags(HorizontalAlignment alignment)
+    {
+        TextFormatFlags flags = TextFormatFlags.VerticalCenter
+                                | TextFormatFlags.SingleLine
+                                | TextFormatFlags.EndEllipsis;
+        return alignment switch
+        {
+            HorizontalAlignment.Center => flags | TextFormatFlags.HorizontalCenter,
+            HorizontalAlignment.Right  => flags | TextFormatFlags.Right,
+            _                          => flags | TextFormatFlags.Left,
+        };
+    }
+
+    private void RedrawFilterItem(ListViewItem? item)
+    {
+        if (item?.ListView != _filterListView
+            || !_filterListView.IsHandleCreated
+            || item.Index < 0)
+            return;
+
+        _filterListView.RedrawItems(item.Index, item.Index, invalidateOnly: true);
     }
 
     private void ShowShellContextMenu(string path, Control control, Point clientPt)
@@ -734,6 +837,7 @@ public sealed class PanelView : UserControl
 
         _filterBar.Visible      = false;
         _filterListView.Visible = false;
+        SetHoveredFilterItem(null);
         if (ActiveHost != null) ActiveHost.IsFiltering = false;
         ActiveHost?.FocusShellView();
     }
@@ -796,6 +900,7 @@ public sealed class PanelView : UserControl
         _filterListView.BeginUpdate();
         try
         {
+            _hoveredFilterItem = null;
             _filterListView.Items.Clear();
             foreach (FilterItemData item in items)
             {
@@ -861,6 +966,15 @@ public sealed class PanelView : UserControl
     private readonly record struct FilterItemData(
         string Name, string Type, string Size, string Modified, string FullPath);
 
+    private sealed class FilterListView : ListView
+    {
+        internal FilterListView()
+        {
+            DoubleBuffered = true;
+            OwnerDraw = true;
+        }
+    }
+
     private static string FormatFileSize(long bytes)
     {
         if (bytes < 1024)            return $"{bytes} B";
@@ -916,6 +1030,7 @@ public sealed class PanelView : UserControl
             case CommandBar.Cmd.SelectAll:      host?.SelectAll();        break;
             case CommandBar.Cmd.Properties:     host?.ShowProperties();   break;
             case CommandBar.Cmd.FolderOptions:  OpenFolderOptions();      break;
+            case CommandBar.Cmd.Help:           OpenHelpPage();           break;
             case CommandBar.Cmd.About:          ShowAbout();              break;
             case CommandBar.Cmd.ViewLog:        AppLog.OpenLogFile();                        break;
             case CommandBar.Cmd.SetHotkey:      SetHotkeyRequested?.Invoke(this, EventArgs.Empty); break;
@@ -995,6 +1110,26 @@ public sealed class PanelView : UserControl
         {
             AppLog.Warn(ex, nameof(OpenFolderOptions),
                 "Could not open Windows Folder Options.");
+        }
+    }
+
+    private static void OpenHelpPage()
+    {
+        string helpPath = Path.Combine(AppContext.BaseDirectory, "MultiExplorer.Help.html");
+        if (!File.Exists(helpPath))
+        {
+            AppLog.Warn(null, nameof(OpenHelpPage),
+                "The MultiExplorer help file is missing from the application folder.");
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = helpPath, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, nameof(OpenHelpPage), "Could not open the MultiExplorer help page.");
         }
     }
 

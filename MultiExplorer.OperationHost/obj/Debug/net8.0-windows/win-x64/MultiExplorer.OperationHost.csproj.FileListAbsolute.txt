@@ -57,3 +57,8 @@ C:\Projects\MultiExplorer\MultiExplorer.OperationHost\obj\Debug\net8.0-windows\w
 C:\Projects\MultiExplorer\MultiExplorer.OperationHost\obj\Debug\net8.0-windows\win-x64\MultiExplorer.OperationHost.pdb
 C:\Projects\MultiExplorer\MultiExplorer.OperationHost\obj\Debug\net8.0-windows\win-x64\MultiExplorer.OperationHost.genruntimeconfig.cache
 C:\Projects\MultiExplorer\MultiExplorer.OperationHost\obj\Debug\net8.0-windows\win-x64\ref\MultiExplorer.OperationHost.dll
+C:\Projects\MultiExplorer\bin\HelpMenuCheck\MultiExplorer.OperationHost.exe
+C:\Projects\MultiExplorer\bin\HelpMenuCheck\MultiExplorer.OperationHost.deps.json
+C:\Projects\MultiExplorer\bin\HelpMenuCheck\MultiExplorer.OperationHost.runtimeconfig.json
+C:\Projects\MultiExplorer\bin\HelpMenuCheck\MultiExplorer.OperationHost.dll
+C:\Projects\MultiExplorer\bin\HelpMenuCheck\MultiExplorer.OperationHost.pdb

@@ -56,12 +56,35 @@ public static class SettingsManager
                 Directory.CreateDirectory(dir);
 
             string json = JsonSerializer.Serialize(settings, SerializerOptions);
-            File.WriteAllText(SettingsPath, json);
+            WriteAtomically(SettingsPath, json);
         }
         catch (Exception ex)
         {
             AppLog.Warn(ex, nameof(Save),
                 "Could not save application settings.");
+        }
+    }
+
+    /// <summary>
+    /// Replaces a file only after its complete replacement has been written beside it.
+    /// A termination during the write therefore leaves the previous settings file intact.
+    /// </summary>
+    internal static void WriteAtomically(string path, string contents)
+    {
+        string temporaryPath = $"{path}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            File.WriteAllText(temporaryPath, contents);
+            File.Move(temporaryPath, path, overwrite: true);
+        }
+        finally
+        {
+            try { File.Delete(temporaryPath); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Could not delete temporary settings file '{temporaryPath}': {ex}");
+            }
         }
     }
 }

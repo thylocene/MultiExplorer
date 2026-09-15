@@ -1,5 +1,5 @@
-MultiExplorer 1.5.2
-Release date: 11 September 2026
+MultiExplorer 1.5.9
+Release date: 15 September 2026
 
 Highlights
 ----------
@@ -17,6 +17,19 @@ Highlights
   continuing to preserve later user adjustments.
 - Corrected installer upgrade detection so a normal upgrade from an older release no
   longer displays the downgrade/reinstall warning.
+- Added a built-in offline Help page, available from More (...) > Help in either
+  explorer pane. It includes an overview, getting-started guidance, file-management
+  instructions, view options, filtering, keyboard shortcuts, and background-operation
+  information.
+- Clarified that QuickLook is a separate third-party application and added a link to
+  its GitHub page from the Help page.
+- Reorganised the More (...) menu with clearer labels for Explorer options, appearance,
+  hotkey, auto-start, logs, Help, About, and Exit.
+- Improved settings reliability by saving preferences atomically, protecting the last
+  valid settings file if the application stops during a save.
+- Background file operations now remove temporary request and cancellation records when
+  they finish. Completed, failed, and cancelled status records are retained for up to
+  24 hours, and interrupted helper operations are recorded as failures for recovery.
 
 Installation notes
 ------------------

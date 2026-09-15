@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MultiExplorer Help</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page: #f7f8fa;
+      --surface: #ffffff;
+      --text: #1c1c1e;
+      --muted: #5f6368;
+      --line: #d7dbe0;
+      --accent: #0b6fc9;
+      --code: #eef1f4;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #1b1c1f;
+        --surface: #25272b;
+        --text: #f2f4f7;
+        --muted: #b5bac3;
+        --line: #3e4249;
+        --accent: #72b7ff;
+        --code: #30333a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 40px 24px 64px;
+      background: var(--page);
+      color: var(--text);
+      font: 16px/1.55 "Segoe UI", system-ui, sans-serif;
+    }
+    header {
+      padding: 30px 32px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #0a5da8, #258ad8);
+      color: white;
+      box-shadow: 0 7px 22px rgb(0 0 0 / 12%);
+    }
+    h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); line-height: 1.15; }
+    header p { margin: 8px 0 0; font-size: 1.1rem; opacity: .94; }
+    main { margin-top: 24px; }
+    section, nav {
+      margin-top: 20px;
+      padding: 24px 28px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+    }
+    h2 { margin: 0 0 12px; font-size: 1.42rem; }
+    h3 { margin: 22px 0 6px; font-size: 1.08rem; }
+    p, ul { margin: 10px 0; }
+    ul { padding-left: 24px; }
+    a { color: var(--accent); }
+    nav ul {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      padding: 0;
+      list-style: none;
+    }
+    nav a { text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { font-weight: 600; }
+    kbd, code {
+      padding: 1px 6px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--code);
+      color: inherit;
+      font: .9em Consolas, "Cascadia Code", monospace;
+      white-space: nowrap;
+    }
+    .tip {
+      padding: 12px 14px;
+      border-left: 4px solid var(--accent);
+      border-radius: 4px;
+      background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+    }
+    footer { margin-top: 22px; color: var(--muted); font-size: .92rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>MultiExplorer Help</h1>
+    <p>A quick guide to the dual-pane file manager.</p>
+  </header>
+
+  <main>
+    <nav aria-label="Contents">
+      <strong>On this page</strong>
+      <ul>
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#start">Get started</a></li>
+        <li><a href="#files">Manage files</a></li>
+        <li><a href="#view">Views and panes</a></li>
+        <li><a href="#filter">Find items</a></li>
+        <li><a href="#more">More menu</a></li>
+        <li><a href="#shortcuts">Keyboard shortcuts</a></li>
+        <li><a href="#background">Background operations</a></li>
+      </ul>
+    </nav>
+
+    <section id="overview">
+      <h2>What is MultiExplorer?</h2>
+      <p>MultiExplorer is a dual-pane Windows file manager. It places two independent native Windows Explorer views in one window, so you can browse separate locations and work with files between them without opening extra Explorer windows.</p>
+      <p>Use it to organise, copy, move, rename, preview, and delete files and folders. It uses the familiar Windows shell for file icons, thumbnails, context menus, and file associations.</p>
+    </section>
+
+    <section id="start">
+      <h2>Get started</h2>
+      <p>MultiExplorer has two independent file panes. Use them to browse different locations, then copy or move items between them. Drag the centre splitter to resize the panes, or use its arrows to temporarily collapse one pane.</p>
+
+      <h3>Tabs</h3>
+      <p>Each pane has its own tabs. Click <strong>+</strong> to open another tab, click a tab to switch to it, and click <strong>×</strong> to close it. A pane always keeps at least one tab.</p>
+
+      <h3>Address bar</h3>
+      <p>Click a breadcrumb segment to go to that folder. Click a chevron between segments to choose an immediate subfolder. Press <kbd>F4</kbd> or click empty space in the address bar to type a path directly. Press <kbd>Enter</kbd> to navigate or <kbd>Esc</kbd> to cancel.</p>
+      <p class="tip">You can enter normal paths, UNC paths such as <code>\\server\share</code>, and paths containing environment variables such as <code>%USERPROFILE%</code>.</p>
+    </section>
+
+    <section id="files">
+      <h2>Manage files</h2>
+      <p>Use the toolbar, standard Windows shortcuts, right-click menus, or drag and drop. The file lists use the Windows shell, so familiar file associations, thumbnails, and context-menu extensions remain available.</p>
+      <ul>
+        <li><strong>New folder:</strong> click <strong>New folder</strong> or press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd>. The new folder is selected and ready to rename.</li>
+        <li><strong>Copy or move:</strong> use cut/copy and paste, or drag files into the other pane. A same-drive drag normally moves files; holding <kbd>Ctrl</kbd> copies and holding <kbd>Shift</kbd> moves.</li>
+        <li><strong>Copy full paths:</strong> use the toolbar command to place the selected file and folder paths on the clipboard, one per line.</li>
+        <li><strong>Delete:</strong> press <kbd>Del</kbd> to send items to the Recycle Bin, or <kbd>Shift</kbd> + <kbd>Del</kbd> for a permanent delete.</li>
+      </ul>
+    </section>
+
+    <section id="view">
+      <h2>Views and panes</h2>
+      <p>Open <strong>View ▾</strong> on the toolbar to choose Details, List, Tiles, icon sizes, or Content view. The same menu can show or hide the optional Details and Preview panes.</p>
+      <ul>
+        <li><strong>Details pane:</strong> shows the selected item's icon, type, size, and modified date.</li>
+        <li><strong>Preview pane:</strong> uses the Windows preview handler registered for the selected file type, when available.</li>
+        <li><strong>Show submenu:</strong> controls the navigation pane, compact view, item check boxes, filename extensions, and hidden items.</li>
+        <li><strong>QuickLook preview:</strong> if QuickLook is installed and enabled, press <kbd>Space</kbd> on a selected file to preview it.</li>
+      </ul>
+      <p class="tip"><strong>QuickLook is a separate third-party application.</strong> It is not included with, or developed as part of, MultiExplorer. Learn more or download it from the <a href="https://github.com/ql-win/quicklook" target="_blank" rel="noopener noreferrer">QuickLook GitHub page</a>.</p>
+      <p class="tip">File-name extensions, hidden items, and item check boxes use the same Windows settings as File Explorer, so changing them affects Windows Explorer as well.</p>
+    </section>
+
+    <section id="filter">
+      <h2>Find items in the current folder</h2>
+      <p>With a file list active, just start typing. MultiExplorer opens a <strong>Contains</strong> filter for the current folder and shows matching folders first, then matching files.</p>
+      <ul>
+        <li>Press <kbd>Enter</kbd> or double-click a result to open it.</li>
+        <li>Press <kbd>Backspace</kbd> to remove the last filter character.</li>
+        <li>Press <kbd>Esc</kbd> or click <strong>×</strong> to clear the filter.</li>
+        <li>Right-click a result for its standard Windows context menu.</li>
+      </ul>
+    </section>
+
+    <section id="more">
+      <h2>The … ▾ menu</h2>
+      <p>Click <strong>… ▾</strong> at the far right of either toolbar for application-wide commands:</p>
+      <ul>
+        <li><strong>Explorer options:</strong> open Windows Folder Options.</li>
+        <li><strong>Set appearance:</strong> switch between the light and dark application themes.</li>
+        <li><strong>Set hotkey:</strong> choose the global shortcut that restores MultiExplorer from the tray.</li>
+        <li><strong>Set Auto-start:</strong> run the app when you sign in.</li>
+        <li><strong>View logs:</strong> open the application log if it exists.</li>
+        <li><strong>Help:</strong> open this page.</li>
+        <li><strong>About MultiExplorer:</strong> show version and licence information.</li>
+      </ul>
+    </section>
+
+    <section id="shortcuts">
+      <h2>Keyboard shortcuts</h2>
+      <table>
+        <thead><tr><th>Shortcut</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>Ctrl</kbd> + <kbd>Q</kbd></td><td>Exit MultiExplorer</td></tr>
+          <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd></td><td>Create a new folder</td></tr>
+          <tr><td><kbd>Ctrl</kbd> + <kbd>X</kbd> / <kbd>C</kbd> / <kbd>V</kbd></td><td>Cut / Copy / Paste</td></tr>
+          <tr><td><kbd>Ctrl</kbd> + <kbd>A</kbd></td><td>Select all items</td></tr>
+          <tr><td><kbd>F2</kbd></td><td>Rename the selected item</td></tr>
+          <tr><td><kbd>Del</kbd></td><td>Delete selected items</td></tr>
+          <tr><td><kbd>Alt</kbd> + <kbd>Enter</kbd></td><td>Show selected-item properties</td></tr>
+          <tr><td><kbd>F4</kbd></td><td>Edit the address bar</td></tr>
+          <tr><td><kbd>Space</kbd></td><td>QuickLook preview, when enabled</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="background">
+      <h2>Background file operations</h2>
+      <p>Copies, moves, and deletes started from MultiExplorer can continue in the background. If you exit while an operation is active, choose whether to keep it running, wait in the system tray, or cancel it.</p>
+      <p>For operation progress and recovery, MultiExplorer temporarily stores request and status records under <code>%LOCALAPPDATA%\MultiExplorer\Operations</code>. Completed status records are kept for up to 24 hours; temporary request and cancellation records are removed when the operation ends.</p>
+    </section>
+  </main>
+
+  <footer>MultiExplorer Help</footer>
+</body>
+</html>

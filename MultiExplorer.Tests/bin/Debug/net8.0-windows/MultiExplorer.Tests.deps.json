@@ -6,7 +6,7 @@
   "compilationOptions": {},
   "targets": {
     ".NETCoreApp,Version=v8.0": {
-      "MultiExplorer.Tests/1.5.8": {
+      "MultiExplorer.Tests/1.5.9": {
         "dependencies": {
           "Microsoft.NET.Test.Sdk": "17.8.0",
           "MultiExplorer": "1.4.7",
@@ -345,15 +345,15 @@
       "MultiExplorer/1.4.7": {
         "runtime": {
           "MultiExplorer.dll": {
-            "assemblyVersion": "1.5.8.0",
-            "fileVersion": "1.5.8.0"
+            "assemblyVersion": "1.5.9.0",
+            "fileVersion": "1.5.9.0"
           }
         }
       }
     }
   },
   "libraries": {
-    "MultiExplorer.Tests/1.5.8": {
+    "MultiExplorer.Tests/1.5.9": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

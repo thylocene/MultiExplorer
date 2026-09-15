@@ -69,6 +69,8 @@ public sealed class OperationHostTests
             Assert.NotNull(state);
             Assert.Equal(FileOperationStatus.Completed, state!.Status);
             Assert.Equal(1, state.CompletedItems);
+            Assert.False(File.Exists(FileOperationStore.RequestPath(id)));
+            Assert.False(File.Exists(FileOperationStore.CancelPath(id)));
         }
         finally
         {
@@ -124,6 +126,107 @@ public sealed class OperationHostTests
                 FileOperationStore.StatePath(id));
             Assert.NotNull(state);
             Assert.Equal(FileOperationStatus.Cancelled, state!.Status);
+            Assert.False(File.Exists(FileOperationStore.RequestPath(id)));
+            Assert.False(File.Exists(FileOperationStore.CancelPath(id)));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                FileOperationStore.DirectoryOverrideEnvironmentVariable,
+                previousOperationDirectory);
+            if (Directory.Exists(testRoot)) Directory.Delete(testRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void RetentionCleanup_DeletesExpiredTerminalArtifacts()
+    {
+        Guid id = Guid.NewGuid();
+        string testRoot = Path.Combine(Path.GetTempPath(),
+            "MultiExplorer.OperationHost.Tests", id.ToString("N"));
+        string operationDirectory = Path.Combine(testRoot, "operations");
+        string? previousOperationDirectory = Environment.GetEnvironmentVariable(
+            FileOperationStore.DirectoryOverrideEnvironmentVariable);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                FileOperationStore.DirectoryOverrideEnvironmentVariable,
+                operationDirectory);
+            FileOperationStore.WriteRequest(new FileOperationRequest
+            {
+                Id = id,
+                Kind = FileOperationKind.Copy,
+                Sources = [@"C:\source.txt"],
+                Destination = @"C:\destination",
+                CreatedUtc = DateTime.UtcNow,
+            });
+            FileOperationStore.RequestCancellation(id);
+            FileOperationStore.WriteState(new FileOperationState
+            {
+                Id = id,
+                Kind = FileOperationKind.Copy,
+                Status = FileOperationStatus.Completed,
+                UpdatedUtc = DateTime.UtcNow,
+            });
+            File.SetLastWriteTimeUtc(FileOperationStore.StatePath(id),
+                DateTime.UtcNow - TimeSpan.FromDays(2));
+
+            OperationManager.CleanupExpiredOperationArtifacts();
+
+            Assert.False(File.Exists(FileOperationStore.RequestPath(id)));
+            Assert.False(File.Exists(FileOperationStore.CancelPath(id)));
+            Assert.False(File.Exists(FileOperationStore.StatePath(id)));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                FileOperationStore.DirectoryOverrideEnvironmentVariable,
+                previousOperationDirectory);
+            if (Directory.Exists(testRoot)) Directory.Delete(testRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void RetentionCleanup_MarksAbandonedOperationAsFailedAndRemovesTransientArtifacts()
+    {
+        Guid id = Guid.NewGuid();
+        string testRoot = Path.Combine(Path.GetTempPath(),
+            "MultiExplorer.OperationHost.Tests", id.ToString("N"));
+        string operationDirectory = Path.Combine(testRoot, "operations");
+        string? previousOperationDirectory = Environment.GetEnvironmentVariable(
+            FileOperationStore.DirectoryOverrideEnvironmentVariable);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                FileOperationStore.DirectoryOverrideEnvironmentVariable,
+                operationDirectory);
+            FileOperationStore.WriteRequest(new FileOperationRequest
+            {
+                Id = id,
+                Kind = FileOperationKind.Delete,
+                Sources = [@"C:\source.txt"],
+                CreatedUtc = DateTime.UtcNow,
+            });
+            FileOperationStore.RequestCancellation(id);
+            FileOperationStore.WriteState(new FileOperationState
+            {
+                Id = id,
+                Kind = FileOperationKind.Delete,
+                Status = FileOperationStatus.Running,
+                HostProcessId = int.MaxValue,
+                UpdatedUtc = DateTime.UtcNow,
+            });
+
+            OperationManager.CleanupExpiredOperationArtifacts();
+
+            FileOperationState? state = FileOperationStore.TryReadState(
+                FileOperationStore.StatePath(id));
+            Assert.NotNull(state);
+            Assert.Equal(FileOperationStatus.Failed, state!.Status);
+            Assert.False(File.Exists(FileOperationStore.RequestPath(id)));
+            Assert.False(File.Exists(FileOperationStore.CancelPath(id)));
         }
         finally
         {

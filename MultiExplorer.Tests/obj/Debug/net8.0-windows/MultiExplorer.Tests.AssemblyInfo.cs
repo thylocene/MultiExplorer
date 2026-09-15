@@ -12,11 +12,11 @@ using System.Reflection;
 
 [assembly: System.Reflection.AssemblyCompanyAttribute("MultiExplorer.Tests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
-[assembly: System.Reflection.AssemblyFileVersionAttribute("1.5.8.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.5.8")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("1.5.9.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.5.9")]
 [assembly: System.Reflection.AssemblyProductAttribute("MultiExplorer.Tests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("MultiExplorer.Tests")]
-[assembly: System.Reflection.AssemblyVersionAttribute("1.5.8.0")]
+[assembly: System.Reflection.AssemblyVersionAttribute("1.5.9.0")]
 [assembly: System.Runtime.Versioning.TargetPlatformAttribute("Windows7.0")]
 [assembly: System.Runtime.Versioning.SupportedOSPlatformAttribute("Windows7.0")]
 

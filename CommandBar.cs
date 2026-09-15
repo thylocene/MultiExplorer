@@ -19,7 +19,7 @@ public sealed class CommandBar : ToolStrip
         ToggleDetailsPane, TogglePreviewPane,
         ShowNavPane, ShowCompactView, ShowCheckboxes, ShowFileExtensions, ShowHiddenItems,
         ToggleQuickLook,
-        SelectAll, Properties, FolderOptions, About, ViewLog, SetHotkey, ToggleStartWithWindows,
+        SelectAll, Properties, FolderOptions, Help, About, ViewLog, SetHotkey, ToggleStartWithWindows,
         GoToParent, MirrorToOther,
         Exit,
     }
@@ -184,8 +184,8 @@ public sealed class CommandBar : ToolStrip
         Items.Add(view);
 
         Items.Add(new ToolStripSeparator());
-        IconBtn(GlyphGoUp,   "Go to parent folder",                   Cmd.GoToParent);
-        IconBtn(GlyphMirror, "Copy this folder to the opposite pane", Cmd.MirrorToOther);
+        IconBtn(GlyphGoUp,   "Go to parent folder", Cmd.GoToParent);
+        IconBtn(GlyphMirror, "Open in other pane",  Cmd.MirrorToOther);
 
         _more = new ToolStripButton("…  ▾")
         {
@@ -303,7 +303,7 @@ public sealed class CommandBar : ToolStrip
         var popup = new MoreMenuPopup(_miStartWithWindows.Checked, selectExit);
         popup.CommandChosen += (_, command) => CommandIssued?.Invoke(this, command);
         popup.AppearanceRequested += (_, rowBounds) =>
-            BeginInvoke(() => ShowAppearanceMenu(rowBounds));
+            BeginInvoke(() => ShowAppearanceMenu(popup, rowBounds));
         popup.FormClosed += (_, _) =>
         {
             if (ReferenceEquals(_morePopup, popup)) _morePopup = null;
@@ -323,14 +323,17 @@ public sealed class CommandBar : ToolStrip
         popup.Activate();
     }
 
-    private void ShowAppearanceMenu(Rectangle appearanceRow)
+    private void ShowAppearanceMenu(MoreMenuPopup parent, Rectangle appearanceRow)
     {
+        if (parent.IsDisposed || !parent.Visible) return;
+
         _appearancePopup?.Close();
         var popup = new AppearanceMenuPopup(ThemeManager.Current);
         popup.ThemeChosen += (_, theme) => ThemeSelected?.Invoke(this, theme);
         popup.FormClosed += (_, _) =>
         {
             if (ReferenceEquals(_appearancePopup, popup)) _appearancePopup = null;
+            parent.CloseAppearanceSubmenu();
         };
         _appearancePopup = popup;
 
@@ -342,8 +345,7 @@ public sealed class CommandBar : ToolStrip
         location.Y = Math.Max(workingArea.Top,
             Math.Min(location.Y, workingArea.Bottom - popup.Height));
         popup.Location = location;
-        Form? owner = FindForm();
-        if (owner != null) popup.Show(owner); else popup.Show();
+        popup.Show(parent);
         popup.Activate();
     }
 
@@ -481,6 +483,8 @@ public sealed class CommandBar : ToolStrip
         private readonly Font _font;
         private readonly Font _shortcutFont;
         private int _hovered = -1;
+        private bool _appearanceSubmenuOpen;
+        private bool _closing;
 
         internal event EventHandler<Cmd>? CommandChosen;
         internal event EventHandler<Rectangle>? AppearanceRequested;
@@ -494,16 +498,16 @@ public sealed class CommandBar : ToolStrip
             int y = LogicalToDeviceUnits(3);
             Width = LogicalToDeviceUnits(318);
 
-            AddRow("Options", "Ctrl+O", Cmd.FolderOptions, rowHeight, ref y);
+            AddRow("Explorer options", "Ctrl+O", Cmd.FolderOptions, rowHeight, ref y);
             AddSeparator(separatorHeight, ref y);
-            AddRow("Appearance", null, null, rowHeight, ref y, isAppearance: true);
-            AddSeparator(separatorHeight, ref y);
-            AddRow("Start MultiExplorer with Windows", null,
+            AddRow("Set appearance", null, null, rowHeight, ref y, isAppearance: true);
+            AddRow("Set hotkey", null, Cmd.SetHotkey, rowHeight, ref y);
+            AddRow("Set Auto-start", null,
                 Cmd.ToggleStartWithWindows, rowHeight, ref y, isChecked: startWithWindows);
             AddSeparator(separatorHeight, ref y);
-            AddRow("View log", "Ctrl+L", Cmd.ViewLog, rowHeight, ref y);
-            AddRow("Set show-window hotkey…", null, Cmd.SetHotkey, rowHeight, ref y);
+            AddRow("View logs", "Ctrl+L", Cmd.ViewLog, rowHeight, ref y);
             AddSeparator(separatorHeight, ref y);
+            AddRow("Help", null, Cmd.Help, rowHeight, ref y);
             AddRow("About MultiExplorer", null, Cmd.About, rowHeight, ref y);
             AddSeparator(separatorHeight, ref y);
             AddRow("Exit", "Ctrl+Q", Cmd.Exit, rowHeight, ref y);
@@ -511,16 +515,30 @@ public sealed class CommandBar : ToolStrip
             if (selectExit) _hovered = _rows.FindLastIndex(row => row.Command == Cmd.Exit);
 
             MouseMove += OnPopupMouseMove;
-            MouseLeave += (_, _) => SetHovered(-1);
+            MouseLeave += (_, _) =>
+            {
+                if (!_appearanceSubmenuOpen) SetHovered(-1);
+            };
             MouseDown += OnPopupMouseDown;
             KeyDown += OnPopupKeyDown;
-            Deactivate += (_, _) => Close();
+            FormClosing += (_, _) => _closing = true;
+            Deactivate += (_, _) =>
+            {
+                if (!_appearanceSubmenuOpen) ClosePopup();
+            };
+        }
+
+        internal void CloseAppearanceSubmenu()
+        {
+            _appearanceSubmenuOpen = false;
+            ClosePopup();
         }
 
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
+                _closing = true;
                 _font.Dispose();
                 _shortcutFont.Dispose();
             }
@@ -616,20 +634,20 @@ public sealed class CommandBar : ToolStrip
             MenuRow row = _rows[_hovered];
             if (row.IsAppearance)
             {
+                _appearanceSubmenuOpen = true;
                 AppearanceRequested?.Invoke(this, RectangleToScreen(row.Bounds));
-                Close();
                 return;
             }
             if (row.Command is Cmd command)
             {
                 CommandChosen?.Invoke(this, command);
-                Close();
+                ClosePopup();
             }
         }
 
         private void OnPopupKeyDown(object? sender, KeyEventArgs e)
         {
-            if (e.KeyCode == Keys.Escape) { Close(); return; }
+            if (e.KeyCode == Keys.Escape) { ClosePopup(); return; }
             if (e.KeyCode is Keys.Down or Keys.Up)
             {
                 int direction = e.KeyCode == Keys.Down ? 1 : -1;
@@ -642,6 +660,13 @@ public sealed class CommandBar : ToolStrip
             }
             if (e.KeyCode == Keys.Enter && _hovered >= 0)
                 OnPopupMouseDown(this, new MouseEventArgs(MouseButtons.Left, 1, 0, 0, 0));
+        }
+
+        private void ClosePopup()
+        {
+            if (_closing || IsDisposed || Disposing) return;
+            _closing = true;
+            Close();
         }
 
         private void SetHovered(int index)

@@ -1,0 +1,53 @@
+digraph FileOperationIpc {
+    graph [bgcolor="#FFFFFF", fontname="Segoe UI", rankdir="LR", nodesep="0.5", ranksep="0.65", pad="0.18", splines="polyline"];
+    node [fontname="Segoe UI", fontsize=10, shape=plain];
+    edge [fontname="Segoe UI", fontsize=9, color="#52657D", fontcolor="#334155", penwidth=1.5, arrowsize=0.7];
+
+    subgraph cluster_ui {
+      label="MultiExplorer.exe"; fontname="Segoe UI"; fontsize=14; fontcolor="#007589"; color="#00869A"; penwidth=2; style="rounded,filled"; fillcolor="#F1FAFA"; margin=15;
+      manager [label=<
+        <TABLE BORDER="2" COLOR="#00869A" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#E4F7F8">
+          <TR><TD><FONT COLOR="#007589" POINT-SIZE="13"><B>OperationManager</B></FONT><BR/><FONT COLOR="#52657D">validate inputs, track active states<BR/>poll every 500 ms, update status/tray</FONT></TD></TR>
+        </TABLE>>];
+    }
+
+    request [label=<
+      <TABLE BORDER="2" COLOR="#17834D" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#E7F6ED">
+        <TR><TD><FONT COLOR="#13723F" POINT-SIZE="12"><B>&lt;id&gt;.request.json</B></FONT><BR/><FONT COLOR="#52657D">atomic write<BR/>kind, source paths, destination</FONT></TD></TR>
+      </TABLE>>];
+    state [label=<
+      <TABLE BORDER="2" COLOR="#17834D" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#E7F6ED">
+        <TR><TD><FONT COLOR="#13723F" POINT-SIZE="12"><B>&lt;id&gt;.state.json</B></FONT><BR/><FONT COLOR="#52657D">atomic snapshots<br/>status, counts, item, HRESULT</FONT></TD></TR>
+      </TABLE>>];
+    cancel [label=<
+      <TABLE BORDER="2" COLOR="#C26A00" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#FFF4D9">
+        <TR><TD><FONT COLOR="#A85B00" POINT-SIZE="12"><B>&lt;id&gt;.cancel</B></FONT><BR/><FONT COLOR="#52657D">cancellation sentinel</FONT></TD></TR>
+      </TABLE>>];
+    { rank=same; request; state; cancel; }
+
+    subgraph cluster_worker {
+      label="MultiExplorer.OperationHost.exe - one process per operation"; fontname="Segoe UI"; fontsize=14; fontcolor="#13723F"; color="#17834D"; penwidth=2; style="rounded,filled"; fillcolor="#EEF9F2"; margin=15;
+      host [label=<
+        <TABLE BORDER="2" COLOR="#17834D" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#FFFFFF">
+          <TR><TD><FONT COLOR="#13723F" POINT-SIZE="13"><B>OperationHost</B></FONT><BR/><FONT COLOR="#52657D">read request; initialize OLE</FONT></TD></TR>
+        </TABLE>>];
+      operation [label=<
+        <TABLE BORDER="2" COLOR="#17834D" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#E7F6ED">
+          <TR><TD><FONT COLOR="#13723F" POINT-SIZE="13"><B>ShellFileOperation</B></FONT><BR/><FONT COLOR="#52657D">IFileOperation and progress sink<BR/>check cancellation at most every 75 ms<BR/>publish progress at most every 150 ms</FONT></TD></TR>
+        </TABLE>>];
+      host -> operation [label="execute"];
+    }
+
+    shell [label=<
+      <TABLE BORDER="2" COLOR="#2563EB" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#EDF4FF">
+        <TR><TD><FONT COLOR="#1D4ED8" POINT-SIZE="13"><B>Windows Shell / file system</B></FONT><BR/><FONT COLOR="#52657D">copy, move, recycle delete, permanent delete</FONT></TD></TR>
+      </TABLE>>];
+
+    manager -> request [label="1. write", color="#17834D", fontcolor="#13723F"];
+    request -> host [label="2. launch --request", color="#17834D", fontcolor="#13723F"];
+    operation -> state [label="3. progress / terminal state", color="#17834D", fontcolor="#13723F"];
+    state -> manager [label="4. poll", color="#17834D", fontcolor="#13723F"];
+    manager -> cancel [label="cancel all", color="#C26A00", fontcolor="#A85B00"];
+    cancel -> operation [label="probe", color="#C26A00", fontcolor="#A85B00"];
+    operation -> shell [label="IFileOperation COM", color="#2563EB", fontcolor="#1D4ED8"];
+}
