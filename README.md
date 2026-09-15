@@ -49,14 +49,14 @@ The path bar beneath the tab bar renders the current folder path as clickable br
 | View ▾ | — | Change view mode and toggle panes (see below) |
 | ↑ (Go up) | — | Navigate to the parent folder |
 | ⇄ (Open in other pane) | — | Open the active pane's current folder in the opposite pane |
-| **… ▾** | — | Options, light/dark appearance, log viewer, hotkey settings, About, Exit |
+| **… ▾** | — | Explorer options, appearance, hotkey, auto-start, logs, Help, About, Exit |
 
 ### Application appearance
 
 MultiExplorer provides complete light and dark application modes. To change the appearance from either pane:
 
 1. Click **… ▾** at the far right of the toolbar.
-2. Open **Appearance**.
+2. Open **Set appearance**.
 3. Choose **Light** or **Dark**.
 
 The selected mode applies to the entire application, including:
@@ -141,7 +141,7 @@ A global hotkey brings the MultiExplorer window to the foreground from any appli
 
 **Default hotkey: Win + Ctrl + Alt + M**
 
-Change the hotkey any time via **… → Set show-window hotkey…**. The dialog lets you pick any combination of Win / Ctrl / Alt / Shift plus a letter (A–Z) or function key (F1–F12). The choice is saved to `settings.json` and re-registered at the next launch.
+Change the hotkey any time via **… → Set hotkey**. The dialog lets you pick any combination of Win / Ctrl / Alt / Shift plus a letter (A–Z) or function key (F1–F12). The choice is saved to `settings.json` and re-registered at the next launch.
 
 If the configured hotkey is claimed by another application, MultiExplorer silently falls back to **Ctrl+Alt+M**. If that is also unavailable, a note is written to the log and the tray icon can still restore the window.
 
@@ -206,7 +206,7 @@ Keep every published file and language subfolder beside `MultiExplorer.exe`.
 The small entry executable avoids the long first-launch scan incurred by a
 single 160+ MB executable.
 
-Enable **… → Start MultiExplorer with Windows** to launch MultiExplorer automatically
+Enable **… → Set Auto-start** to launch MultiExplorer automatically
 when you sign in. Sign-in launches start quietly in the system tray and show a notification;
 click the notification or tray icon to open the window. This is a per-user preference and
 does not require administrator rights.
@@ -262,6 +262,7 @@ Options:
 | `-BuildDate yyyy-MM-dd` | Build date shown in setup (defaults to today's date) |
 | `-SkipPublish` | Skip `dotnet publish`; use the existing publish folder (includes a staleness check) |
 | `-SkipSigning` | Produce the MSI without code-signing it |
+| `-SkipMsiValidation` | Skip WiX ICE and payload validation only when Windows Installer validation APIs are unavailable |
 | `-Force` | With `-SkipPublish`, bypass the staleness check |
 
 The script publishes the app, builds the MSI with WiX, and signs it with a self-signed certificate created automatically on first run (requires the Windows 10/11 SDK for `signtool.exe`). Output: `MultiExplorer.Installer\bin\Release\en-US\MultiExplorer-Setup.msi`.
@@ -464,7 +465,7 @@ main process to discover operations that were already in progress.
 
 ## Privacy
 
-MultiExplorer operates entirely offline. It collects no user data, sends no telemetry, and contains no advertisements.
+MultiExplorer operates entirely offline. It collects no user data, sends no telemetry, and contains no advertisements. See the [Privacy Policy](privacy.md) for the local files it creates, their retention, and the optional QuickLook integration.
 
 ---
 
