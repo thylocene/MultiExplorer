@@ -1,0 +1,3 @@
+HWND=0xFF1656
+Title=
+Bounds={X=1016,Y=424,Width=660,Height=665}

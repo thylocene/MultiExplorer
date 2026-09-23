@@ -1,0 +1,65 @@
+digraph FilterAndInputFlow {
+    graph [bgcolor="#FFFFFF", fontname="Segoe UI", rankdir="TB", nodesep="0.3", ranksep="0.55", pad="0.16", splines="polyline"];
+    node [fontname="Segoe UI", fontsize=10, shape=plain];
+    edge [fontname="Segoe UI", fontsize=9, color="#52657D", fontcolor="#334155", penwidth=1.45, arrowsize=0.7];
+
+    input [label=<
+        <TABLE BORDER="2" COLOR="#2563EB" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#E8F0FF">
+          <TR><TD><FONT COLOR="#1D4ED8" POINT-SIZE="13"><B>Keyboard or mouse input</B></FONT><BR/><FONT COLOR="#52657D">received by the active Shell-view host</FONT></TD></TR>
+        </TABLE>>];
+    hook [label=<
+        <TABLE BORDER="2" COLOR="#7654CC" CELLBORDER="0" CELLPADDING="8" BGCOLOR="#F0ECFF">
+          <TR><TD><FONT COLOR="#6541C4" POINT-SIZE="13"><B>ExplorerHost / BrowserThread MessageHook</B></FONT><BR/><FONT COLOR="#52657D">classifies application input before default shell dispatch</FONT></TD></TR>
+        </TABLE>>];
+    input -> hook;
+
+    appshortcut [label=<
+        <TABLE BORDER="2" COLOR="#00869A" CELLBORDER="0" CELLPADDING="7" BGCOLOR="#E4F7F8">
+          <TR><TD><B>Application shortcut</B><BR/><FONT COLOR="#52657D">Ctrl+Q, command bar action,<BR/>path or view command</FONT></TD></TR>
+        </TABLE>>];
+    quicklook [label=<
+        <TABLE BORDER="2" COLOR="#C26A00" CELLBORDER="0" CELLPADDING="7" BGCOLOR="#FFF4D9">
+          <TR><TD><B>Space, when QuickLook is enabled</B><BR/><FONT COLOR="#52657D">send selected path to running process</FONT></TD></TR>
+        </TABLE>>];
+    printable [label=<
+        <TABLE BORDER="2" COLOR="#17834D" CELLBORDER="0" CELLPADDING="7" BGCOLOR="#E7F6ED">
+          <TR><TD><B>Printable character</B><BR/><FONT COLOR="#52657D">except Space</FONT></TD></TR>
+        </TABLE>>];
+    shellkey [label=<
+        <TABLE BORDER="2" COLOR="#2563EB" CELLBORDER="0" CELLPADDING="7" BGCOLOR="#EDF4FF">
+          <TR><TD><B>Remaining shell input</B><BR/><FONT COLOR="#52657D">I Shell View Translate Accelerator</FONT></TD></TR>
+        </TABLE>>];
+    { rank=same; appshortcut; quicklook; printable; shellkey; }
+    hook -> appshortcut [label="handled"];
+    hook -> quicklook [label="handled"];
+    hook -> printable [label="handled"];
+    hook -> shellkey [label="forwarded"];
+
+    debounce [label=<
+        <TABLE BORDER="2" COLOR="#17834D" CELLBORDER="0" CELLPADDING="7" BGCOLOR="#E7F6ED">
+          <TR><TD><FONT COLOR="#13723F" POINT-SIZE="12"><B>Filter text + 180 ms debounce</B></FONT><BR/><FONT COLOR="#52657D">new input cancels the prior enumeration</FONT></TD></TR>
+        </TABLE>>];
+    enumerate [label=<
+        <TABLE BORDER="2" COLOR="#17834D" CELLBORDER="0" CELLPADDING="7" BGCOLOR="#FFFFFF">
+          <TR><TD><FONT COLOR="#13723F" POINT-SIZE="12"><B>Asynchronous directory enumeration</B></FONT><BR/><FONT COLOR="#52657D">contains match; folders then files; alphabetical</FONT></TD></TR>
+        </TABLE>>];
+    results [label=<
+        <TABLE BORDER="2" COLOR="#17834D" CELLBORDER="0" CELLPADDING="7" BGCOLOR="#E7F6ED">
+          <TR><TD><FONT COLOR="#13723F" POINT-SIZE="12"><B>FilterResultsListView overlay</B></FONT><BR/><FONT COLOR="#52657D">double-buffered, owner-drawn hover and selection</FONT></TD></TR>
+        </TABLE>>];
+    printable -> debounce;
+    debounce -> enumerate;
+    enumerate -> results;
+
+    folder [label=<
+        <TABLE BORDER="2" COLOR="#00869A" CELLBORDER="0" CELLPADDING="7" BGCOLOR="#E4F7F8">
+          <TR><TD><B>Folder: navigate and clear filter</B></TD></TR>
+        </TABLE>>];
+    file [label=<
+        <TABLE BORDER="2" COLOR="#00869A" CELLBORDER="0" CELLPADDING="7" BGCOLOR="#E4F7F8">
+          <TR><TD><B>File: select in Shell view, clear filter, open</B></TD></TR>
+        </TABLE>>];
+    { rank=same; folder; file; }
+    results -> folder [label="Enter / double-click"];
+    results -> file [label="Enter / double-click"];
+}

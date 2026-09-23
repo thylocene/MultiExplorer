@@ -1,0 +1,3 @@
+HWND=0x2609B2
+Title=LIGHT GEAR FISHING FOR BIG BREAM (Fremantle fishing with @manix-fishing) - YouTube - Work 2 - Microsoft​ Edge
+Bounds={X=0,Y=0,Width=2569,Height=1389}

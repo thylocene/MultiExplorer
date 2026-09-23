@@ -57,7 +57,7 @@
     "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages": {}
   },
   "project": {
-    "version": "1.4.8",
+    "version": "1.6.8",
     "restore": {
       "projectUniqueName": "C:\\Projects\\MultiExplorer\\MultiExplorer.Installer\\MultiExplorer.Installer.wixproj",
       "projectName": "MultiExplorer-Setup",
@@ -110,5 +110,13 @@
         }
       }
     }
-  }
+  },
+  "logs": [
+    {
+      "code": "NU1900",
+      "level": "Warning",
+      "warningLevel": 1,
+      "message": "Error occurred while getting package vulnerability data: Unable to load the service index for source https://api.nuget.org/v3/index.json."
+    }
+  ]
 }

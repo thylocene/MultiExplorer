@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Builds and signs the MultiExplorer MSI installer.
@@ -26,6 +26,11 @@
 .PARAMETER SkipSigning
     Produce the MSI without signing it.
 
+.PARAMETER SkipMsiValidation
+    Skip WiX ICE validation and administrative-install payload validation. Use only
+    when the build environment cannot access Windows Installer validation APIs;
+    normal release builds should validate.
+
 .PARAMETER Force
     When used with -SkipPublish, bypasses the staleness check and proceeds
     even if source files are newer than the published exe.
@@ -41,6 +46,7 @@ param(
     [string]$BuildDate  = (Get-Date -Format "yyyy-MM-dd"),
     [switch]$SkipPublish,
     [switch]$SkipSigning,
+    [switch]$SkipMsiValidation,
     [switch]$Force        # bypass the staleness check when -SkipPublish is set
 )
 
@@ -52,6 +58,7 @@ $Root             = $PSScriptRoot
 $MainCsproj       = Join-Path $Root "MultiExplorer.csproj"
 $BuildProps       = Join-Path $Root "Directory.Build.props"
 $InstallerProject = Join-Path $Root "MultiExplorer.Installer\MultiExplorer.Installer.wixproj"
+$IdentityBuildScript = Join-Path $Root "MultiExplorer.Identity\Build-IdentityPackage.ps1"
 $MsiPath          = Join-Path $Root "MultiExplorer.Installer\bin\Release\en-US\MultiExplorer-Setup.msi"
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -62,27 +69,53 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
     }
 }
 
+$parsedVersion = $null
+if (-not [Version]::TryParse($Version, [ref]$parsedVersion)) {
+    throw "Version '$Version' is not a valid numeric product version."
+}
+
+# Windows Installer normally retains an existing versioned file when a rebuilt
+# package supplies the same file version. Stamp release binaries with a monotonic
+# build identity while leaving ProductVersion (and the About dialog) unchanged.
+# Each field remains inside the Windows four-part file-version limit (0..65535).
+$buildTimestampUtc = [DateTime]::UtcNow
+$fileVersionEpoch = [DateTime]::new(2000, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
+$fileVersionDay = [int][Math]::Floor(($buildTimestampUtc.Date - $fileVersionEpoch).TotalDays)
+$fileVersionTick = [int][Math]::Floor($buildTimestampUtc.TimeOfDay.TotalSeconds / 2)
+if ($fileVersionDay -gt 65535) {
+    throw "The generated binary file-version day exceeds the Windows limit."
+}
+$BinaryFileVersion = "$fileVersionDay.$fileVersionTick.$($parsedVersion.Major).$($parsedVersion.Minor)"
+# AppX stages packages by their four-part identity version. Reusing Version.0 for
+# rebuilt same-version installers leaves old manifests and visual assets cached.
+# Keep the displayed product version unchanged while giving the sparse identity a
+# monotonically increasing internal version.
+$IdentityPackageVersion = "$($parsedVersion.Major).$($parsedVersion.Minor).$fileVersionDay.$fileVersionTick"
+
+$VersionedMsiPath = Join-Path (Split-Path -Parent $MsiPath) "MultiExplorer-Setup-$Version.msi"
+
+function Publish-VersionedInstaller {
+    Copy-Item -LiteralPath $MsiPath -Destination $VersionedMsiPath -Force
+    Write-Host "   Versioned copy: $VersionedMsiPath" -ForegroundColor Green
+}
+
 Write-Host "`n>> Package metadata" -ForegroundColor Cyan
 Write-Host "   Version    : $Version"
 Write-Host "   Build date : $BuildDate"
+Write-Host "   File version: $BinaryFileVersion"
+Write-Host "   Identity version: $IdentityPackageVersion"
 
 # ── 1. Publish the application ────────────────────────────────────────────────
-$PublishDir = Join-Path $Root "bin\Release\net8.0-windows\win-x64\publish"
+$PublishDir = Join-Path $Root "bin\Release\net8.0-windows10.0.18362.0\win-x64\publish"
 $PublishExe = Join-Path $PublishDir "MultiExplorer.exe"
 
 if (-not $SkipPublish) {
-    # Check for a running instance — Windows Installer cannot replace a locked exe.
-    $running = Get-Process -Name "MultiExplorer", "MultiExplorer.OperationHost" -ErrorAction SilentlyContinue
-    if ($running) {
-        throw "MultiExplorer or one of its file operations is currently running (PID $($running.Id -join ', ')). Close it or let the operations finish before building the installer."
-    }
-
     Write-Host "`n>> Publishing MultiExplorer..." -ForegroundColor Cyan
 
     # Start from an empty, validated publish directory so WiX cannot harvest stale
     # files left by an older packaging layout or a diagnostic run.
     $publishFull = [IO.Path]::GetFullPath($PublishDir)
-    $expectedParent = [IO.Path]::GetFullPath((Join-Path $Root "bin\Release\net8.0-windows\win-x64"))
+    $expectedParent = [IO.Path]::GetFullPath((Join-Path $Root "bin\Release\net8.0-windows10.0.18362.0\win-x64"))
     if ([IO.Path]::GetDirectoryName($publishFull) -ne $expectedParent) {
         throw "Refusing to clean unexpected publish directory: $publishFull"
     }
@@ -90,7 +123,7 @@ if (-not $SkipPublish) {
         Remove-Item -LiteralPath $publishFull -Recurse -Force
     }
 
-    dotnet publish $MainCsproj -c Release "-p:Version=$Version"
+    dotnet publish $MainCsproj -c Release "-p:Version=$Version" "-p:FileVersion=$BinaryFileVersion"
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed (exit $LASTEXITCODE)." }
 
     if (-not (Test-Path $PublishExe)) {
@@ -110,7 +143,7 @@ else {
 
     $exeTime = (Get-Item $PublishExe).LastWriteTime
 
-    $newerFile = Get-ChildItem $Root -Recurse -Include "*.cs","*.csproj","*.props" -ErrorAction SilentlyContinue |
+    $newerFile = Get-ChildItem $Root -Recurse -Include "*.cs","*.csproj","*.props","*.html" -ErrorAction SilentlyContinue |
         Where-Object {
             $_.FullName -notmatch '\\obj\\'                   -and
             $_.FullName -notmatch '\\bin\\'                   -and
@@ -144,12 +177,35 @@ else {
     }
 }
 
+# Build the small sparse package that gives the installed Win32 application an
+# identity. Windows requires that identity for Pin to Start secondary tiles.
+$IdentityPackagePath = Join-Path $PublishDir "MultiExplorer.Identity.msix"
+Write-Host "`n>> Building Start-menu identity package..." -ForegroundColor Cyan
+& $IdentityBuildScript -Version $IdentityPackageVersion -OutputPath $IdentityPackagePath
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $IdentityPackagePath)) {
+    throw "The MultiExplorer identity package could not be built."
+}
+
 # ── 2. Build the MSI ──────────────────────────────────────────────────────────
 Write-Host "`n>> Building installer (WiX 4)..." -ForegroundColor Cyan
 Write-Host "   (First run downloads WixToolset.Sdk from NuGet — may take a moment)"
 # --no-incremental forces WiX to repackage the MSI from the freshly-published exe
 # rather than reusing a cached MSI from a prior build.
-dotnet build $InstallerProject -c Release --no-incremental "-p:Version=$Version" "-p:BuildDate=$BuildDate" -p:SkipAppPublish=true
+$installerBuildArgs = @(
+    "build",
+    $InstallerProject,
+    "-c", "Release",
+    "--no-incremental",
+    "-p:Version=$Version",
+    "-p:IdentityPackageVersion=$IdentityPackageVersion",
+    "-p:BuildDate=$BuildDate",
+    "-p:SkipAppPublish=true"
+)
+if ($SkipMsiValidation) {
+    $installerBuildArgs += "-p:SuppressValidation=true"
+    Write-Warning "Skipping WiX ICE validation because -SkipMsiValidation was specified."
+}
+& dotnet @installerBuildArgs
 if ($LASTEXITCODE -ne 0) { throw "WiX build failed (exit $LASTEXITCODE)." }
 
 if (-not (Test-Path $MsiPath)) {
@@ -157,9 +213,66 @@ if (-not (Test-Path $MsiPath)) {
 }
 Write-Host "   Built: $MsiPath" -ForegroundColor Green
 
+if ($SkipMsiValidation) {
+    Write-Warning "Skipping administrative-install payload validation because -SkipMsiValidation was specified."
+}
+else {
+    # Validate what WiX actually put in the MSI. Checking timestamps or the publish
+    # directory alone cannot detect an incrementally reused cabinet containing an
+    # older executable.
+    Write-Host "`n>> Validating installer payload..." -ForegroundColor Cyan
+    $validationDir = Join-Path $Root "MultiExplorer.Installer\obj\PayloadValidation"
+    $validationFull = [IO.Path]::GetFullPath($validationDir)
+    $expectedValidationParent = [IO.Path]::GetFullPath((Join-Path $Root "MultiExplorer.Installer\obj"))
+    if ([IO.Path]::GetDirectoryName($validationFull) -ne $expectedValidationParent) {
+        throw "Refusing to clean unexpected validation directory: $validationFull"
+    }
+    if (Test-Path -LiteralPath $validationFull) {
+        Remove-Item -LiteralPath $validationFull -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $validationFull | Out-Null
+
+    $msiexec = Join-Path $env:SystemRoot "System32\msiexec.exe"
+    $validationProcess = Start-Process -FilePath $msiexec -Wait -PassThru -WindowStyle Hidden -ArgumentList @(
+        "/a", "`"$MsiPath`"", "/qn", "TARGETDIR=`"$validationFull`""
+    )
+    if ($validationProcess.ExitCode -ne 0) {
+        throw "MSI payload extraction failed (msiexec exit $($validationProcess.ExitCode))."
+    }
+
+    $packagedExe = Get-ChildItem -LiteralPath $validationFull -Recurse -Filter "MultiExplorer.exe" -File |
+        Select-Object -First 1
+    if (-not $packagedExe) {
+        throw "The built MSI does not contain MultiExplorer.exe."
+    }
+
+    $packagedRoot = $packagedExe.Directory.FullName
+    $publishedFiles = Get-ChildItem -LiteralPath $PublishDir -Recurse -File
+    foreach ($publishedFile in $publishedFiles) {
+        $relativePath = $publishedFile.FullName.Substring($PublishDir.Length).TrimStart('\')
+        $packagedPath = Join-Path $packagedRoot $relativePath
+        if (-not (Test-Path -LiteralPath $packagedPath -PathType Leaf)) {
+            throw "Installer payload validation failed: missing published file '$relativePath'."
+        }
+
+        $publishedHash = (Get-FileHash -LiteralPath $publishedFile.FullName -Algorithm SHA256).Hash
+        $packagedHash = (Get-FileHash -LiteralPath $packagedPath -Algorithm SHA256).Hash
+        if ($publishedHash -ne $packagedHash) {
+            throw @"
+Installer payload validation failed for '$relativePath':
+  Published SHA-256: $publishedHash
+  Packaged SHA-256 : $packagedHash
+"@
+        }
+    }
+    Write-Host "   All $($publishedFiles.Count) embedded application files match the fresh publish." -ForegroundColor Green
+    Remove-Item -LiteralPath $validationFull -Recurse -Force
+}
+
 if ($SkipSigning) {
+    Publish-VersionedInstaller
     Write-Host "`nDone (signing skipped)." -ForegroundColor Green
-    Write-Host "Installer: $MsiPath"
+    Write-Host "Installer: $VersionedMsiPath"
     exit 0
 }
 
@@ -210,6 +323,7 @@ Install the Windows 10/11 SDK (https://developer.microsoft.com/windows/downloads
 to enable code signing.  The unsigned MSI is still usable:
   $MsiPath
 "@
+    Publish-VersionedInstaller
     exit 0
 }
 
@@ -234,4 +348,5 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "   Signed successfully." -ForegroundColor Green
-Write-Host "`nDone. Installer: $MsiPath" -ForegroundColor Green
+Publish-VersionedInstaller
+Write-Host "`nDone. Installer: $VersionedMsiPath" -ForegroundColor Green

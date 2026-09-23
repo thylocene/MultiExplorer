@@ -4,6 +4,7 @@
 
   <Package Name="MultiExplorer"
            Manufacturer="MultiExplorer"
+           ProductCode="*"
            Version="$(var.Version)"
            Scope="perUser"
            UpgradeCode="{C1965219-E757-47A2-AA69-F84F693B94DC}">
@@ -19,8 +20,10 @@
       detect-only Upgrade row distinguishes newer products so the dialog can warn
       that continuing will install an older version.
       Remove the previous product only after the incoming files have been installed.
-      Removal is still inside the installer transaction and can be rolled back if
-      the upgrade fails.
+      Build-Installer.ps1 gives application binaries a monotonically increasing file
+      version, so rebuilt same-version packages still replace the application code.
+      Removal remains inside the installer transaction and can be rolled back if the
+      upgrade fails.
     -->
     <MajorUpgrade
       AllowDowngrades="yes"
@@ -28,45 +31,70 @@
 
     <Upgrade Id="{C1965219-E757-47A2-AA69-F84F693B94DC}">
       <UpgradeVersion Minimum="$(var.Version)"
+                      IncludeMinimum="yes"
+                      Maximum="$(var.Version)"
+                      IncludeMaximum="yes"
+                      OnlyDetect="yes"
+                      Property="SAME_VERSION_DETECTED" />
+      <UpgradeVersion Minimum="$(var.Version)"
                       IncludeMinimum="no"
                       OnlyDetect="yes"
                       Property="NEWER_VERSION_DETECTED" />
     </Upgrade>
 
     <!--
-      MultiExplorer can intentionally remain alive in the notification area when
-      its window is closed. Prompt while it is still running so setup never looks
-      stalled behind a locked executable. The end-session message asks the app to
-      exit normally even when its close button is configured to minimize to the
-      notification area. If it remains running, Retry lets the user close it
-      manually; Ignore explicitly allows setup to stop it before files are changed.
+      Detect a foreground or tray-hidden instance before the normal wizard starts.
+      RunningApplicationDlg gives the user an explicit close-and-continue choice.
+      Detection must not itself send window messages or schedule deferred work.
     -->
-    <util:CloseApplication Id="CloseMultiExplorer"
+    <util:CloseApplication Id="DetectMultiExplorer"
                            Target="MultiExplorer.exe"
-                           Description="MultiExplorer is still running. Click Ignore to let Setup close it, or close it yourself (after finishing or cancelling active file operations) and click Retry."
-                           PromptToContinue="yes"
-                           CloseMessage="no"
+                           Property="MULTIEXPLORER_RUNNING"
+                           Condition="NOT MULTIEXPLORER_CLOSE_REQUESTED AND NOT MULTIEXPLORER_EXECUTE_PHASE"
+                           Sequence="1"
+                           RebootPrompt="no" />
+
+    <!-- The dialog invokes this immediate, non-elevated row. WM_QUERYENDSESSION
+         and WM_ENDSESSION close MultiExplorer even when its normal close button
+         is configured to hide the window in the notification area. Do not force
+         termination from the UI sequence because no installer transaction exists
+         there in which to schedule a deferred terminate action. -->
+    <util:CloseApplication Id="CloseMultiExplorerFromDialog"
+                           Target="MultiExplorer.exe"
+                           Condition="MULTIEXPLORER_CLOSE_REQUESTED AND NOT MULTIEXPLORER_EXECUTE_PHASE"
+                           Sequence="2"
                            EndSessionMessage="yes"
-                           ElevatedCloseMessage="no"
-                           ElevatedEndSessionMessage="no"
-                           Timeout="1"
+                           Timeout="10"
+                           RebootPrompt="no" />
+
+    <!-- Recheck immediately before files are changed. This covers quiet installs,
+         a process launched after the dialog check, and an unresponsive instance.
+         The execute sequence is inside the transaction, so deferred forced
+         termination is safe here. -->
+    <util:CloseApplication Id="CloseMultiExplorerForExecute"
+                           Target="MultiExplorer.exe"
+                           Condition="MULTIEXPLORER_EXECUTE_PHASE"
+                           Sequence="3"
+                           EndSessionMessage="yes"
+                           ElevatedEndSessionMessage="yes"
+                           Timeout="5"
                            TerminateProcess="0"
                            RebootPrompt="no" />
 
     <!--
-      File operations run out of process and may intentionally survive the main
-      window. Give the user an explicit chance to let them complete. Choosing
-      Ignore is an informed force-stop fallback, rather than leaving Windows
-      Installer waiting indefinitely on the operation host's locked files.
+      File operations run out of process and may survive the main window. Shut
+      the operation host down during the transactional execute pass so it cannot
+      keep installed files locked. Give it five seconds to respond to the session
+      shutdown messages, then terminate it as a guaranteed fallback.
     -->
     <util:CloseApplication Id="CloseOperationHost"
                            Target="MultiExplorer.OperationHost.exe"
-                           Description="A MultiExplorer copy, move, or delete operation is still running. Let it finish or cancel it, then click Retry. Choosing Ignore will forcibly stop the operation."
-                           PromptToContinue="yes"
+                           Condition="MULTIEXPLORER_EXECUTE_PHASE"
+                           Sequence="4"
                            CloseMessage="no"
-                           EndSessionMessage="no"
+                           EndSessionMessage="yes"
                            ElevatedCloseMessage="no"
-                           ElevatedEndSessionMessage="no"
+                           ElevatedEndSessionMessage="yes"
                            Timeout="5"
                            TerminateProcess="1"
                            RebootPrompt="no" />
@@ -104,6 +132,14 @@
                   Condition="PREVIOUSINSTALLPATH"
                   Sequence="both" />
 
+    <!-- Marks only the server-side execute pass. CloseApplication uses this to
+         keep detection/dialog behavior separate from transactional enforcement. -->
+    <SetProperty Id="MULTIEXPLORER_EXECUTE_PHASE"
+                 Value="1"
+                 Before="Wix4CloseApplications_X86"
+                 Sequence="execute"
+                 Condition="VersionNT &gt; 400" />
+
     <MediaTemplate EmbedCab="yes" />
 
     <!-- App icon displayed in Add/Remove Programs -->
@@ -114,10 +150,16 @@
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="LocalProgramsDir" Name="Programs">
         <Directory Id="INSTALLFOLDER" Name="MultiExplorer">
+          <Directory Id="IDENTITYASSETSFOLDER" Name="Assets" />
 
           <Component Id="MainExe" Guid="{802E9B3B-9AAA-41A8-AF21-CB895645D4C1}">
             <File Id="MultiExplorerExe"
                   Source="$(var.PublishDir)MultiExplorer.exe" />
+            <File Id="IdentityPackageFile"
+                  Source="$(var.PublishDir)MultiExplorer.Identity.msix" />
+            <File Id="IdentityManagementScript"
+                  Source="$(var.SourceDir)MultiExplorer.Identity\Manage-IdentityPackage.ps1"
+                  Name="Manage-IdentityPackage.ps1" />
             <File Id="LicenseFile"
                   Source="$(var.SourceDir)LICENSE.txt"
                   Name="LICENSE.txt" />
@@ -192,6 +234,75 @@
       <ComponentRef Id="StartMenuShortcut" />
     </Feature>
 
+    <!--
+      Register a sparse package identity for the otherwise normal Win32 install.
+      The package contains only the manifest and visual assets; all application
+      files stay in INSTALLFOLDER and continue to be serviced by this MSI.
+      AllowUnsigned is supported by the package's special unsigned publisher ID
+      and avoids adding a private development certificate to the user's trust store.
+
+      These actions must be deferred. During immediate execution, InstallFiles has
+      only queued its work, so the management script and identity package do not
+      exist at their target paths yet. The matching property names pass each
+      command line to its deferred action through CustomActionData.
+
+      Package identity is an optional enhancement used by Pin to Start. AppX can
+      be unavailable because of the Windows version, service state, or enterprise
+      policy, so registration and cleanup failures must not roll back installation
+      or prevent uninstallation. WixQuietExec still writes failures to an MSI log.
+    -->
+    <CustomAction Id="SetRegisterIdentityCommand"
+                  Property="RegisterIdentityPackage"
+                  Value="&quot;[SystemFolder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[#IdentityManagementScript]&quot; -Action Install -PackagePath &quot;[#IdentityPackageFile]&quot; -ExternalLocation &quot;[INSTALLFOLDER].&quot;" />
+    <CustomAction Id="SetRemoveIdentityCommand"
+                  Property="RemoveIdentityPackage"
+                  Value="&quot;[SystemFolder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[#IdentityManagementScript]&quot; -Action Remove" />
+    <CustomAction Id="RegisterIdentityPackage"
+                  BinaryRef="Wix4UtilCA_X86"
+                  DllEntry="WixQuietExec"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="ignore" />
+    <CustomAction Id="RemoveIdentityPackage"
+                  BinaryRef="Wix4UtilCA_X86"
+                  DllEntry="WixQuietExec"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="ignore" />
+    <!-- A startup task is owned by the current user rather than by MSI. Remove
+         it on a real uninstall so Task Scheduler cannot retain a dead executable
+         path. Upgrades keep it in place until the new application refreshes it. -->
+    <CustomAction Id="SetRemoveStartupTaskCommand"
+                  Property="RemoveStartupTask"
+                  Value="&quot;[SystemFolder]schtasks.exe&quot; /Delete /TN &quot;\MultiExplorer Start with Windows&quot; /F /HRESULT" />
+    <CustomAction Id="RemoveStartupTask"
+                  BinaryRef="Wix4UtilCA_X86"
+                  DllEntry="WixQuietExec"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="SetRemoveStartupTaskCommand"
+              Before="RemoveStartupTask"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="RemoveStartupTask"
+              Before="RemoveFiles"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="SetRemoveIdentityCommand"
+              Before="RemoveIdentityPackage"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="RemoveIdentityPackage"
+              Before="RemoveFiles"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="SetRegisterIdentityCommand"
+              After="InstallFiles"
+              Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="RegisterIdentityPackage"
+              After="SetRegisterIdentityCommand"
+              Condition="NOT REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+
     <!-- ════════════════════════════════════════════════════════════════
          UI  —  WixUI_InstallDir dialog sequence:
            1. WelcomeDlg       — welcome + what will be installed
@@ -228,13 +339,32 @@
     <CustomActionRef Id="Wix4ShellExec_X86" />
 
     <UI>
+      <!--
+        Windows Installer leaves the previous action description on ProgressDlg
+        when a custom action has no ActionText row. Give the actions that can take
+        noticeable time explicit descriptions so the page never appears to be
+        stuck on "Validating install" while different work is in progress.
+      -->
+      <ProgressText Action="Wix4CloseApplications_X86"
+                    Message="Closing MultiExplorer and background file operations..." />
+      <ProgressText Action="Wix4CloseApplicationsDeferred_X86"
+                    Message="Finishing shutdown of MultiExplorer background processes..." />
+      <ProgressText Action="RegisterIdentityPackage"
+                    Message="Registering MultiExplorer with Windows..." />
+      <ProgressText Action="RemoveIdentityPackage"
+                    Message="Removing MultiExplorer registration from Windows..." />
+      <ProgressText Action="RemoveStartupTask"
+                    Message="Removing the MultiExplorer startup task..." />
+
       <!-- Match the typography supplied by the stock WixUI_InstallDir UI. -->
       <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
       <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
       <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
       <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
 
-      <!-- Ask before replacing an older installation or reinstalling this product. -->
+      <!-- Ask before replacing a related product (including a package rebuilt
+           with the same version but a different product code). An exact rerun
+           of the installed MSI follows the normal maintenance/repair UI. -->
       <Dialog Id="ExistingVersionDlg"
               Width="370"
               Height="270"
@@ -259,13 +389,20 @@
                  Transparent="yes"
                  NoPrefix="yes"
                  Text="Choose whether to replace the existing installation." />
-        <Control Id="ReplaceMessage"
+        <Control Id="SameVersionMessage"
                  Type="Text"
                  X="25" Y="75" Width="320" Height="70"
                  Hidden="yes"
                  NoPrefix="yes"
-                 Text="The installed version of MultiExplorer is the same as or older than this setup package. Continuing will replace the existing installation with this version. Your application settings will be preserved."
-                 ShowCondition="NOT NEWER_VERSION_DETECTED" />
+                 Text="This version of MultiExplorer is already installed. Repair will reinstall the application files while preserving your settings."
+                 ShowCondition="SAME_VERSION_DETECTED" />
+        <Control Id="OlderMessage"
+                 Type="Text"
+                 X="25" Y="75" Width="320" Height="70"
+                 Hidden="yes"
+                 NoPrefix="yes"
+                 Text="An older version of MultiExplorer is installed. Continuing will replace it with this version. Your application settings will be preserved."
+                 ShowCondition="NOT SAME_VERSION_DETECTED AND NOT NEWER_VERSION_DETECTED" />
         <Control Id="NewerMessage"
                  Type="Text"
                  X="25" Y="75" Width="320" Height="70"
@@ -279,26 +416,92 @@
         <Control Id="Continue"
                  Type="PushButton"
                  X="212" Y="243" Width="80" Height="17"
+                 Hidden="yes"
                  Default="yes"
-                 Text="Continue">
-          <!-- A different product code follows the normal major-upgrade flow. -->
+                 Text="Continue"
+                 ShowCondition="NOT SAME_VERSION_DETECTED">
+          <!-- Related products, including same-version rebuilds, follow the
+               normal transactional major-upgrade flow. -->
           <Publish Event="NewDialog"
                    Value="LicenseAgreementDlg"
                    Order="1"
                    Condition="NOT Installed" />
-          <!-- The same product code requires an explicit full reinstall. -->
-          <Publish Event="ReinstallMode"
-                   Value="amus"
-                   Order="1"
-                   Condition="Installed" />
-          <Publish Event="Reinstall"
-                   Value="All"
-                   Order="2"
-                   Condition="Installed" />
+        </Control>
+        <Control Id="Repair"
+                 Type="PushButton"
+                 X="212" Y="243" Width="80" Height="17"
+                 Hidden="yes"
+                 Default="yes"
+                 Text="Repair"
+                 ShowCondition="SAME_VERSION_DETECTED">
+          <!-- Rebuilt same-version MSIs intentionally have a new ProductCode.
+               Ending the UI starts the same-version major upgrade, which
+               transactionally replaces the application files and provides
+               repair semantics without triggering MSI error 1638. -->
           <Publish Event="EndDialog"
                    Value="Return"
-                   Order="3"
-                   Condition="Installed" />
+                   Condition="NOT Installed" />
+        </Control>
+        <Control Id="Cancel"
+                 Type="PushButton"
+                 X="304" Y="243" Width="56" Height="17"
+                 Cancel="yes"
+                 Text="Cancel">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="RunningApplicationDlg"
+              Width="370"
+              Height="270"
+              Title="MultiExplorer Setup">
+        <Control Id="BannerBitmap"
+                 Type="Bitmap"
+                 X="0" Y="0" Width="370" Height="44"
+                 TabSkip="no"
+                 Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="BannerLine"
+                 Type="Line"
+                 X="0" Y="44" Width="370" Height="0" />
+        <Control Id="Title"
+                 Type="Text"
+                 X="15" Y="6" Width="340" Height="15"
+                 Transparent="yes"
+                 NoPrefix="yes"
+                 Text="MultiExplorer is running" />
+        <Control Id="Description"
+                 Type="Text"
+                 X="25" Y="23" Width="340" Height="20"
+                 Transparent="yes"
+                 NoPrefix="yes"
+                 Text="Close the running instance before continuing setup." />
+        <Control Id="Message"
+                 Type="Text"
+                 X="25" Y="75" Width="320" Height="75"
+                 NoPrefix="yes"
+                 Text="MultiExplorer may be hidden in the notification area. Setup must close it before installed files can be updated. Finish or cancel any active file operations, then choose Close MultiExplorer and continue." />
+        <Control Id="OperationNote"
+                 Type="Text"
+                 X="25" Y="155" Width="320" Height="35"
+                 NoPrefix="yes"
+                 Text="If a separate copy, move, or delete operation is still active, Setup will ask before stopping it." />
+        <Control Id="BottomLine"
+                 Type="Line"
+                 X="0" Y="234" Width="370" Height="0" />
+        <Control Id="CloseAndContinue"
+                 Type="PushButton"
+                 X="164" Y="243" Width="128" Height="17"
+                 Default="yes"
+                 Text="Close and continue">
+          <Publish Property="MULTIEXPLORER_CLOSE_REQUESTED"
+                   Value="1"
+                   Order="1" />
+          <Publish Event="DoAction"
+                   Value="Wix4CloseApplications_X86"
+                   Order="2" />
+          <Publish Event="EndDialog"
+                   Value="Return"
+                   Order="3" />
         </Control>
         <Control Id="Cancel"
                  Type="PushButton"
@@ -310,9 +513,10 @@
       </Dialog>
 
       <!--
-        This project owns the WixUI_InstallDir navigation so an existing product can
-        be routed through ExistingVersionDlg from both major-upgrade and maintenance
-        entry points. The dialog definitions themselves still come from WixToolset.UI.
+        This project owns the WixUI_InstallDir navigation so downgrade and explicit
+        maintenance entry points can be routed through ExistingVersionDlg. Normal
+        upgrades proceed through the standard setup flow. The dialog definitions
+        themselves still come from WixToolset.UI.
       -->
       <DialogRef Id="BrowseDlg" />
       <DialogRef Id="DiskCostDlg" />
@@ -434,7 +638,7 @@
       <Publish Dialog="MaintenanceWelcomeDlg"
                Control="Next"
                Event="NewDialog"
-               Value="ExistingVersionDlg"
+               Value="MaintenanceTypeDlg"
                Order="2" />
 
       <Publish Dialog="MaintenanceTypeDlg"
@@ -464,6 +668,19 @@
                Order="1"
                Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
     </UI>
+
+    <!-- CloseApplication normally runs only immediately before InstallFiles,
+         where a prompt looks like a stalled progress page. Run a detection-only
+         pass after AppSearch and show the purpose-built choice before costing and
+         the regular welcome/maintenance dialogs. -->
+    <InstallUISequence>
+      <Custom Action="Wix4CloseApplications_X86"
+              After="AppSearch"
+              Condition="VersionNT &gt; 400" />
+      <Show Dialog="RunningApplicationDlg"
+            After="Wix4CloseApplications_X86"
+            Condition="MULTIEXPLORER_RUNNING" />
+    </InstallUISequence>
 
     <UIRef Id="WixUI_Common" />
 

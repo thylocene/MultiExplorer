@@ -4,6 +4,9 @@
     <OutputName>MultiExplorer-Setup</OutputName>
     <!-- Direct project builds use today's date; Build-Installer.ps1 can override it. -->
     <BuildDate Condition="'$(BuildDate)' == ''">$([System.DateTime]::Today.ToString('yyyy-MM-dd'))</BuildDate>
+    <!-- Release builds supply a monotonically increasing AppX identity version so
+         same-product-version rebuilds refresh changed manifests and logo assets. -->
+    <IdentityPackageVersion Condition="'$(IdentityPackageVersion)' == ''">$(Version)</IdentityPackageVersion>
     <!-- ICE91: per-user files not copied to all profiles on per-machine install —
          not applicable; Scope="perUser" is fixed. -->
     <SuppressIces>ICE91;ICE61</SuppressIces>
@@ -16,7 +19,7 @@
     causing $(var.PublishDir) to resolve as undefined and the exe to be skipped.
   -->
   <PropertyGroup>
-    <_PublishDir>$(MSBuildThisFileDirectory)..\bin\Release\net8.0-windows\win-x64\publish\</_PublishDir>
+    <_PublishDir>$(MSBuildThisFileDirectory)..\bin\Release\net8.0-windows10.0.18362.0\win-x64\publish\</_PublishDir>
     <_SourceDir>$(MSBuildThisFileDirectory)..\</_SourceDir>
     <DefineConstants>PublishDir=$(_PublishDir);SourceDir=$(_SourceDir);Version=$(Version);BuildDate=$(BuildDate)</DefineConstants>
   </PropertyGroup>
@@ -57,10 +60,14 @@
        manifest from the clean self-contained publish output before compilation. -->
   <Target Name="GeneratePublishedFileManifest"
           BeforeTargets="CoreCompile"
-          DependsOnTargets="PublishMainApp">
+          DependsOnTargets="PublishMainApp;BuildIdentityPackage">
     <!-- The trailing dot prevents _PublishDir's trailing backslash from escaping
          the closing quote in Windows command-line argument parsing. -->
     <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)Generate-PublishedFiles.ps1&quot; -PublishDir &quot;$(_PublishDir).&quot; -OutputPath &quot;$(IntermediateOutputPath)PublishedFiles.wxs&quot;" />
+  </Target>
+
+  <Target Name="BuildIdentityPackage" DependsOnTargets="PublishMainApp">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\MultiExplorer.Identity\Build-IdentityPackage.ps1&quot; -Version &quot;$(IdentityPackageVersion)&quot; -OutputPath &quot;$(_PublishDir)MultiExplorer.Identity.msix&quot;" />
   </Target>
 
 </Project>

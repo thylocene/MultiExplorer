@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Windows.Forms;
 
 namespace MultiExplorer;
 
@@ -7,6 +8,13 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Contains("--broker", StringComparer.OrdinalIgnoreCase))
+        {
+            bool exitWhenIdle = args.Contains(
+                "--exit-when-idle", StringComparer.OrdinalIgnoreCase);
+            return RunBroker(exitWhenIdle);
+        }
+
         string? requestPath = args.Length == 2 && args[0] == "--request"
             ? args[1]
             : null;
@@ -17,6 +25,8 @@ internal static class Program
         {
             FileOperationRequest request = FileOperationStore.ReadRequest(requestPath);
             FileOperationState state = ShellFileOperation.Execute(request);
+            if (state.IsTerminal)
+                FileOperationStore.RemoveTransientArtifacts(request.Id);
             return state.Status == FileOperationStatus.Completed ? 0
                 : state.Status == FileOperationStatus.Cancelled ? 3 : 1;
         }
@@ -31,12 +41,44 @@ internal static class Program
         }
     }
 
+    private static int RunBroker(bool exitWhenIdle)
+    {
+        using var mutex = new Mutex(initiallyOwned: false,
+            FileOperationStore.BrokerMutexName);
+        bool ownsMutex;
+        try
+        {
+            ownsMutex = mutex.WaitOne(0);
+        }
+        catch (AbandonedMutexException)
+        {
+            ownsMutex = true;
+        }
+
+        if (!ownsMutex)
+            return 0;
+
+        try
+        {
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            using var context = new OperationBrokerContext(exitWhenIdle);
+            Application.Run(context);
+            return 0;
+        }
+        finally
+        {
+            mutex.ReleaseMutex();
+        }
+    }
+
     private static void TryWriteFailure(string requestPath, Exception exception)
     {
         try
         {
             FileOperationRequest request = FileOperationStore.ReadRequest(requestPath);
-            FileOperationStore.WriteState(new FileOperationState
+            var state = new FileOperationState
             {
                 Id = request.Id,
                 Kind = request.Kind,
@@ -45,10 +87,18 @@ internal static class Program
                 Error = exception.Message,
                 Result = exception.HResult,
                 HostProcessId = Environment.ProcessId,
+                CreatedUtc = request.CreatedUtc,
                 UpdatedUtc = DateTime.UtcNow,
-            });
+            };
+            FileOperationPresentation.ApplyRequestContext(state, request);
+            FileOperationStore.WriteState(state);
+            FileOperationStore.RemoveTransientArtifacts(request.Id);
         }
-        catch { }
+        catch (Exception cleanupException)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"Could not publish operation failure state: {cleanupException}");
+        }
     }
 
     [DllImport("ole32.dll")]

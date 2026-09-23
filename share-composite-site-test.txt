@@ -1,0 +1,3 @@
+HWND=0x2609B2
+Title=Why the 12 Rep Rule Is Holding Back Muscle Growth After 50 - YouTube - Work 2 - Microsoft​ Edge
+Bounds={X=0,Y=0,Width=2569,Height=1389}

@@ -1,0 +1,130 @@
+MultiExplorer 1.6.8
+Release date: 23 September 2026
+
+Highlights
+----------
+
+- Consolidated concurrent copy, move and delete jobs into one non-modal,
+  always-on-top operation window with independently stacked operations.
+- Rebuilt file-operation progress rows to closely match File Explorer, including
+  completion-shaded performance graphs, current speed, remaining time and size,
+  current item, title-bar percentage, and expandable details.
+- Added DPI-aware vector pause, resume and cancel controls for each operation,
+  with smooth graph animation and distinct paused-state presentation.
+- Copy and move progress now reports recursive file-and-folder totals and estimated
+  transfer speed; delete progress reports whole items per second.
+- Added per-operation pause and resume support and made displayed progress monotonic
+  when Windows revises its underlying work estimate.
+- Permanent deletion with Shift+Delete no longer shows a redundant confirmation.
+- File-operation windows now open on the same monitor as MultiExplorer and retain
+  correct per-monitor DPI scaling.
+- Added hybrid filesystem refresh handling so changes made outside MultiExplorer
+  appear promptly while a periodic fallback recovers missed notifications.
+- Added separate file and folder totals to the status bar for each pane's active tab.
+- Local item totals now update from filesystem notifications, with debouncing and a
+  single-flight worker to keep large folders responsive during bursts of changes.
+- Added a periodic recovery refresh for missed filesystem notifications while avoiding
+  redundant recounts during navigation, view changes and file operations.
+- Network locations are no longer enumerated for item totals, avoiding slow or blocked
+  scans of UNC shares and mapped network drives.
+- Added F1 as an application-wide shortcut for opening MultiExplorer Help.
+- Added F5 to refresh the current folder in the active pane.
+- Fixed the pane-header Preview and Help buttons in light and dark modes, removed
+  the duplicate View button, and kept the header controls visible beside Preview.
+- Added Ctrl+Space to close filtering and preview the selected result with QuickLook.
+- Reduced the file and folder context-menu action icons while retaining sharp,
+  DPI-aware vector rendering, and shortened the action tiles so their labels sit
+  closer to the icons.
+- Routed supported single-item Shell commands through the live embedded Explorer
+  selection instead of a reconstructed menu.
+- Added working, state-aware Pin to Start and Unpin from Start commands for files
+  and folders. MultiExplorer now uses a lightweight app identity and Windows Start
+  tiles instead of the Explorer-only command that rejected embedded applications.
+- Pin to Start now works on the first click without displaying a second confirmation
+  dialog. Pinned files and folders use their actual, correctly sized Shell icons in
+  the Windows 11 Start menu, and MultiExplorer refreshes icons for existing pins.
+- Pinning now updates Windows 11's visible Start layout instead of the obsolete
+  Windows 10 tile collection. Additional files and folders can be pinned after the
+  first item. Generated Start artwork is now explicitly marked as unplated so
+  Windows preserves its transparent background.
+- Added state-aware Pin to Quick access and Unpin from Quick access commands for
+  folders.
+- Replaced the Windows-logo glyph beside Pin to Start and Pin to Quick access with
+  a DPI-aware vector pin symbol, including their Unpin states.
+- Added state-aware Add to Favorites and Remove from Favorites commands for files,
+  replacing the classic Shell entry that does not report its current state.
+- Help now falls back to an embedded offline copy if MultiExplorer.Help.html is deleted.
+- Added right-aligned selected file/folder counts and a total size to each pane's
+  status bar, including cancellable recursive sizing for selected folders and
+  decimal storage units.
+- Fixed toolbar view-mode commands so List, Tiles, icon and Content views replace
+  the responsive Details view immediately.
+- View mode and icon size are now retained per folder, so returning to a folder
+  restores its previous presentation instead of forcing Details view.
+- Promoted responsive Details to the standard Details mode and removed its
+  experimental View > Show toggle and obsolete persisted setting.
+- Fixed type-to-filter in Details view so typing a file-name character opens
+  the filter bar and displays matching files and folders again.
+- Made Compact view, item check boxes, file-name extension visibility and hidden
+  items independent per-tab options that do not modify Windows File Explorer or
+  other MultiExplorer tabs.
+- Replaced the legacy Explorer command band's mixed light/dark rendering with a
+  fully dark, DPI-aware command band that retains its common actions in dark mode.
+- File context menus now keep the complete set of supported Windows Shell and
+  installed-application commands instead of replacing them with a shortened menu.
+  The Cut, Copy, Rename, Share and Delete action row now appears at the bottom.
+- Fixed click handling for the Cut, Copy, Rename, Share and Delete buttons after
+  moving the action row to the bottom of the file and folder context menu.
+- Added smooth rollover highlighting between buttons in the context-menu action row.
+- Added a MultiExplorer sharing window for file selections. It can create an
+  email with attachments, open Windows Send to destinations, copy files or
+  paths, and save copies elsewhere without launching a separate File Explorer
+  window. Share remains hidden when the selection contains a folder.
+- Fixed Shell context menus whose action header was dark while the remaining menu
+  rows, separators and icon gutter stayed light.
+- Fixed submenu-parent and disabled Shell context-menu rows that could retain
+  light-mode black text on a dark background, including dynamically populated
+  extension menus.
+- Dark context menus now show one correctly themed cascade arrow and preserve all
+  Shell-extension command and item data, preventing clipped or sliver-width submenus.
+- Forwarded Shell owner-draw measurement messages now return the required handled
+  result so extension submenus retain their requested width and height.
+- Extension-owned menu rows are post-processed after their drawing callback so
+  light-mode black labels remain readable on MultiExplorer's dark menu surface.
+- Added active-pane shortcuts: Ctrl+Shift+N creates a folder and starts inline
+  rename, while Ctrl+N and Ctrl+T open a new tab.
+- Setup now detects foreground and tray-hidden MultiExplorer instances before the
+  progress phase and offers to close the running instance before continuing.
+- Setup no longer rolls back the application when optional package-identity
+  registration is unsupported or blocked by AppX policy on the target PC.
+- Setup now deploys the packaged-app logo assets and Windows resource index
+  beside the executable, where sparse packages resolve them, preventing the
+  taskbar from falling back to a grey box.
+- The main window now declares its own stable taskbar identity, preventing pinned
+  folder shortcuts from replacing the MultiExplorer taskbar name and icon.
+- Fixed Small icons view on current Windows versions by using the supported icon
+  view with a 16-pixel image size.
+- Added Ctrl+Shift+C for Copy as path and display the shortcut in application-owned
+  and Windows Shell popup menus.
+- Expanded Help's Keyboard shortcuts section into a complete reference for
+  application, file, address-bar, filtering, QuickLook, and drag shortcuts.
+- Preview panes can now be resized by dragging their vertical divider, with an
+  independently remembered width for each explorer pane.
+- The preview divider now uses a narrow, DPI-aware grip and remains visible after
+  resizing, including when a native Windows preview handler is active.
+- Added a checked Minimize to System Tray option immediately after Set Auto-start
+  in the More menu, synchronized with the existing tray-menu preference.
+- Rebuilt same-version installers now advance the internal identity-package
+  version so Windows refreshes changed taskbar and Start visual assets.
+- Release builds now stamp application binaries with a monotonic build file version,
+  ensuring rebuilt installers carrying the same displayed version replace old code.
+
+Installation notes
+------------------
+
+- Application settings and saved panel state are preserved during upgrades.
+- MultiExplorer is a per-user installation and includes its required .NET runtime.
+- Enhanced Pin to Start integration requires Windows build 19041 or later and an
+  available AppX deployment service; the core application installs without it.
+- The start-with-Windows option is disabled by default and can be changed at any time
+  from either pane's More (...) menu.

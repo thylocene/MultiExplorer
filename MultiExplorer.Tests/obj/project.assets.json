@@ -1,7 +1,7 @@
 {
   "version": 4,
   "targets": {
-    "net8.0-windows": {
+    "net8.0-windows10.0.18362.0": {
       "coverlet.collector/6.0.0": {
         "type": "package",
         "build": {
@@ -1709,7 +1709,7 @@
           "build/net6.0/xunit.runner.visualstudio.props": {}
         }
       },
-      "MultiExplorer/1.4.7": {
+      "MultiExplorer/1.6.6": {
         "type": "project",
         "framework": ".NETCoreApp,Version=v8.0",
         "compile": {
@@ -5511,16 +5511,16 @@
         "xunit.runner.visualstudio.nuspec"
       ]
     },
-    "MultiExplorer/1.4.7": {
+    "MultiExplorer/1.6.6": {
       "type": "project",
       "path": "../MultiExplorer.csproj",
       "msbuildProject": "../MultiExplorer.csproj"
     }
   },
   "projectFileDependencyGroups": {
-    "net8.0-windows": [
+    "net8.0-windows10.0.18362.0": [
       "Microsoft.NET.Test.Sdk >= 17.8.0",
-      "MultiExplorer >= 1.4.7",
+      "MultiExplorer >= 1.6.6",
       "coverlet.collector >= 6.0.0",
       "xunit >= 2.5.3",
       "xunit.runner.visualstudio >= 2.5.3"
@@ -5531,7 +5531,7 @@
     "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages": {}
   },
   "project": {
-    "version": "1.4.7",
+    "version": "1.6.6",
     "restore": {
       "projectUniqueName": "C:\\Projects\\MultiExplorer\\MultiExplorer.Tests\\MultiExplorer.Tests.csproj",
       "projectName": "MultiExplorer.Tests",
@@ -5548,16 +5548,16 @@
         "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
       ],
       "originalTargetFrameworks": [
-        "net8.0-windows"
+        "net8.0-windows10.0.18362.0"
       ],
       "sources": {
         "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
         "https://api.nuget.org/v3/index.json": {}
       },
       "frameworks": {
-        "net8.0-windows": {
-          "framework": "net8.0-windows7.0",
-          "targetAlias": "net8.0-windows",
+        "net8.0-windows10.0.18362.0": {
+          "framework": "net8.0-windows10.0.18362",
+          "targetAlias": "net8.0-windows10.0.18362.0",
           "projectReferences": {
             "C:\\Projects\\MultiExplorer\\MultiExplorer.csproj": {
               "projectPath": "C:\\Projects\\MultiExplorer\\MultiExplorer.csproj"
@@ -5578,9 +5578,9 @@
       "SdkAnalysisLevel": "10.0.400"
     },
     "frameworks": {
-      "net8.0-windows": {
-        "framework": "net8.0-windows7.0",
-        "targetAlias": "net8.0-windows",
+      "net8.0-windows10.0.18362.0": {
+        "framework": "net8.0-windows10.0.18362",
+        "targetAlias": "net8.0-windows10.0.18362.0",
         "dependencies": {
           "Microsoft.NET.Test.Sdk": {
             "target": "Package",
@@ -5610,24 +5610,25 @@
         ],
         "assetTargetFallback": true,
         "warn": true,
+        "downloadDependencies": [
+          {
+            "name": "Microsoft.Windows.SDK.NET.Ref",
+            "version": "[10.0.22621.42, 10.0.22621.42]"
+          }
+        ],
         "frameworkReferences": {
           "Microsoft.NETCore.App": {
+            "privateAssets": "all"
+          },
+          "Microsoft.Windows.SDK.NET.Ref.Windows": {
             "privateAssets": "all"
           },
           "Microsoft.WindowsDesktop.App.WindowsForms": {
             "privateAssets": "none"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.400/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.401/PortableRuntimeIdentifierGraph.json"
       }
     }
-  },
-  "logs": [
-    {
-      "code": "NU1900",
-      "level": "Warning",
-      "warningLevel": 1,
-      "message": "Error occurred while getting package vulnerability data: Unable to load the service index for source https://api.nuget.org/v3/index.json."
-    }
-  ]
+  }
 }

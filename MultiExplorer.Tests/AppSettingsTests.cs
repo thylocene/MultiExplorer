@@ -26,8 +26,32 @@ public class AppSettingsTests
     }
 
     [Fact]
+    public void DefaultStartWithWindows_IsFalse()
+    {
+        Assert.False(new AppSettings().StartWithWindows);
+    }
+
+    [Fact]
     public void DefaultApplicationTheme_IsLight()
     {
         Assert.Equal("Light", new AppSettings().ApplicationTheme);
+    }
+
+    [Fact]
+    public void DefaultPreviewPaneWidths_UseTheProductDefault()
+    {
+        var settings = new AppSettings();
+
+        Assert.Equal(AppSettings.DefaultPreviewPaneWidth, settings.LeftPreviewPaneWidth);
+        Assert.Equal(AppSettings.DefaultPreviewPaneWidth, settings.RightPreviewPaneWidth);
+    }
+
+    [Fact]
+    public void DefaultPathHistories_AreEmptyAndIndependent()
+    {
+        var settings = new AppSettings();
+        Assert.Empty(settings.LeftPathHistory);
+        Assert.Empty(settings.RightPathHistory);
+        Assert.NotSame(settings.LeftPathHistory, settings.RightPathHistory);
     }
 }

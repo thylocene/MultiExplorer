@@ -1,0 +1,63 @@
+MultiExplorer 1.6.4
+Release date: 19 September 2026
+
+Highlights
+----------
+
+- Added separate file and folder totals to the status bar for each pane's active tab.
+- Local item totals now update from filesystem notifications, with debouncing and a
+  single-flight worker to keep large folders responsive during bursts of changes.
+- Added a periodic recovery refresh for missed filesystem notifications while avoiding
+  redundant recounts during navigation, view changes and file operations.
+- Network locations are no longer enumerated for item totals, avoiding slow or blocked
+  scans of UNC shares and mapped network drives.
+- Added F1 as an application-wide shortcut for opening MultiExplorer Help.
+- Help now falls back to an embedded offline copy if MultiExplorer.Help.html is deleted.
+- Added right-aligned selected file/folder counts and a total size to each pane's
+  status bar, including cancellable recursive sizing for selected folders and
+  decimal storage units.
+- Fixed toolbar view-mode commands so List, Tiles, icon and Content views replace
+  the responsive Details view immediately.
+- View mode and icon size are now retained per folder, so returning to a folder
+  restores its previous presentation instead of forcing Details view.
+- Promoted responsive Details to the standard Details mode and removed its
+  experimental View > Show toggle and obsolete persisted setting.
+- Made Compact view, item check boxes, file-name extension visibility and hidden
+  items independent per-tab options that do not modify Windows File Explorer or
+  other MultiExplorer tabs.
+- Replaced the legacy Explorer command band's mixed light/dark rendering with a
+  fully dark, DPI-aware command band that retains its common actions in dark mode.
+- File context menus now keep the complete set of supported Windows Shell and
+  installed-application commands instead of replacing them with a shortened menu.
+  The Cut, Copy, Rename, Share and Delete action row now appears at the bottom.
+- Fixed click handling for the Cut, Copy, Rename, Share and Delete buttons after
+  moving the action row to the bottom of the file and folder context menu.
+- Added smooth rollover highlighting between buttons in the context-menu action row.
+- Share is now shown only for file selections and opens the Windows sharing dialog;
+  it is hidden when the selection contains a folder. The sharing connection and
+  selected files remain available while Windows loads the available sharing apps.
+- Fixed Shell context menus whose action header was dark while the remaining menu
+  rows, separators and icon gutter stayed light.
+- Fixed submenu-parent and disabled Shell context-menu rows that could retain
+  light-mode black text on a dark background, including dynamically populated
+  extension menus.
+- Dark context menus now show one correctly themed cascade arrow and preserve all
+  Shell-extension command and item data, preventing clipped or sliver-width submenus.
+- Forwarded Shell owner-draw measurement messages now return the required handled
+  result so extension submenus retain their requested width and height.
+- Extension-owned menu rows are post-processed after their drawing callback so
+  light-mode black labels remain readable on MultiExplorer's dark menu surface.
+- Added active-pane shortcuts: Ctrl+Shift+N creates a folder and starts inline
+  rename, while Ctrl+N and Ctrl+T open a new tab.
+- Setup now detects foreground and tray-hidden MultiExplorer instances before the
+  progress phase and offers to close the running instance before continuing.
+- Release builds now stamp application binaries with a monotonic build file version,
+  ensuring rebuilt installers carrying the same displayed version replace old code.
+
+Installation notes
+------------------
+
+- Application settings and saved panel state are preserved during upgrades.
+- MultiExplorer is a per-user installation and includes its required .NET runtime.
+- The start-with-Windows option is disabled by default and can be changed at any time
+  from either pane's More (...) menu.

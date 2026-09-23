@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Windows.Forms;
@@ -16,13 +17,47 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        if (ShouldRelaunchWithIdentity(args)
+            && PackageIdentityLauncher.TryRelaunchWithIdentity(args))
+            return;
+
+        // Must be set before the first top-level window is created so the
+        // taskbar cannot group MultiExplorer under a folder-pin shortcut.
+        PackageIdentityLauncher.ConfigureProcessApplicationUserModelId();
+
+        string? activationPath = StartPinService.DecodeActivationPath(args);
+        if (activationPath is not null && File.Exists(activationPath))
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(activationPath)
+                {
+                    UseShellExecute = true,
+                });
+            }
+            catch (Exception ex) when (
+                ex is InvalidOperationException or
+                System.ComponentModel.Win32Exception)
+            {
+                AppLog.Error(ex, nameof(Main),
+                    $"Could not open '{activationPath}'.");
+            }
+            return;
+        }
+
+        bool startedWithWindows = IsStartupLaunch(args);
+
         // Single-instance guard: if another instance is already running, signal it to
-        // show its window and then exit immediately.
+        // show its window and then exit immediately. A Windows sign-in launch is
+        // intentionally silent if the application is already running.
         using var mutex = new Mutex(true, "MultiExplorer.SingleInstance.v1", out bool ownsMutex);
         if (!ownsMutex)
         {
-            NativeMethods.PostMessage(NativeMethods.HWND_BROADCAST, WM_SHOW_INSTANCE,
-                                      IntPtr.Zero, IntPtr.Zero);
+            if (activationPath is not null)
+                ActivationRequestStore.TryWriteFolder(activationPath);
+            if (!startedWithWindows)
+                NativeMethods.PostMessage(NativeMethods.HWND_BROADCAST, WM_SHOW_INSTANCE,
+                                          IntPtr.Zero, IntPtr.Zero);
             return;
         }
 
@@ -44,14 +79,25 @@ static class Program
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        var form = new MainForm(settings);
         int captureIndex = Array.FindIndex(args, a => a == "--capture");
+        var form = new MainForm(settings, startedWithWindows,
+            activationPath);
         if (captureIndex >= 0 && captureIndex + 1 < args.Length)
         {
             string capturePath = args[captureIndex + 1];
             bool selectAllForCapture = args.Any(a => a == "--select-all");
+            bool showPreviewForCapture = args.Any(a => a == "--show-preview");
             form.Shown += (_, _) =>
             {
+                if (showPreviewForCapture)
+                {
+                    form.BeginInvoke((Action)(() =>
+                    {
+                        foreach (PanelView panel in FindControls<PanelView>(form))
+                            panel.ExecuteCommand(CommandBar.Cmd.TogglePreviewPane);
+                    }));
+                }
+
                 var timer = new System.Windows.Forms.Timer { Interval = 2000 };
                 timer.Tick += (_, _) =>
                 {
@@ -83,6 +129,24 @@ static class Program
             };
         }
         Application.Run(form);
+    }
+
+    internal static bool IsStartupLaunch(IEnumerable<string> args) =>
+        args.Any(arg => string.Equals(arg, "--startup", StringComparison.OrdinalIgnoreCase));
+
+    internal static bool ShouldRelaunchWithIdentity(IEnumerable<string> args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+#if DEBUG
+        // A developer launching bin\Debug must run that exact executable. If a
+        // sparse identity is registered, activating it instead starts the installed
+        // Release payload and makes an old build look like the current Debug build.
+        return false;
+#else
+        return !args.Any(static argument =>
+            argument.Equals("--no-identity-relaunch",
+                StringComparison.OrdinalIgnoreCase));
+#endif
     }
 
     private static IEnumerable<T> FindControls<T>(Control root) where T : Control

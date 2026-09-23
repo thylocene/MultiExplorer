@@ -12,7 +12,7 @@ C:\Projects\MultiExplorer\bin\Release\net8.0-windows\win-x64\publish\createdump.
 C:\Projects\MultiExplorer\bin\Release\net8.0-windows\win-x64\publish\hostfxr.dll
 C:\Projects\MultiExplorer\bin\Release\net8.0-windows\win-x64\publish\hostpolicy.dll
 C:\Projects\MultiExplorer\bin\Release\net8.0-windows\win-x64\publish\mscordaccore.dll
-C:\Projects\MultiExplorer\bin\Release\net8.0-windows\win-x64\publish\mscordaccore_amd64_amd64_8.0.3026.36720.dll
+C:\Projects\MultiExplorer\bin\Release\net8.0-windows\win-x64\publish\mscordaccore_amd64_amd64_8.0.3126.42015.dll
 C:\Projects\MultiExplorer\bin\Release\net8.0-windows\win-x64\publish\mscordbi.dll
 C:\Projects\MultiExplorer\bin\Release\net8.0-windows\win-x64\publish\mscorrc.dll
 C:\Projects\MultiExplorer\bin\Release\net8.0-windows\win-x64\publish\msquic.dll

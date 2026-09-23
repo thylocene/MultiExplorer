@@ -6,6 +6,8 @@ using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace MultiExplorer;
@@ -15,6 +17,14 @@ internal enum QuickLookFailure
     NotInstalled,
     NotRunning,
     Unavailable,
+}
+
+internal sealed class NavigationContextMenuEventArgs(
+    string path, Point screenLocation) : EventArgs
+{
+    internal string Path { get; } = path
+        ?? throw new ArgumentNullException(nameof(path));
+    internal Point ScreenLocation { get; } = screenLocation;
 }
 
 /// <summary>
@@ -33,10 +43,16 @@ internal enum QuickLookFailure
 /// </summary>
 public sealed class ExplorerHost : Control, IMessageFilter
 {
+    internal const bool DefaultCompactViewEnabled = true;
+    private const int ItemCountFallbackRefreshIntervalMilliseconds = 60000;
+    private const int ItemCountWatcherDebounceMilliseconds = 400;
+    private const int NativeStatusBarHeight = 24;
     private const uint GW_CHILD = 5; // GetWindow flag: first child in Z-order
+    private const string ExplorerViewStatePropertyBag = "MultiExplorer";
 
     private const uint FVM_DETAILS = 4;
 
+    private const uint FWF_CHECKSELECT        = 0x00040000;
     private const uint FWF_NOCOLUMNHEADER     = 0x00800000;
     private const uint FWF_NOHEADERINALLVIEWS = 0x01000000;
 
@@ -57,15 +73,34 @@ public sealed class ExplorerHost : Control, IMessageFilter
     // copy/move operation.
     private volatile string                _currentPath;
     private string?                        _cachedSelectedItemPath;
+    private string[]                       _cachedSelectedFileSystemPaths = [];
     private int                            _selectionRefreshPending;
     private int                            _pathRefreshPending;
     private long                           _nextPathRefreshTick;
     private int                            _initialNavigationReported;
+    private int                            _currentViewMode = (int)FVM_DETAILS;
+    private int                            _currentViewIconSize = 16;
     private int                            _quickLookAlertPending;
+    private int                            _navigationClickGeneration;
+    private int                            _navigationRestoreGeneration;
+    private int                            _itemCountRequestGeneration;
+    private long                           _nextItemCountRefreshTick;
+    private readonly object                _itemCountRefreshLock = new();
+    private readonly CancellationTokenSource _itemCountWorkerCancellation = new();
+    private ItemCountRefreshRequest?       _pendingItemCountRefresh;
+    private bool                           _itemCountWorkerRunning;
+    private bool                           _itemCountMonitoringActive;
+    private IDisposable?                   _itemCountWatchSubscription;
+    private string                         _itemCountWatcherPath = string.Empty;
+    private int                            _itemCountWatcherUiUpdatePending;
     private ShellFileDropTarget?           _fileDropTarget;
     private IntPtr                         _fileDropTargetWindow;
+    private NavigationTreeNotificationHook? _navigationTreeContextMenuHook;
     private bool                           _browserWasLaunched;
     private bool                           _showNavPane = true;
+    private readonly System.Windows.Forms.Timer _browserBoundsTimer;
+    private readonly System.Windows.Forms.Timer _itemCountDebounceTimer;
+    private readonly ExplorerTabViewSettings _viewSettings;
 
     // Used by the manual double-click detector in PreFilterMessage.
     // IExplorerBrowser child windows often lack CS_DBLCLKS, so Windows never posts
@@ -97,8 +132,40 @@ public sealed class ExplorerHost : Control, IMessageFilter
     /// <summary>Raised on the WinForms thread for an application-wide Ctrl shortcut.</summary>
     internal event EventHandler<CommandBar.Cmd>? ApplicationShortcutRequested;
 
+    /// <summary>
+    /// Raised on the WinForms thread when the user presses a mouse button in
+    /// either native Explorer pane.  Managed sibling controls cannot otherwise
+    /// observe mouse input sent directly to ExplorerBrowser child HWNDs.
+    /// </summary>
+    internal event EventHandler? ShellMouseDown;
+
+    /// <summary>Raised on the WinForms thread when the native shell view receives keyboard focus.</summary>
+    internal event EventHandler? ShellFocused;
+
+    /// <summary>
+    /// Raised on the WinForms thread when a file-system folder in the native
+    /// navigation tree requests its context menu.
+    /// </summary>
+    internal event EventHandler<NavigationContextMenuEventArgs>?
+        NavigationContextMenuRequested;
+
     /// <summary>Raised on the WinForms thread when QuickLook cannot preview the selection.</summary>
     internal event EventHandler<QuickLookFailure>? QuickLookUnavailable;
+
+    /// <summary>Raised on the WinForms thread when this tab's item totals change.</summary>
+    internal event EventHandler<DirectoryItemCount>? ItemCountChanged;
+
+    /// <summary>Raised after a folder's persisted view mode has been restored.</summary>
+    internal event EventHandler<ExplorerFolderViewState>? FolderViewStateChanged;
+
+    /// <summary>Raised on the WinForms thread after this host navigates to a folder.</summary>
+    internal event EventHandler? NavigationChanged;
+
+    /// <summary>
+    /// Raised on the WinForms thread after the cached native Shell selection changes.
+    /// Consumers can read the non-blocking selection snapshot from this host.
+    /// </summary>
+    internal event EventHandler? SelectionChanged;
 
     /// <summary>
     /// Raised on the WinForms thread after this host's first navigation attempt.
@@ -112,7 +179,19 @@ public sealed class ExplorerHost : Control, IMessageFilter
     public ExplorerHost(string initialPath)
     {
         _currentPath = Directory.Exists(initialPath) ? initialPath : @"C:\";
+        _viewSettings = new ExplorerTabViewSettings(
+            compactViewEnabled: DefaultCompactViewEnabled,
+            itemCheckBoxesEnabled: ReadItemCheckBoxesDefault(),
+            fileExtensionsVisible: ReadFileExtensionsDefault(),
+            hiddenItemsVisible: ReadHiddenItemsDefault());
         BackColor    = ThemeManager.Window;
+        _browserBoundsTimer = new System.Windows.Forms.Timer { Interval = 33 };
+        _browserBoundsTimer.Tick += (_, _) => ApplyQueuedBrowserBounds();
+        _itemCountDebounceTimer = new System.Windows.Forms.Timer
+        {
+            Interval = ItemCountWatcherDebounceMilliseconds,
+        };
+        _itemCountDebounceTimer.Tick += OnItemCountDebounceTick;
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -139,6 +218,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
     private void LaunchExplorerCore(NativeMethods.RECT initialBounds)
     {
         if (_browser != null || _browserThread == null) return;
+        BrowserThread browserThread = _browserThread;
 
         try
         {
@@ -146,21 +226,34 @@ public sealed class ExplorerHost : Control, IMessageFilter
             var type  = Type.GetTypeFromCLSID(clsid)
                         ?? throw new InvalidOperationException("CLSID_ExplorerBrowser not found.");
 
-            _browser = (NativeMethods.IExplorerBrowser)Activator.CreateInstance(type)!;
+            var rect = initialBounds;
+            var fs   = CreateHeaderEnabledFolderSettings(FVM_DETAILS);
+            var browser = (NativeMethods.IExplorerBrowser)Activator.CreateInstance(type)!;
+            _browser = browser;
 
             // Set a host site before Initialize so the browser never dereferences
             // a null/uninitialised site pointer during navigation.
             _site = new BrowserSiteImpl();
-            if (_browser is NativeMethods.IObjectWithSite ows)
-                ows.SetSite(_site);
+            if (browser is NativeMethods.IObjectWithSite objectWithSite)
+                objectWithSite.SetSite(_site);
 
-            // EBO_SHOWFRAMES (0x0002) — navigation pane + address bar.
-            _browser.SetOptions(_showNavPane ? 0x0002u : 0u);
+            // Give ExplorerBrowser an application-specific property bag. The
+            // Shell then persists each folder's view mode and icon size when a
+            // navigation starts or a view is destroyed, without changing the
+            // standalone Windows File Explorer's folder-view preferences.
+            int propertyBagResult = browser.SetPropertyBag(
+                ExplorerViewStatePropertyBag);
+            if (propertyBagResult < 0)
+            {
+                AppLog.Warn(new COMException(
+                        "IExplorerBrowser.SetPropertyBag failed.", propertyBagResult),
+                    nameof(LaunchExplorerCore),
+                    "Per-folder view-mode persistence is unavailable.");
+            }
 
-            var rect = initialBounds;
-            var fs   = CreateHeaderEnabledFolderSettings(FVM_DETAILS);
-
-            int hr = _browser.Initialize(_browserThread.Handle, ref rect, ref fs);
+            // EBO_SHOWFRAMES (0x0002) — navigation pane + command band.
+            browser.SetOptions(_showNavPane ? 0x0002u : 0u);
+            int hr = browser.Initialize(browserThread.Handle, ref rect, ref fs);
             if (hr < 0)
                 throw new COMException("IExplorerBrowser.Initialize failed.", hr);
 
@@ -171,7 +264,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
                 _events, typeof(NativeMethods.IExplorerBrowserEvents));
             try
             {
-                hr = _browser.Advise(eventsPtr, out _eventsCookie);
+                hr = browser.Advise(eventsPtr, out _eventsCookie);
                 if (hr < 0)
                     throw new COMException("IExplorerBrowser.Advise failed.", hr);
             }
@@ -277,7 +370,9 @@ public sealed class ExplorerHost : Control, IMessageFilter
             BeginInvoke(() =>
             {
                 if (IsHandleCreated && !Disposing && !IsDisposed)
+                {
                     ThemeManager.ApplyNativeWindow(Handle);
+                }
             });
     }
 
@@ -324,6 +419,31 @@ public sealed class ExplorerHost : Control, IMessageFilter
         if (!IsHandleCreated) return;
         if (_browser != null && RunOnBrowserThread(() => ActivateShellView(takeFocus: true))) return;
         Focus();
+    }
+
+    /// <summary>
+    /// Gets the client-area bounds occupied by the native file view. This is
+    /// used only to align the application-owned responsive Details view; the
+    /// native view remains alive underneath it for Shell integration.
+    /// </summary>
+    internal bool TryGetFileViewBounds(out Rectangle bounds)
+    {
+        bounds = Rectangle.Empty;
+        if (!IsHandleCreated) return false;
+
+        IntPtr defView = FindDescendant(Handle, "SHELLDLL_DefView");
+        if (defView == IntPtr.Zero
+            || !NativeMethods.GetWindowRect(defView, out NativeMethods.RECT rect))
+            return false;
+
+        var topLeft = new NativeMethods.POINT(rect.Left, rect.Top);
+        var bottomRight = new NativeMethods.POINT(rect.Right, rect.Bottom);
+        if (!NativeMethods.ScreenToClient(Handle, ref topLeft)
+            || !NativeMethods.ScreenToClient(Handle, ref bottomRight))
+            return false;
+
+        bounds = Rectangle.FromLTRB(topLeft.x, topLeft.y, bottomRight.x, bottomRight.y);
+        return bounds.Width > 0 && bounds.Height > 0;
     }
 
     /// <summary>
@@ -411,25 +531,68 @@ public sealed class ExplorerHost : Control, IMessageFilter
     }
 
     /// <summary>
-    /// Returns the most recent selection snapshot and requests a fresh one without
-    /// making the WinForms UI thread wait for the browser STA.  Used by the timer
-    /// that feeds the optional details and preview panes.
+    /// Returns the most recent first-selected-item snapshot without entering the
+    /// browser STA. Call <see cref="RequestSelectionSnapshotRefresh"/> to update it.
     /// </summary>
-    internal string? GetSelectedItemPathForPolling()
+    internal string? GetSelectedItemPathSnapshot() =>
+        Volatile.Read(ref _cachedSelectedItemPath);
+
+    /// <summary>
+    /// Returns the most recent complete selection snapshot without entering the
+    /// browser STA. Call <see cref="RequestSelectionSnapshotRefresh"/> to update it.
+    /// </summary>
+    internal IReadOnlyList<string> GetSelectedFileSystemPathsSnapshot() =>
+        Volatile.Read(ref _cachedSelectedFileSystemPaths);
+
+    /// <summary>
+    /// Coalesces a fresh Shell selection query onto the browser STA. The WinForms
+    /// thread never waits for a native view that may be occupied by drag/drop or
+    /// another modal Shell operation.
+    /// </summary>
+    internal void RequestSelectionSnapshotRefresh()
     {
         BrowserThread? thread = _browserThread;
-        if (thread == null) return _cachedSelectedItemPath;
+        if (thread == null || Interlocked.Exchange(ref _selectionRefreshPending, 1) != 0)
+            return;
 
-        if (Interlocked.Exchange(ref _selectionRefreshPending, 1) == 0)
+        thread.Post(RefreshSelectionSnapshots);
+    }
+
+    private void RefreshSelectionSnapshots()
+    {
+        try
         {
-            thread.Post(() =>
+            string? selectedItemPath;
+            string[] selectedPaths;
+            try
             {
-                try { Volatile.Write(ref _cachedSelectedItemPath, GetSelectedItemPath()); }
-                finally { Volatile.Write(ref _selectionRefreshPending, 0); }
-            });
-        }
+                selectedItemPath = GetSelectedItemPath();
+                selectedPaths = GetSelectedFileSystemPaths();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Debug(ex, nameof(RefreshSelectionSnapshots),
+                    "Could not refresh the selected-item snapshot.");
+                selectedItemPath = null;
+                selectedPaths = [];
+            }
 
-        return Volatile.Read(ref _cachedSelectedItemPath);
+            string? previousItemPath = Volatile.Read(ref _cachedSelectedItemPath);
+            string[] previousPaths = Volatile.Read(ref _cachedSelectedFileSystemPaths);
+            bool changed = !string.Equals(
+                    previousItemPath, selectedItemPath, StringComparison.OrdinalIgnoreCase)
+                || !previousPaths.SequenceEqual(
+                    selectedPaths, StringComparer.OrdinalIgnoreCase);
+
+            Volatile.Write(ref _cachedSelectedItemPath, selectedItemPath);
+            Volatile.Write(ref _cachedSelectedFileSystemPaths, selectedPaths);
+            if (changed)
+                PostToUi(() => SelectionChanged?.Invoke(this, EventArgs.Empty));
+        }
+        finally
+        {
+            Volatile.Write(ref _selectionRefreshPending, 0);
+        }
     }
 
     // ── Keyboard routing ──────────────────────────────────────────────────────
@@ -510,7 +673,77 @@ public sealed class ExplorerHost : Control, IMessageFilter
         const int WM_KEYDOWN       = 0x0100;
         const int WM_SYSKEYDOWN    = 0x0104;
         const int WM_LBUTTONDOWN   = 0x0201;
+        const int WM_LBUTTONUP     = 0x0202;
         const int WM_LBUTTONDBLCLK = 0x0203;
+        const int WM_RBUTTONDOWN   = 0x0204;
+        const int WM_RBUTTONUP     = 0x0205;
+        const int WM_MBUTTONDOWN   = 0x0207;
+        const int WM_XBUTTONDOWN   = 0x020B;
+        const int WM_SETFOCUS      = 0x0007;
+
+        // Intercept the posted button-up as well as WM_CONTEXTMENU. Some Shell
+        // builds create the latter with SendMessage, which bypasses this thread's
+        // message-pump hook. Swallowing button-up prevents the native menu from
+        // also appearing after the shared application-owned menu is requested.
+        bool isNavigationContextMenu =
+            m.Msg is NativeMethods.WM_CONTEXTMENU or WM_RBUTTONUP
+            && _browser != null
+            && Visible
+            && (m.HWnd == Handle || NativeMethods.IsChild(Handle, m.HWnd))
+            && IsInNavigationTree(m.HWnd)
+            && (m.Msg != WM_RBUTTONUP || IsNavigationTreeItemAtCursor());
+        if (isNavigationContextMenu)
+        {
+            Point screenLocation = m.Msg == NativeMethods.WM_CONTEXTMENU
+                ? GetContextMenuScreenLocation(m.LParam, Cursor.Position)
+                : Cursor.Position;
+            bool keyboardRequest = m.Msg == NativeMethods.WM_CONTEXTMENU
+                && m.LParam.ToInt64() == -1;
+            if (TryRequestNavigationContextMenu(
+                    screenLocation, allowSelectedFallback: keyboardRequest))
+                return true;
+        }
+
+        bool isBrowserFocus = m.Msg == WM_SETFOCUS
+            && _browser != null
+            && Visible
+            && (m.HWnd == Handle || NativeMethods.IsChild(Handle, m.HWnd));
+        if (isBrowserFocus)
+            PostToUi(() => ShellFocused?.Invoke(this, EventArgs.Empty));
+
+        bool isBrowserMouseDown =
+            m.Msg is WM_LBUTTONDOWN or WM_RBUTTONDOWN or WM_MBUTTONDOWN or WM_XBUTTONDOWN
+            && _browser != null
+            && Visible
+            && (m.HWnd == Handle || NativeMethods.IsChild(Handle, m.HWnd));
+        if (isBrowserMouseDown)
+            PostToUi(() => ShellMouseDown?.Invoke(this, EventArgs.Empty));
+
+        // ExplorerBrowser does not provide a general-purpose selection-changed
+        // event to its host. Queue one coalesced snapshot after input has been
+        // dispatched to the native view; the browser thread's posted work runs
+        // after this message, so the resulting snapshot sees the new selection.
+        bool canChangeSelection =
+            m.Msg is WM_KEYDOWN or WM_SYSKEYDOWN
+                or WM_LBUTTONDOWN or WM_LBUTTONUP or WM_LBUTTONDBLCLK
+                or WM_RBUTTONDOWN or WM_RBUTTONUP or WM_MBUTTONDOWN or WM_XBUTTONDOWN
+            && _browser != null
+            && Visible
+            && (m.HWnd == Handle || NativeMethods.IsChild(Handle, m.HWnd));
+        if (canChangeSelection)
+            RequestSelectionSnapshotRefresh();
+
+        bool isBrowserNavigationMouseDown = m.Msg == WM_LBUTTONDOWN
+            && _browser != null
+            && Visible
+            && (m.HWnd == Handle || NativeMethods.IsChild(Handle, m.HWnd))
+            && IsInNavigationTree(m.HWnd);
+        if (isBrowserNavigationMouseDown)
+        {
+            bool isExpandButton = IsNavigationTreeExpandButtonAtCursor();
+            if (!isExpandButton)
+                QueueNavigationTreeFallback();
+        }
 
         // Double-click on blank space → navigate to parent folder.
         //
@@ -624,17 +857,6 @@ public sealed class ExplorerHost : Control, IMessageFilter
             }
             // ─────────────────────────────────────────────────────────────────
 
-            // Ctrl+Shift+N — new folder.  This is an Explorer.exe frame command, not a
-            // shell-view accelerator, so IInputObject::TranslateAcceleratorIO never handles
-            // it in an embedded browser.  Implement it directly.
-            if (m.Msg == WM_KEYDOWN
-                && m.WParam == (IntPtr)0x4E   // VK_N
-                && (ModifierKeys & (Keys.Control | Keys.Shift)) == (Keys.Control | Keys.Shift))
-            {
-                CreateNewFolder();
-                return true;
-            }
-
             // Do not let the shell start its modal paste loop on our UI thread.
             // Text-edit controls still receive Ctrl+V normally (for example while
             // renaming an item).
@@ -709,6 +931,14 @@ public sealed class ExplorerHost : Control, IMessageFilter
         t.Start();
     }
 
+    /// <summary>Selects a file-system item in the current shell view.</summary>
+    internal void SelectItemPath(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        Volatile.Write(ref _cachedSelectedItemPath, path);
+        SelectItem(path, edit: false);
+    }
+
     private void SelectItem(string path, bool edit)
     {
         if (SwitchToBrowserThread(() => SelectItem(path, edit))) return;
@@ -752,6 +982,7 @@ public sealed class ExplorerHost : Control, IMessageFilter
                 finally { NativeMethods.CoTaskMemFree(pidlAbs); }
             }
             finally { Marshal.Release(ppv); }
+            RequestSelectionSnapshotRefresh();
         }
         catch (Exception ex) { AppLog.Debug(ex, nameof(SelectItem)); }
     }
@@ -807,26 +1038,49 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
     private void QueueBrowserBoundsUpdate()
     {
+        if (_browserThread == null || Width <= 0 || Height <= 0) return;
+
+        // A splitter drag can generate a resize for every pointer pixel. Updating
+        // the native host synchronously from the WinForms thread while queuing
+        // SetRect to the browser STA lets the namespace tree paint at mismatched
+        // sizes. Coalesce updates to roughly 30 fps and apply both operations on
+        // the browser STA in one turn of its message pump.
+        if (!_browserBoundsTimer.Enabled)
+            _browserBoundsTimer.Start();
+    }
+
+    private void ApplyQueuedBrowserBounds()
+    {
+        _browserBoundsTimer.Stop();
+
         BrowserThread? thread = _browserThread;
         if (thread == null || Width <= 0 || Height <= 0) return;
 
         int width = Width;
         int height = Height;
-        NativeMethods.RECT rect = BrowserBounds();
-        NativeMethods.MoveWindow(thread.Handle, 0, 0, width, height, repaint: true);
-        thread.Post(() => _browser?.SetRect(IntPtr.Zero, rect));
+        NativeMethods.RECT rect = BrowserBounds(width, height);
+        thread.Post(() =>
+        {
+            NativeMethods.MoveWindow(thread.Handle, 0, 0, width, height, repaint: true);
+            _browser?.SetRect(IntPtr.Zero, rect);
+            NativeMethods.RedrawWindow(thread.Handle, IntPtr.Zero, IntPtr.Zero,
+                NativeMethods.RDW_INVALIDATE
+                | NativeMethods.RDW_ALLCHILDREN
+                | NativeMethods.RDW_UPDATENOW);
+        });
     }
 
     private NativeMethods.RECT BrowserBounds()
+        => BrowserBounds(Width, Height);
+
+    private NativeMethods.RECT BrowserBounds(int width, int height)
     {
-        // Windows' legacy ExplorerBrowser command strip does not expose a dark
-        // background on current Windows 11: its text turns light while its canvas
-        // remains white. MultiExplorer already provides the complete command bar
-        // immediately above it, so clip that redundant strip in dark mode instead
-        // of presenting unreadable controls. The shell navigation tree and folder
-        // view move up to use the reclaimed space.
-        int top = ThemeManager.IsDark ? -LogicalToDeviceUnits(39) : 0;
-        return new NativeMethods.RECT(0, top, Width, Height);
+        // ExplorerBrowser's DirectUI status bar immediately repaints its generic
+        // "N items" value after SetStatusTextSB. Extend the browser below this
+        // host so the native strip is clipped; PanelView supplies a stable,
+        // theme-aware replacement directly below it.
+        int bottom = height + LogicalToDeviceUnits(NativeStatusBarHeight);
+        return new NativeMethods.RECT(0, 0, width, bottom);
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -840,6 +1094,14 @@ public sealed class ExplorerHost : Control, IMessageFilter
     {
         if (disposing)
         {
+            _itemCountMonitoringActive = false;
+            _itemCountDebounceTimer.Stop();
+            _itemCountDebounceTimer.Dispose();
+            DisposeItemCountWatcher();
+            _itemCountWorkerCancellation.Cancel();
+            _itemCountWorkerCancellation.Dispose();
+            _browserBoundsTimer.Stop();
+            _browserBoundsTimer.Dispose();
             foreach (var timer in _pendingTimers.ToArray())
             {
                 timer.Stop();
@@ -877,8 +1139,16 @@ public sealed class ExplorerHost : Control, IMessageFilter
         {
             var fvId = new Guid("CDE725B0-CCC9-4519-917E-325D72FAB4CE");
             if (_browser.GetCurrentView(ref fvId, out IntPtr ppv) < 0 || ppv == IntPtr.Zero) return;
-            try   { ((NativeMethods.IFolderView)Marshal.GetObjectForIUnknown(ppv)).SetCurrentViewMode(viewMode); }
+            int result;
+            try
+            {
+                result = ((NativeMethods.IFolderView)
+                    Marshal.GetObjectForIUnknown(ppv)).SetCurrentViewMode(viewMode);
+            }
             finally { Marshal.Release(ppv); }
+
+            if (result >= 0)
+                UpdateCurrentFolderViewState(viewMode, GetDefaultIconSize(viewMode));
 
             // SetCurrentViewMode alone does not clear a saved
             // FWF_NOCOLUMNHEADER flag.  SetFolderSettings does, and also makes
@@ -896,8 +1166,9 @@ public sealed class ExplorerHost : Control, IMessageFilter
     {
         if (SwitchToBrowserThread(EnsureColumnHeaders)) return;
         if (_browser == null) return;
-        ApplyFolderSettings(FVM_DETAILS);
-        FixColumnHeadersOnCurrentView();
+        if (TryGetCurrentFolderViewState(out ExplorerFolderViewState state)
+            && state.ViewMode == FVM_DETAILS)
+            FixColumnHeadersOnCurrentView();
     }
 
     private void FixColumnHeadersOnCurrentView()
@@ -928,8 +1199,16 @@ public sealed class ExplorerHost : Control, IMessageFilter
         {
             var fv2Id = new Guid("1AF3A467-214F-4298-908E-06B03E0B39F9");
             if (_browser.GetCurrentView(ref fv2Id, out IntPtr ppv) < 0 || ppv == IntPtr.Zero) return;
-            try { ((NativeMethods.IFolderView2)Marshal.GetObjectForIUnknown(ppv)).SetViewModeAndIconSize(viewMode, iconSize); }
+            int result;
+            try
+            {
+                result = ((NativeMethods.IFolderView2)
+                    Marshal.GetObjectForIUnknown(ppv))
+                    .SetViewModeAndIconSize(viewMode, iconSize);
+            }
             finally { Marshal.Release(ppv); }
+            if (result >= 0)
+                UpdateCurrentFolderViewState(viewMode, iconSize);
         }
         catch (Exception ex) { AppLog.Warn(ex, nameof(SetViewModeAndIconSize)); }
     }
@@ -947,24 +1226,55 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
     internal bool IsNavPaneVisible => _showNavPane;
 
-    // Item checkboxes are controlled by the global AutoCheckSelect registry value
-    // (HKCU\…\Explorer\Advanced\AutoCheckSelect = 0/1).  FWF_CHECKSELECT via
-    // IFolderView2::SetCurrentFolderFlags is ignored by the Windows 11 DirectUI shell.
-    internal static bool IsCheckboxesEnabled()
+    internal uint CurrentViewMode =>
+        unchecked((uint)Volatile.Read(ref _currentViewMode));
+
+    internal bool CompactViewEnabled => _viewSettings.CompactViewEnabled;
+    internal bool ItemCheckBoxesEnabled => _viewSettings.ItemCheckBoxesEnabled;
+    internal bool FileExtensionsVisible => _viewSettings.FileExtensionsVisible;
+    internal bool HiddenItemsVisible => _viewSettings.HiddenItemsVisible;
+
+    internal void ToggleCompactView() => _viewSettings.ToggleCompactView();
+
+    internal void ToggleItemCheckBoxes()
     {
-        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-            @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced");
-        return key?.GetValue("AutoCheckSelect") is int v && v == 1;
+        _viewSettings.ToggleItemCheckBoxes();
+        ApplyItemCheckBoxSettingToNativeView();
     }
 
-    internal static void ToggleCheckboxes()
+    internal void ToggleFileExtensions() => _viewSettings.ToggleFileExtensions();
+
+    internal void ToggleHiddenItems() => _viewSettings.ToggleHiddenItems();
+
+    private void ApplyItemCheckBoxSettingToNativeView()
     {
-        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-            @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", writable: true);
-        if (key == null) return;
-        int current = key.GetValue("AutoCheckSelect") is int v ? v : 0;
-        key.SetValue("AutoCheckSelect", current == 0 ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
-        BroadcastShellRefresh();
+        if (SwitchToBrowserThread(ApplyItemCheckBoxSettingToNativeView)) return;
+        if (_browser == null) return;
+
+        try
+        {
+            var folderViewId = new Guid("1AF3A467-214F-4298-908E-06B03E0B39F9");
+            if (_browser.GetCurrentView(ref folderViewId, out IntPtr viewPointer) < 0
+                || viewPointer == IntPtr.Zero)
+                return;
+
+            try
+            {
+                var folderView = (NativeMethods.IFolderView2)
+                    Marshal.GetObjectForIUnknown(viewPointer);
+                folderView.SetCurrentFolderFlags(
+                    FWF_CHECKSELECT,
+                    ItemCheckBoxesEnabled ? FWF_CHECKSELECT : 0);
+            }
+            finally
+            {
+                Marshal.Release(viewPointer);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(ApplyItemCheckBoxSettingToNativeView));
+        }
     }
 
     /// <summary>
@@ -1044,66 +1354,480 @@ public sealed class ExplorerHost : Control, IMessageFilter
         catch (Exception ex) { AppLog.Debug(ex, nameof(RefreshShellView)); }
     }
 
-    // ── Registry-backed global shell settings ────────────────────────────────────
+    /// <summary>
+    /// Enables filesystem change monitoring while this tab is active. Inactive
+    /// tabs retain their last count and refresh when they are selected again.
+    /// </summary>
+    internal void SetItemCountMonitoringActive(bool active)
+    {
+        if (_itemCountMonitoringActive == active)
+        {
+            if (active)
+                ConfigureItemCountWatcher(GetCurrentPath());
+            return;
+        }
 
-    internal static bool IsHiddenItemsVisible()
+        _itemCountMonitoringActive = active;
+        _itemCountDebounceTimer.Stop();
+        if (!active)
+        {
+            DisposeItemCountWatcher();
+            return;
+        }
+
+        ConfigureItemCountWatcher(GetCurrentPath());
+        RefreshItemCountStatus(force: true);
+    }
+
+    /// <summary>Rebinds monitoring and recounts after the active tab navigates.</summary>
+    internal void NotifyItemCountPathChanged()
+    {
+        if (!_itemCountMonitoringActive) return;
+
+        _itemCountDebounceTimer.Stop();
+        ConfigureItemCountWatcher(GetCurrentPath());
+        RefreshItemCountStatus(force: true);
+    }
+
+    /// <summary>Debounces an application-initiated folder refresh with watcher events.</summary>
+    internal void ScheduleItemCountRefresh()
+    {
+        if (!_itemCountMonitoringActive || IsNetworkPath(GetCurrentPath())) return;
+
+        _itemCountDebounceTimer.Stop();
+        _itemCountDebounceTimer.Start();
+    }
+
+    /// <summary>
+    /// Requests separate file and folder totals. Requests are coalesced and a
+    /// single worker performs enumeration, preventing overlapping scans when a
+    /// burst of filesystem or Shell notifications arrives.
+    /// </summary>
+    internal void RefreshItemCountStatus(bool force = false)
+    {
+        if (IsDisposed || Disposing || !_itemCountMonitoringActive) return;
+
+        long now = Environment.TickCount64;
+        long nextRefresh = Volatile.Read(ref _nextItemCountRefreshTick);
+        if (!force && now < nextRefresh) return;
+
+        Volatile.Write(ref _nextItemCountRefreshTick,
+            now + ItemCountFallbackRefreshIntervalMilliseconds);
+
+        string path = GetCurrentPath();
+        if (IsNetworkPath(path)) return;
+
+        bool showHiddenItems = HiddenItemsVisible;
+        bool showProtectedSystemItems = AreProtectedSystemItemsVisible();
+        int generation = Interlocked.Increment(ref _itemCountRequestGeneration);
+        var request = new ItemCountRefreshRequest(
+            path, showHiddenItems, showProtectedSystemItems, generation);
+
+        bool startWorker = false;
+        lock (_itemCountRefreshLock)
+        {
+            _pendingItemCountRefresh = request;
+            if (!_itemCountWorkerRunning)
+            {
+                _itemCountWorkerRunning = true;
+                startWorker = true;
+            }
+        }
+
+        if (startWorker)
+            _ = ProcessItemCountRefreshRequestsAsync();
+    }
+
+    private async Task ProcessItemCountRefreshRequestsAsync()
+    {
+        CancellationToken cancellationToken = _itemCountWorkerCancellation.Token;
+        bool restartWorker = false;
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                ItemCountRefreshRequest request;
+                lock (_itemCountRefreshLock)
+                {
+                    if (_pendingItemCountRefresh is not { } pending)
+                        return;
+
+                    request = pending;
+                    _pendingItemCountRefresh = null;
+                }
+
+                DirectoryItemCount? count;
+                try
+                {
+                    DirectorySnapshot snapshot = await DirectorySnapshotCache.GetAsync(
+                        request.Path, cancellationToken).ConfigureAwait(false);
+                    count = snapshot.CountItems(
+                        request.ShowHiddenItems,
+                        request.ShowProtectedSystemItems);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex) when (
+                    ex is DirectoryNotFoundException or
+                    IOException or
+                    UnauthorizedAccessException)
+                {
+                    AppLog.Debug(ex, nameof(ProcessItemCountRefreshRequestsAsync),
+                        $"Could not count the contents of '{request.Path}'.");
+                    continue;
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn(ex, nameof(ProcessItemCountRefreshRequestsAsync),
+                        $"Could not update the item count for '{request.Path}'.");
+                    continue;
+                }
+
+                if (count is null
+                    || cancellationToken.IsCancellationRequested
+                    || Volatile.Read(ref _itemCountRequestGeneration) != request.Generation
+                    || !PathsReferToSameFolder(GetCurrentPath(), request.Path))
+                    continue;
+
+                PostToUi(() =>
+                {
+                    if (!cancellationToken.IsCancellationRequested
+                        && _itemCountMonitoringActive
+                        && Volatile.Read(ref _itemCountRequestGeneration) == request.Generation
+                        && PathsReferToSameFolder(GetCurrentPath(), request.Path))
+                        ItemCountChanged?.Invoke(this, count.Value);
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+        finally
+        {
+            lock (_itemCountRefreshLock)
+            {
+                _itemCountWorkerRunning = false;
+                if (_pendingItemCountRefresh is not null
+                    && !cancellationToken.IsCancellationRequested)
+                {
+                    _itemCountWorkerRunning = true;
+                    restartWorker = true;
+                }
+            }
+
+            if (restartWorker)
+                _ = ProcessItemCountRefreshRequestsAsync();
+        }
+    }
+
+    private void ConfigureItemCountWatcher(string path)
+    {
+        if (!_itemCountMonitoringActive || IsNetworkPath(path))
+        {
+            DisposeItemCountWatcher();
+            return;
+        }
+
+        if (_itemCountWatchSubscription is not null
+            && string.Equals(_itemCountWatcherPath, path, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        DisposeItemCountWatcher();
+        if (!Directory.Exists(path)) return;
+
+        try
+        {
+            _itemCountWatchSubscription = DirectorySnapshotCache.Watch(
+                path, OnItemCountSnapshotChanged);
+            _itemCountWatcherPath = path;
+        }
+        catch (Exception ex) when (
+            ex is ArgumentException or
+            DirectoryNotFoundException or
+            IOException or
+            UnauthorizedAccessException)
+        {
+            AppLog.Debug(ex, nameof(ConfigureItemCountWatcher),
+                $"Could not monitor '{path}' for item-count changes.");
+        }
+    }
+
+    private void DisposeItemCountWatcher()
+    {
+        IDisposable? subscription = _itemCountWatchSubscription;
+        _itemCountWatchSubscription = null;
+        _itemCountWatcherPath = string.Empty;
+        subscription?.Dispose();
+    }
+
+    private void OnItemCountSnapshotChanged() =>
+        QueueItemCountSnapshotUpdate();
+
+    private void QueueItemCountSnapshotUpdate()
+    {
+        if (Interlocked.Exchange(ref _itemCountWatcherUiUpdatePending, 1) != 0)
+            return;
+
+        PostToUi(() =>
+        {
+            Interlocked.Exchange(ref _itemCountWatcherUiUpdatePending, 0);
+            if (!_itemCountMonitoringActive) return;
+
+            _itemCountDebounceTimer.Stop();
+            _itemCountDebounceTimer.Start();
+        });
+    }
+
+    private void OnItemCountDebounceTick(object? sender, EventArgs e)
+    {
+        _itemCountDebounceTimer.Stop();
+        if (!_itemCountMonitoringActive) return;
+
+        ConfigureItemCountWatcher(GetCurrentPath());
+        RefreshItemCountStatus(force: true);
+        // External deletion or rename can also clear/change the Shell selection.
+        RequestSelectionSnapshotRefresh();
+    }
+
+    internal static DirectoryItemCount? CountDirectoryItems(
+        string path,
+        bool showHiddenItems,
+        bool showProtectedSystemItems,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        if (IsNetworkPath(path)) return null;
+        if (!Directory.Exists(path)) return null;
+
+        DirectorySnapshot snapshot = DirectorySnapshotCache.LoadSnapshot(
+            path, cancellationToken);
+        return snapshot.CountItems(showHiddenItems, showProtectedSystemItems);
+    }
+
+    internal static bool IsNetworkPath(string path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        if (string.IsNullOrWhiteSpace(path)) return false;
+
+        if (path.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        string drivePath = path.StartsWith(@"\\?\", StringComparison.Ordinal)
+            ? path[4..]
+            : path;
+        if (drivePath.StartsWith(@"\\", StringComparison.Ordinal))
+            return true;
+
+        try
+        {
+            string? root = Path.GetPathRoot(drivePath);
+            return !string.IsNullOrEmpty(root)
+                && new DriveInfo(root).DriveType == DriveType.Network;
+        }
+        catch (Exception ex) when (
+            ex is ArgumentException or
+            IOException or
+            UnauthorizedAccessException)
+        {
+            AppLog.Debug(ex, nameof(IsNetworkPath),
+                $"Could not determine the drive type for '{path}'.");
+            return false;
+        }
+    }
+
+    internal static string FormatItemCountStatus(int fileCount, int folderCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(fileCount);
+        ArgumentOutOfRangeException.ThrowIfNegative(folderCount);
+
+        return $"{fileCount} {(fileCount == 1 ? "file" : "files")}, " +
+               $"{folderCount} {(folderCount == 1 ? "folder" : "folders")}";
+    }
+
+    /// <summary>
+    /// Opens the context menu for the current view's blank background. This uses
+    /// IShellView::GetItemObject(SVGIO_BACKGROUND), rather than the folder's own
+    /// context menu, so it exposes the Explorer commands and populated New cascade.
+    /// </summary>
+    internal void ShowBackgroundContextMenu(Point screenLocation)
+    {
+        if (SwitchToBrowserThread(() => ShowBackgroundContextMenu(screenLocation)))
+            return;
+        if (_browser is null || _browserThread is null) return;
+
+        var shellViewId = typeof(NativeMethods.IShellView).GUID;
+        int getViewResult = _browser.GetCurrentView(ref shellViewId, out IntPtr shellViewPointer);
+        if (getViewResult < 0
+            || shellViewPointer == IntPtr.Zero)
+        {
+            AppLog.Debug(nameof(ShowBackgroundContextMenu),
+                $"IExplorerBrowser.GetCurrentView(IShellView) returned 0x{getViewResult:X8}.");
+            return;
+        }
+
+        try
+        {
+            var shellView = (NativeMethods.IShellView)Marshal.GetObjectForIUnknown(shellViewPointer);
+            int getWindowResult = shellView.GetWindow(out IntPtr shellViewWindow);
+            if (getWindowResult < 0 || shellViewWindow == IntPtr.Zero)
+                shellViewWindow = _browserThread.Handle;
+
+            var contextMenuId = typeof(NativeMethods.IContextMenu).GUID;
+            int getItemObjectResult = shellView.GetItemObject(0, ref contextMenuId,
+                out IntPtr contextMenuPointer);
+            if (getItemObjectResult < 0
+                || contextMenuPointer == IntPtr.Zero)
+            {
+                AppLog.Debug(nameof(ShowBackgroundContextMenu),
+                    $"IShellView.GetItemObject(SVGIO_BACKGROUND, IContextMenu) returned " +
+                    $"0x{getItemObjectResult:X8}.");
+                return;
+            }
+
+            try
+            {
+                var contextMenu = (NativeMethods.IContextMenu)Marshal.GetObjectForIUnknown(
+                    contextMenuPointer);
+                IReadOnlyDictionary<int, ShellNewMenu.ShellNewItem> shellNewCommands =
+                    new Dictionary<int, ShellNewMenu.ShellNewItem>();
+                ShellContextMenu.Show(contextMenu, shellViewWindow, screenLocation,
+                    customizeMenu: menu => shellNewCommands = ShellNewMenu.Populate(menu),
+                    executeCustomCommand: commandId => ShellNewMenu.TryExecute(commandId,
+                        shellNewCommands, _currentPath));
+            }
+            finally
+            {
+                Marshal.Release(contextMenuPointer);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(ShowBackgroundContextMenu));
+        }
+        finally
+        {
+            Marshal.Release(shellViewPointer);
+        }
+    }
+
+    /// <summary>
+    /// Executes a command through the selected-item context supplied by the live
+    /// embedded Shell view. Some stateful Windows commands reject a context menu
+    /// reconstructed from the parent folder even though the menu item is visible.
+    /// </summary>
+    internal bool TryInvokeSelectedShellCommand(string path,
+        string canonicalVerb, Point screenLocation)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        ArgumentException.ThrowIfNullOrWhiteSpace(canonicalVerb);
+
+        if (_browserThread != null
+            && NativeMethods.GetCurrentThreadId() != _browserThread.ThreadId)
+        {
+            return _browserThread.Invoke(() =>
+            {
+                SelectItem(path, edit: false);
+                return TryInvokeSelectedShellCommand(
+                    path, canonicalVerb, screenLocation);
+            });
+        }
+
+        if (_browser is null
+            || !PathsReferToSameFolder(Path.GetDirectoryName(path), _currentPath))
+            return false;
+
+        string[] selectedPaths = GetSelectedFileSystemPaths();
+        if (selectedPaths.Length != 1
+            || !PathsReferToSameFolder(selectedPaths[0], path))
+            return false;
+
+        IntPtr shellViewPointer = IntPtr.Zero;
+        IntPtr contextMenuPointer = IntPtr.Zero;
+        NativeMethods.IShellView? shellView = null;
+        NativeMethods.IContextMenu? contextMenu = null;
+        try
+        {
+            Guid shellViewId = typeof(NativeMethods.IShellView).GUID;
+            if (_browser.GetCurrentView(ref shellViewId,
+                    out shellViewPointer) < 0
+                || shellViewPointer == IntPtr.Zero)
+                return false;
+
+            shellView = (NativeMethods.IShellView)
+                Marshal.GetObjectForIUnknown(shellViewPointer);
+            int getWindowResult = shellView.GetWindow(out IntPtr shellViewWindow);
+            if (getWindowResult < 0 || shellViewWindow == IntPtr.Zero)
+                shellViewWindow = _browserThread?.Handle ?? Handle;
+
+            Guid contextMenuId = typeof(NativeMethods.IContextMenu).GUID;
+            const uint SvgioSelection = 1;
+            if (shellView.GetItemObject(SvgioSelection, ref contextMenuId,
+                    out contextMenuPointer) < 0
+                || contextMenuPointer == IntPtr.Zero)
+                return false;
+
+            contextMenu = (NativeMethods.IContextMenu)
+                Marshal.GetObjectForIUnknown(contextMenuPointer);
+            return ShellContextMenu.TryInvokeCanonicalShellCommand(
+                contextMenu, shellViewWindow, canonicalVerb, screenLocation);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(TryInvokeSelectedShellCommand),
+                $"The live Shell view could not run '{canonicalVerb}'.");
+            return false;
+        }
+        finally
+        {
+            if (contextMenu is not null)
+                Marshal.ReleaseComObject(contextMenu);
+            if (contextMenuPointer != IntPtr.Zero)
+                Marshal.Release(contextMenuPointer);
+            if (shellView is not null)
+                Marshal.ReleaseComObject(shellView);
+            if (shellViewPointer != IntPtr.Zero)
+                Marshal.Release(shellViewPointer);
+        }
+    }
+
+    // New tabs start in the application's compact layout. The remaining display
+    // preferences come from Windows Explorer, then all values remain independent
+    // in-memory settings for the tab's lifetime.
+    private static bool ReadHiddenItemsDefault()
     {
         using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
             @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced");
         return key?.GetValue("Hidden") is int v && v == 1;
     }
 
-    internal static void ToggleHiddenItems()
+    private static bool AreProtectedSystemItemsVisible()
     {
         using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-            @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", writable: true);
-        if (key == null) return;
-        int current = key.GetValue("Hidden") is int v ? v : 2;
-        key.SetValue("Hidden", current == 1 ? 2 : 1, Microsoft.Win32.RegistryValueKind.DWord);
-        BroadcastShellRefresh();
+            @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced");
+        return key?.GetValue("ShowSuperHidden") is int value && value == 1;
     }
 
-    internal static bool IsFileExtensionsVisible()
+    private static bool ReadFileExtensionsDefault()
     {
         using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
             @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced");
         return key?.GetValue("HideFileExt") is int v && v == 0;
     }
 
-    internal static void ToggleFileExtensions()
-    {
-        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-            @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", writable: true);
-        if (key == null) return;
-        int current = key.GetValue("HideFileExt") is int v ? v : 1;
-        key.SetValue("HideFileExt", current == 0 ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
-        BroadcastShellRefresh();
-    }
-
-    internal static bool IsCompactViewEnabled()
+    private static bool ReadItemCheckBoxesDefault()
     {
         using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
             @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced");
-        return key?.GetValue("UseCompactMode") is int v && v == 1;
-    }
-
-    internal static void ToggleCompactView()
-    {
-        using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-            @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", writable: true);
-        if (key == null) return;
-        int current = key.GetValue("UseCompactMode") is int v ? v : 0;
-        key.SetValue("UseCompactMode", current == 0 ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
-        NativeMethods.SendNotifyMessage(NativeMethods.HWND_BROADCAST,
-            NativeMethods.WM_SETTINGCHANGE, IntPtr.Zero, "ImmersiveColorSet");
-        NativeMethods.SendNotifyMessage(NativeMethods.HWND_BROADCAST,
-            NativeMethods.WM_SETTINGCHANGE, IntPtr.Zero, null);
+        return key?.GetValue("AutoCheckSelect") is int value && value == 1;
     }
 
     // Sends the file to an already-running QuickLook instance. MultiExplorer does
     // not silently start a separate third-party application; the UI explains how
     // to start or install it when the pipe is unavailable.
-    private static QuickLookFailure? InvokeQuickLook(string filePath)
+    internal static QuickLookFailure? InvokeQuickLook(string filePath)
     {
         // Grant QuickLook permission to bring its window to the foreground.
         // Windows blocks SetForegroundWindow from background processes; only the
@@ -1268,18 +1992,12 @@ public sealed class ExplorerHost : Control, IMessageFilter
         return null;
     }
 
-    private static void BroadcastShellRefresh()
-    {
-        NativeMethods.SHChangeNotify(NativeMethods.SHCNE_ASSOCCHANGED,
-            NativeMethods.SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero);
-    }
-
-    private static NativeMethods.FOLDERSETTINGS CreateHeaderEnabledFolderSettings(uint viewMode)
+    private NativeMethods.FOLDERSETTINGS CreateHeaderEnabledFolderSettings(uint viewMode)
     {
         return new NativeMethods.FOLDERSETTINGS
         {
             ViewMode = viewMode,
-            fFlags   = 0,   // No suppression flags: Vista+ default shows headers in all view modes.
+            fFlags = ItemCheckBoxesEnabled ? FWF_CHECKSELECT : 0,
         };
     }
 
@@ -1293,6 +2011,15 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
     /// <summary>Selects all items in the current shell view.</summary>
     public void SelectAll() => SendAccelWithCtrl(0x41); // Ctrl+A (VK_A)
+
+    /// <summary>Opens the focused selection using the Shell view's default command.</summary>
+    public void OpenSelection()
+    {
+        if (SwitchToBrowserThread(OpenSelection)) return;
+        var message = Message.Create(Handle, 0x0100 /* WM_KEYDOWN */,
+            (IntPtr)0x0D /* VK_RETURN */, (IntPtr)1);
+        TryShellTranslateAccelerator(ref message);
+    }
 
     /// <summary>Shows properties for the selected shell item(s).</summary>
     public void ShowProperties()
@@ -1600,6 +2327,342 @@ public sealed class ExplorerHost : Control, IMessageFilter
         return IntPtr.Zero;
     }
 
+    private bool IsInNavigationTree(IntPtr hwnd)
+    {
+        IntPtr tree = FindDescendant(Handle, "SysTreeView32");
+        return tree != IntPtr.Zero
+            && (hwnd == tree || NativeMethods.IsChild(tree, hwnd));
+    }
+
+    internal static Point GetContextMenuScreenLocation(
+        IntPtr messageParameter, Point cursorPosition)
+    {
+        long packedPoint = messageParameter.ToInt64();
+        if (packedPoint == -1) return cursorPosition;
+
+        return new Point(
+            unchecked((short)(packedPoint & 0xFFFF)),
+            unchecked((short)((packedPoint >> 16) & 0xFFFF)));
+    }
+
+    private string? GetSelectedNavigationPath()
+    {
+        if (_browser == null) return null;
+
+        NativeMethods.INameSpaceTreeControl? tree = null;
+        IntPtr selectedItems = IntPtr.Zero;
+        IntPtr selectedItem = IntPtr.Zero;
+        try
+        {
+            tree = TryGetNameSpaceTreeControl(
+                _browser as NativeMethods.IComServiceProvider);
+            if (tree == null
+                || tree.GetSelectedItems(out selectedItems) < 0
+                || selectedItems == IntPtr.Zero
+                || NativeMethods.ShellItemArrayGetCount(selectedItems, out uint count) < 0
+                || count == 0
+                || NativeMethods.ShellItemArrayGetItemAt(
+                    selectedItems, 0, out selectedItem) < 0
+                || selectedItem == IntPtr.Zero)
+            {
+                return GetSelectedNavigationPathFromTreeText();
+            }
+
+            var shellItem = (NativeMethods.IShellItem)
+                Marshal.GetObjectForIUnknown(selectedItem);
+            return shellItem.GetDisplayName(
+                       0x80058000 /* SIGDN_FILESYSPATH */, out string path) >= 0
+                   && !string.IsNullOrWhiteSpace(path)
+                ? path
+                : GetSelectedNavigationPathFromTreeText();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(GetSelectedNavigationPath));
+            return GetSelectedNavigationPathFromTreeText();
+        }
+        finally
+        {
+            if (selectedItem != IntPtr.Zero) Marshal.Release(selectedItem);
+            if (selectedItems != IntPtr.Zero) Marshal.Release(selectedItems);
+            if (tree != null) Marshal.ReleaseComObject(tree);
+        }
+    }
+
+    private string? GetNavigationPathAtScreenPoint(Point screenLocation)
+    {
+        if (_browser == null) return null;
+
+        NativeMethods.INameSpaceTreeControl? tree = null;
+        IntPtr shellItemPointer = IntPtr.Zero;
+        try
+        {
+            tree = TryGetNameSpaceTreeControl(
+                _browser as NativeMethods.IComServiceProvider);
+            if (tree == null) return null;
+
+            IntPtr namespaceTreeWindow = FindDescendant(
+                Handle, "NamespaceTreeControl");
+            if (namespaceTreeWindow == IntPtr.Zero) return null;
+
+            var point = new NativeMethods.POINT(
+                screenLocation.X, screenLocation.Y);
+            if (!NativeMethods.ScreenToClient(namespaceTreeWindow, ref point))
+                return null;
+
+            if (tree.HitTest(ref point, out shellItemPointer) < 0
+                || shellItemPointer == IntPtr.Zero)
+                return null;
+
+            var shellItem = (NativeMethods.IShellItem)
+                Marshal.GetObjectForIUnknown(shellItemPointer);
+            return shellItem.GetDisplayName(
+                       0x80058000 /* SIGDN_FILESYSPATH */, out string path) >= 0
+                   && !string.IsNullOrWhiteSpace(path)
+                ? path
+                : null;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(GetNavigationPathAtScreenPoint));
+            return null;
+        }
+        finally
+        {
+            if (shellItemPointer != IntPtr.Zero) Marshal.Release(shellItemPointer);
+            if (tree != null) Marshal.ReleaseComObject(tree);
+        }
+    }
+
+    internal static string? SelectNavigationContextPath(
+        string? hitPath, string? selectedPath, bool allowSelectedFallback)
+    {
+        if (!string.IsNullOrWhiteSpace(hitPath)) return hitPath;
+
+        return allowSelectedFallback && !string.IsNullOrWhiteSpace(selectedPath)
+            ? selectedPath
+            : null;
+    }
+
+    private bool TryRequestNavigationContextMenu(
+        Point screenLocation, bool allowSelectedFallback)
+    {
+        string? hitPath = GetNavigationPathAtScreenPoint(screenLocation);
+        string? selectedPath = SelectNavigationContextPath(
+            hitPath,
+            allowSelectedFallback ? GetSelectedNavigationPath() : null,
+            allowSelectedFallback);
+        if (string.IsNullOrWhiteSpace(selectedPath)
+            || !Directory.Exists(selectedPath))
+            return false;
+
+        PostToUi(() => NavigationContextMenuRequested?.Invoke(this,
+            new NavigationContextMenuEventArgs(selectedPath, screenLocation)));
+        return true;
+    }
+
+    private void InstallNavigationTreeContextMenuHook()
+    {
+        IntPtr tree = FindDescendant(Handle, "SysTreeView32");
+        IntPtr notificationWindow = tree == IntPtr.Zero
+            ? IntPtr.Zero
+            : NativeMethods.GetParent(tree);
+        if (tree == IntPtr.Zero || notificationWindow == IntPtr.Zero) return;
+
+        if (_navigationTreeContextMenuHook is { } existing
+            && existing.TreeHandle == tree
+            && existing.NotificationWindowHandle == notificationWindow)
+            return;
+
+        _navigationTreeContextMenuHook?.Dispose();
+        _navigationTreeContextMenuHook = new NavigationTreeNotificationHook(
+            this, notificationWindow, tree);
+    }
+
+    private string? GetSelectedNavigationPathFromTreeText()
+    {
+        IntPtr tree = FindDescendant(Handle, "SysTreeView32");
+        if (tree == IntPtr.Zero) return null;
+
+        IntPtr selected = NativeMethods.SendMessageI(
+            tree, NativeMethods.TVM_GETNEXTITEM,
+            (IntPtr)NativeMethods.TVGN_CARET, IntPtr.Zero);
+        if (selected == IntPtr.Zero) return null;
+
+        var reverseParts = new List<string>();
+        for (IntPtr item = selected; item != IntPtr.Zero;
+             item = NativeMethods.SendMessageI(
+                 tree, NativeMethods.TVM_GETNEXTITEM,
+                 (IntPtr)NativeMethods.TVGN_PARENT, item))
+        {
+            reverseParts.Add(TreeItemText(tree, item));
+        }
+
+        reverseParts.Reverse();
+        return TryBuildNavigationTreePath(reverseParts);
+    }
+
+    internal void BeginNavigationRename()
+    {
+        if (SwitchToBrowserThread(BeginNavigationRename)) return;
+
+        IntPtr tree = FindDescendant(Handle, "SysTreeView32");
+        if (tree == IntPtr.Zero) return;
+
+        IntPtr selected = NativeMethods.SendMessageI(
+            tree, NativeMethods.TVM_GETNEXTITEM,
+            (IntPtr)NativeMethods.TVGN_CARET, IntPtr.Zero);
+        if (selected == IntPtr.Zero) return;
+
+        NativeMethods.SetFocus(tree);
+        NativeMethods.SendMessageI(
+            tree, NativeMethods.TVM_EDITLABEL, IntPtr.Zero, selected);
+    }
+
+    private bool IsNavigationTreeExpandButtonAtCursor()
+    {
+        return TryGetNavigationTreeHitAtCursor(out NativeMethods.TVHITTESTINFO hit)
+            && (hit.flags & NativeMethods.TVHT_ONITEMBUTTON) != 0;
+    }
+
+    private bool IsNavigationTreeItemAtCursor() =>
+        TryGetNavigationTreeHitAtCursor(out NativeMethods.TVHITTESTINFO hit)
+        && hit.hItem != IntPtr.Zero;
+
+    private bool TryGetNavigationTreeHitAtCursor(
+        out NativeMethods.TVHITTESTINFO hit)
+    {
+        hit = default;
+        IntPtr tree = FindDescendant(Handle, "SysTreeView32");
+        if (tree == IntPtr.Zero) return false;
+
+        hit = new NativeMethods.TVHITTESTINFO
+        {
+            pt = new NativeMethods.POINT(Cursor.Position.X, Cursor.Position.Y),
+        };
+        if (!NativeMethods.ScreenToClient(tree, ref hit.pt)) return false;
+
+        IntPtr buffer = Marshal.AllocHGlobal(Marshal.SizeOf<NativeMethods.TVHITTESTINFO>());
+        try
+        {
+            Marshal.StructureToPtr(hit, buffer, false);
+            NativeMethods.SendMessageI(tree, NativeMethods.TVM_HITTEST, IntPtr.Zero, buffer);
+            hit = Marshal.PtrToStructure<NativeMethods.TVHITTESTINFO>(buffer);
+            return hit.hItem != IntPtr.Zero;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    private void QueueNavigationTreeFallback()
+    {
+        BrowserThread? thread = _browserThread;
+        if (thread == null) return;
+
+        int generation = Interlocked.Increment(ref _navigationClickGeneration);
+        // ExplorerBrowser commits a tree selection asynchronously.  Some Shell
+        // builds have it ready almost immediately while others can take longer
+        // after the mouse-up, so one fixed-delay probe is unreliable.
+        foreach (int delay in new[] { 100, 350, 750 })
+        {
+            _ = Task.Delay(delay).ContinueWith(_ =>
+            {
+                if (Volatile.Read(ref _navigationClickGeneration) == generation)
+                    thread.Post(() => VerifyNavigationTreePath(generation));
+            }, TaskScheduler.Default);
+        }
+    }
+
+    private void VerifyNavigationTreePath(int generation)
+    {
+        if (_browser == null
+            || Volatile.Read(ref _navigationClickGeneration) != generation)
+            return;
+
+        IntPtr tree = FindDescendant(Handle, "SysTreeView32");
+        if (tree == IntPtr.Zero)
+        {
+            AppLog.Debug(nameof(VerifyNavigationTreePath),
+                $"Could not find SysTreeView32 for verification generation {generation}.");
+            return;
+        }
+
+        IntPtr selected = NativeMethods.SendMessageI(
+            tree, NativeMethods.TVM_GETNEXTITEM,
+            (IntPtr)NativeMethods.TVGN_CARET, IntPtr.Zero);
+        if (selected == IntPtr.Zero)
+        {
+            AppLog.Debug(nameof(VerifyNavigationTreePath),
+                $"Navigation tree has no caret item for verification generation {generation}.");
+            return;
+        }
+
+        var reverseParts = new List<string>();
+        for (IntPtr item = selected; item != IntPtr.Zero;
+             item = NativeMethods.SendMessageI(
+                 tree, NativeMethods.TVM_GETNEXTITEM,
+                 (IntPtr)NativeMethods.TVGN_PARENT, item))
+        {
+            reverseParts.Add(TreeItemText(tree, item));
+        }
+        reverseParts.Reverse();
+
+        string? selectedPath = TryBuildNavigationTreePath(reverseParts);
+        if (selectedPath == null)
+        {
+            AppLog.Debug(nameof(VerifyNavigationTreePath),
+                $"Could not reconstruct a file-system path from navigation selection: " +
+                $"'{string.Join(" > ", reverseParts)}'.");
+            return;
+        }
+
+        string? livePath = QueryLivePath();
+        if (PathsReferToSameFolder(livePath, selectedPath))
+            return;
+
+        // Invalidate the other scheduled probes before navigating. A compare-
+        // exchange prevents an old selection from winning if the user clicked a
+        // different folder while this callback was waiting on the browser STA.
+        if (Interlocked.CompareExchange(ref _navigationClickGeneration,
+                generation + 1, generation) == generation)
+            BrowseTo(selectedPath);
+    }
+
+    internal static string? TryBuildNavigationTreePath(IReadOnlyList<string> parts)
+    {
+        for (int partIndex = 0; partIndex < parts.Count; partIndex++)
+        {
+            string label = parts[partIndex];
+            for (int charIndex = 0; charIndex + 1 < label.Length; charIndex++)
+            {
+                char drive = label[charIndex];
+                if (!char.IsLetter(drive) || label[charIndex + 1] != ':') continue;
+
+                string path = char.ToUpperInvariant(drive) + @":\";
+                for (int childIndex = partIndex + 1; childIndex < parts.Count; childIndex++)
+                {
+                    string child = parts[childIndex].Trim();
+                    if (child.Length == 0) return null;
+                    path = Path.Combine(path, child);
+                }
+                return path;
+            }
+        }
+        return null;
+    }
+
+    internal static bool PathsReferToSameFolder(string? first, string? second)
+    {
+        if (string.IsNullOrWhiteSpace(first) || string.IsNullOrWhiteSpace(second))
+            return false;
+        return string.Equals(
+            first.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            second.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     // Returns the list-view HWND inside the embedded browser, preferring the
     // window that currently has Win32 focus (user's last interaction point).
     private IntPtr FindListView()
@@ -1659,6 +2722,8 @@ public sealed class ExplorerHost : Control, IMessageFilter
     {
         if (_browser == null) return;
 
+        _navigationTreeContextMenuHook?.Dispose();
+        _navigationTreeContextMenuHook = null;
         RemoveAsynchronousFileDropTarget();
 
         try
@@ -1705,17 +2770,84 @@ public sealed class ExplorerHost : Control, IMessageFilter
             string? livePath = QueryLivePath();
             if (livePath != null)
                 _currentPath = livePath;
+            Volatile.Write(ref _cachedSelectedItemPath, null);
+            Volatile.Write(ref _cachedSelectedFileSystemPaths, []);
         }
 
         InstallAsynchronousFileDropTarget();
+        InstallNavigationTreeContextMenuHook();
 
-        // A completed BrowseToIDList has installed the final view. Folder state can
-        // replace Initialize's settings, and DirectUI children now exist to be themed.
-        ApplyFolderSettings(FVM_DETAILS);
+        // A completed BrowseToIDList has installed the final view. ExplorerBrowser
+        // has now restored any state held in the MultiExplorer property bag.
+        if (TryGetCurrentFolderViewState(out ExplorerFolderViewState viewState))
+            UpdateCurrentFolderViewState(viewState.ViewMode, viewState.IconSize);
         ActivateShellView(takeFocus: false);
         ApplyTheme();
+        if (succeeded)
+            PostToUi(() => NavigationChanged?.Invoke(this, EventArgs.Empty));
         ReportInitialNavigationCompleted();
     }
+
+    private bool TryGetCurrentFolderViewState(out ExplorerFolderViewState state)
+    {
+        state = default;
+        if (_browser == null) return false;
+
+        try
+        {
+            var folderViewId = new Guid("1AF3A467-214F-4298-908E-06B03E0B39F9");
+            if (_browser.GetCurrentView(ref folderViewId, out IntPtr viewPointer) < 0
+                || viewPointer == IntPtr.Zero)
+                return false;
+
+            try
+            {
+                var folderView = (NativeMethods.IFolderView2)
+                    Marshal.GetObjectForIUnknown(viewPointer);
+                if (folderView.GetViewModeAndIconSize(
+                        out uint viewMode, out int iconSize) < 0
+                    || !ExplorerFolderViewState.IsSupportedViewMode(viewMode))
+                    return false;
+
+                state = new ExplorerFolderViewState(
+                    viewMode, Math.Max(0, iconSize));
+                return true;
+            }
+            finally { Marshal.Release(viewPointer); }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(TryGetCurrentFolderViewState));
+            return false;
+        }
+    }
+
+    private void UpdateCurrentFolderViewState(uint viewMode, int iconSize)
+    {
+        if (!ExplorerFolderViewState.IsSupportedViewMode(viewMode)) return;
+
+        int normalizedIconSize = Math.Max(0, iconSize);
+        int normalizedViewMode = unchecked((int)viewMode);
+        bool changed = Interlocked.Exchange(
+                ref _currentViewMode, normalizedViewMode) != normalizedViewMode;
+        changed |= Interlocked.Exchange(
+            ref _currentViewIconSize, normalizedIconSize) != normalizedIconSize;
+        if (!changed) return;
+
+        var state = new ExplorerFolderViewState(viewMode, normalizedIconSize);
+        PostToUi(() => FolderViewStateChanged?.Invoke(this, state));
+    }
+
+    private static int GetDefaultIconSize(uint viewMode) => viewMode switch
+    {
+        1 => 96,
+        2 => 16,
+        3 => 16,
+        FVM_DETAILS => 16,
+        6 => 48,
+        8 => 32,
+        _ => 16,
+    };
 
     private void ReportInitialNavigationCompleted()
     {
@@ -1878,15 +3010,81 @@ public sealed class ExplorerHost : Control, IMessageFilter
     /// </summary>
     internal void SyncNavigationPane(string path)
     {
-        if (SwitchToBrowserThread(() => SyncNavigationPane(path))) return;
+        Interlocked.Increment(ref _navigationRestoreGeneration);
+        SyncNavigationPaneCore(path);
+    }
+
+    /// <summary>
+    /// Restores a saved path in the navigation tree. NamespaceTreeControl loads
+    /// descendants asynchronously after each expansion, so deep paths require
+    /// more than one synchronization pass during application startup.
+    /// </summary>
+    internal void RestoreNavigationPane(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        int generation = Interlocked.Increment(ref _navigationRestoreGeneration);
+        SyncNavigationPaneCore(path);
+        _ = RestoreNavigationPaneAsync(path, generation);
+    }
+
+    private async Task RestoreNavigationPaneAsync(string path, int generation)
+    {
+        int pathDepth = path
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                StringSplitOptions.RemoveEmptyEntries)
+            .Length;
+        int attempts = Math.Clamp(pathDepth + 5, 7, 16);
+
+        for (int attempt = 0; attempt < attempts; attempt++)
+        {
+            int delay = Math.Min(400, 125 + (attempt * 35));
+            await Task.Delay(delay).ConfigureAwait(false);
+
+            if (Volatile.Read(ref _navigationRestoreGeneration) != generation
+                || IsDisposed || Disposing
+                || !PathsReferToSameFolder(_currentPath, path))
+                return;
+
+            BrowserThread? thread = _browserThread;
+            if (thread == null) return;
+
+            thread.Post(() =>
+            {
+                if (Volatile.Read(ref _navigationRestoreGeneration) != generation
+                    || !ReferenceEquals(thread, _browserThread)
+                    || !PathsReferToSameFolder(_currentPath, path))
+                    return;
+
+                SyncNavigationPaneCore(path);
+                if (PathsReferToSameFolder(GetSelectedNavigationPath(), path))
+                {
+                    Interlocked.CompareExchange(ref _navigationRestoreGeneration,
+                        generation + 1, generation);
+                }
+            });
+        }
+    }
+
+    private void SyncNavigationPaneCore(string path)
+    {
+        if (SwitchToBrowserThread(() => SyncNavigationPaneCore(path))) return;
         if (_browser == null || string.IsNullOrEmpty(path)) return;
         try
         {
-            // UNC paths have no drive node to locate by text. Ask the shell's
-            // namespace-tree control to resolve the path by IShellItem identity.
-            if (path.StartsWith(@"\\", StringComparison.Ordinal)
-                && TrySyncNamespaceTree(path))
+            // Resolve by Shell identity first. Some Windows builds return success
+            // from EnsureItemVisible before the visible Win32 tree has populated
+            // its descendants, so local paths must still run the direct expansion
+            // below on every retry pass. UNC paths have no drive node to walk.
+            bool shellIdentitySynced = TrySyncNamespaceTree(path);
+            if (path.StartsWith(@"\\", StringComparison.Ordinal))
+            {
+                if (!shellIdentitySynced)
+                    AppLog.Debug(nameof(SyncNavigationPaneCore),
+                        $"Could not restore the UNC navigation path '{path}'.");
                 return;
+            }
 
             IntPtr hwndTree = FindDescendant(Handle, "SysTreeView32");
             if (hwndTree != IntPtr.Zero)
@@ -1899,13 +3097,12 @@ public sealed class ExplorerHost : Control, IMessageFilter
     // (notably UNC shares) through the shell namespace rather than display text.
     private bool TrySyncNamespaceTree(string path)
     {
-        if (_browser is not NativeMethods.IComServiceProvider sp) return false;
-
         NativeMethods.INameSpaceTreeControl? tree = null;
         NativeMethods.IShellItem? item = null;
         try
         {
-            tree = TryGetNameSpaceTreeControl(sp);
+            tree = TryGetNameSpaceTreeControl(
+                _browser as NativeMethods.IComServiceProvider);
             if (tree == null) return false;
 
             var shellItemId = new Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE");
@@ -1920,8 +3117,8 @@ public sealed class ExplorerHost : Control, IMessageFilter
             if (tree.EnsureItemVisible(item) < 0) return false;
 
             const uint NSTCIS_SELECTED = 0x0001;
-            tree.SetItemState(item, NSTCIS_SELECTED, NSTCIS_SELECTED);
-            return true;
+            return tree.SetItemState(item,
+                NSTCIS_SELECTED, NSTCIS_SELECTED) >= 0;
         }
         catch (Exception ex)
         {
@@ -1951,10 +3148,34 @@ public sealed class ExplorerHost : Control, IMessageFilter
         }
     }
 
-    private static NativeMethods.INameSpaceTreeControl? TryGetNameSpaceTreeControl(
-        NativeMethods.IComServiceProvider sp)
+    private NativeMethods.INameSpaceTreeControl? TryGetNameSpaceTreeControl(
+        NativeMethods.IComServiceProvider? sp)
     {
-        var treeId = new Guid("028212A3-B627-47E9-8855-9F598112A7AB");
+        var treeId = typeof(NativeMethods.INameSpaceTreeControl).GUID;
+        const int OBJID_NATIVEOM = unchecked((int)0xFFFFFFF0);
+
+        // The navigation control exposes its native automation object directly
+        // from its HWND.  Prefer this route because service exposure differs
+        // between Windows Shell builds and configurations.
+        IntPtr namespaceTreeHwnd = FindDescendant(Handle, "NamespaceTreeControl");
+        if (namespaceTreeHwnd != IntPtr.Zero)
+        {
+            if (NativeMethods.AccessibleObjectFromWindow(
+                    namespaceTreeHwnd, OBJID_NATIVEOM, ref treeId,
+                    out IntPtr hwndTreePtr) >= 0
+                && hwndTreePtr != IntPtr.Zero)
+            {
+                try
+                {
+                    return (NativeMethods.INameSpaceTreeControl)
+                        Marshal.GetObjectForIUnknown(hwndTreePtr);
+                }
+                finally { Marshal.Release(hwndTreePtr); }
+            }
+        }
+
+
+        if (sp == null) return null;
 
         // Some ExplorerBrowser versions expose the namespace tree directly.
         if (sp.QueryService(ref treeId, ref treeId, out IntPtr treePtr) >= 0
@@ -1985,7 +3206,6 @@ public sealed class ExplorerHost : Control, IMessageFilter
 
         if (controlResult < 0 || treeHwnd == IntPtr.Zero) return null;
 
-        const int OBJID_NATIVEOM = unchecked((int)0xFFFFFFF0);
         if (NativeMethods.AccessibleObjectFromWindow(
                 treeHwnd, OBJID_NATIVEOM, ref treeId, out IntPtr nativeTreePtr) < 0
             || nativeTreePtr == IntPtr.Zero)
@@ -2162,6 +3382,90 @@ public sealed class ExplorerHost : Control, IMessageFilter
             || string.Equals(t, "此电脑",         StringComparison.OrdinalIgnoreCase); // Chinese
     }
 
+    /// <summary>
+    /// NamespaceTreeControl handles NM_RCLICK synchronously inside its own window
+    /// procedure, so a message-pump filter cannot reliably replace its menu. Hook
+    /// the notification window and consume that notification before the legacy
+    /// Shell menu is created.
+    /// </summary>
+    private sealed class NavigationTreeNotificationHook : NativeWindow, IDisposable
+    {
+        private const int WmNotify = 0x004E;
+        private const int NmRightClick = -5;
+        private ExplorerHost? _owner;
+
+        internal IntPtr NotificationWindowHandle { get; }
+        internal IntPtr TreeHandle { get; }
+
+        internal NavigationTreeNotificationHook(ExplorerHost owner,
+            IntPtr notificationWindow, IntPtr tree)
+        {
+            ArgumentNullException.ThrowIfNull(owner);
+            if (notificationWindow == IntPtr.Zero)
+                throw new ArgumentException(
+                    "A navigation notification window is required.",
+                    nameof(notificationWindow));
+            if (tree == IntPtr.Zero)
+                throw new ArgumentException(
+                    "A navigation tree window is required.", nameof(tree));
+
+            _owner = owner;
+            NotificationWindowHandle = notificationWindow;
+            TreeHandle = tree;
+            AssignHandle(notificationWindow);
+        }
+
+        protected override void WndProc(ref Message message)
+        {
+            ExplorerHost? owner = _owner;
+            if (owner != null
+                && message.Msg == WmNotify
+                && message.LParam != IntPtr.Zero)
+            {
+                var header = Marshal.PtrToStructure<NotifyHeader>(message.LParam);
+                if (header.WindowFrom == TreeHandle
+                    && header.Code == NmRightClick
+                    && owner.TryRequestNavigationContextMenu(
+                        Cursor.Position, allowSelectedFallback: false))
+                {
+                    message.Result = (IntPtr)1;
+                    return;
+                }
+            }
+
+            if (owner != null && message.Msg == NativeMethods.WM_CONTEXTMENU)
+            {
+                Point screenLocation = GetContextMenuScreenLocation(
+                    message.LParam, Cursor.Position);
+                bool keyboardRequest = message.LParam.ToInt64() == -1;
+                if (owner.TryRequestNavigationContextMenu(
+                        screenLocation, allowSelectedFallback: keyboardRequest))
+                {
+                    message.Result = IntPtr.Zero;
+                    return;
+                }
+            }
+
+            base.WndProc(ref message);
+        }
+
+        public void Dispose()
+        {
+            if (_owner == null) return;
+
+            _owner = null;
+            ReleaseHandle();
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private readonly struct NotifyHeader
+        {
+            internal readonly IntPtr WindowFrom;
+            internal readonly nuint IdFrom;
+            internal readonly int Code;
+        }
+    }
+
 }
 
 /// <summary>
@@ -2335,15 +3639,32 @@ internal sealed class BrowserSiteImpl : NativeMethods.IServiceProvider
 
     public int QueryService(ref Guid guidService, ref Guid riid, out IntPtr ppvObject)
     {
-        if (guidService == _sidFolderViewSettings)
+        if (guidService == _sidFolderViewSettings && riid == _sidFolderViewSettings)
         {
             ppvObject = Marshal.GetComInterfaceForObject(
                 _fvs, typeof(NativeMethods.IFolderViewSettings));
             return 0;
         }
         ppvObject = IntPtr.Zero;
-        return unchecked((int)0x80004001);
+        // QueryService requires E_NOINTERFACE for an unsupported service/IID pair.
+        // E_NOTIMPL is not equivalent and is handled differently by some Shell builds.
+        return unchecked((int)0x80004002);
     }
+
+}
+
+internal readonly record struct ItemCountRefreshRequest(
+    string Path,
+    bool ShowHiddenItems,
+    bool ShowProtectedSystemItems,
+    int Generation);
+
+internal readonly record struct DirectoryItemCount(int FileCount, int FolderCount);
+
+internal readonly record struct ExplorerFolderViewState(uint ViewMode, int IconSize)
+{
+    internal static bool IsSupportedViewMode(uint viewMode) =>
+        viewMode is >= 1 and <= 8;
 }
 
 // Non-nested for the same reason as BrowserSiteImpl: private nested callback classes
@@ -2390,21 +3711,54 @@ internal sealed class ExplorerBrowserEventsImpl : NativeMethods.IExplorerBrowser
 internal sealed class FolderViewSettingsImpl : NativeMethods.IFolderViewSettings
 {
     private const int E_NOTIMPL = unchecked((int)0x80004001);
+    private static readonly Guid ItemNameDisplayFormatId =
+        new("B725F130-47EF-101A-A5F1-02608C9EEBAC");
+
+    public int GetColumnPropertyList(ref Guid riid, out IntPtr ppv)
+    { ppv = IntPtr.Zero; return E_NOTIMPL; }
+
+    public int GetGroupByProperty(out NativeMethods.PROPERTYKEY pkey, out int pfGroupAscending)
+    { pkey = default; pfGroupAscending = 0; return E_NOTIMPL; }
+
+    public int GetViewMode(out uint puViewMode)
+    {
+        // Let ExplorerBrowser restore this folder from its named property bag.
+        // Initialize's FOLDERSETTINGS still provides Details for an unseen folder.
+        puViewMode = 0;
+        return E_NOTIMPL;
+    }
+
+    public int GetIconSize(out uint puIconSize)
+    {
+        puIconSize = 0;
+        return E_NOTIMPL;
+    }
 
     public int GetFolderFlags(out uint pfolderMask, out uint pfolderFlags)
     { pfolderMask = 0; pfolderFlags = 0; return 0; }
 
-    public int GetViewMode(out uint puViewMode)
-    { puViewMode = 4; return 0; } // FVM_DETAILS
-
-    public int GetIconSize(out uint puIconSize)
+    public int GetSortColumns(IntPtr rgSortColumns, uint cColumnsIn, out uint cColumnsOut)
     {
-        puIconSize = 16;
+        if (rgSortColumns == IntPtr.Zero || cColumnsIn == 0)
+        {
+            cColumnsOut = 0;
+            return E_NOTIMPL;
+        }
+
+        var nameAscending = new NativeMethods.SORTCOLUMN
+        {
+            propkey = new NativeMethods.PROPERTYKEY
+            {
+                fmtid = ItemNameDisplayFormatId,
+                pid = 10,
+            },
+            direction = 1,
+        };
+        Marshal.StructureToPtr(nameAscending, rgSortColumns, fDeleteOld: false);
+        cColumnsOut = 1;
         return 0;
     }
 
-    public int GetSortColumns(IntPtr rgSortColumns, uint cColumns)   { return E_NOTIMPL; }
-    public int GetGroupBy(IntPtr pkey, out int pfGroupAscending)     { pfGroupAscending = 0; return E_NOTIMPL; }
-    public int GetColumnStates(IntPtr rgKeyNames, uint cColumns)     { return E_NOTIMPL; }
-    public int GetDefaultColumnWidth(IntPtr pkey, out uint pcxColumn){ pcxColumn = 0; return E_NOTIMPL; }
+    public int GetGroupSubsetCount(out uint pcVisibleRows)
+    { pcVisibleRows = 0; return E_NOTIMPL; }
 }

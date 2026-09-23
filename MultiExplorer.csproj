@@ -2,8 +2,10 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.18362.0</TargetFramework>
+    <WindowsSdkPackageVersion>10.0.22621.42</WindowsSdkPackageVersion>
     <UseWindowsForms>true</UseWindowsForms>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>MultiExplorer</AssemblyName>
@@ -17,11 +19,19 @@
     <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
     <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
 
+    <!-- Dynamic Profile-Guided Optimization: the runtime profiles hot methods in
+         Tier 0 and re-JITs them in Tier 1 using that real-world profile, producing
+         faster steady-state code (notably better devirtualization of the frequent
+         COM interface calls). Enabled explicitly so it is not lost if a future
+         runtime changes its defaults. Only affects tiered/optimized runs. -->
+    <TieredCompilation>true</TieredCompilation>
+    <TieredPGO>true</TieredPGO>
+
     <!-- Publish produces a self-contained app — no separate .NET runtime is needed.
          Keep the runtime as separate files so Windows does not have to scan one
          160+ MB executable before a newly installed copy can start.
          Run: dotnet publish -c Release
-         Output: bin\Release\net8.0-windows\win-x64\publish\ -->
+         Output: bin\Release\net8.0-windows10.0.18362.0\win-x64\publish\ -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained Condition="'$(Configuration)' == 'Release'">true</SelfContained>
     <PublishSingleFile>false</PublishSingleFile>
@@ -34,26 +44,57 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
+  <ItemGroup Condition="'$(SelfContained)' == 'true'">
+    <FrameworkReference Update="Microsoft.NETCore.App"
+                        RuntimeFrameworkVersion="$(SelfContainedRuntimeVersion)" />
+    <FrameworkReference Update="Microsoft.WindowsDesktop.App.WindowsForms"
+                        RuntimeFrameworkVersion="$(SelfContainedRuntimeVersion)" />
+  </ItemGroup>
+
   <ItemGroup>
     <EmbeddedResource Include="MultiExplorer-Installer.ico" />
+    <!-- Keep an offline recovery copy inside the executable. The loose HTML file
+         remains available for normal installs, while the embedded copy lets F1
+         continue to work if that file is removed. -->
+    <EmbeddedResource Include="MultiExplorer.Help.html"
+                      LogicalName="MultiExplorer.EmbeddedHelp.html" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Remove="MultiExplorer.Tests\**" />
     <Compile Remove="MultiExplorer.OperationHost\**" />
+    <Compile Remove="MultiExplorer.ShareHost\**" />
+    <Compile Remove="tools\NetFrameworkShareDiagnostic\**" />
+    <Compile Remove="tools\MultiExplorer.MenuDiagnostic\**" />
+    <Compile Remove="tmp\**" />
     <EmbeddedResource Remove="MultiExplorer.Tests\**" />
     <EmbeddedResource Remove="MultiExplorer.OperationHost\**" />
+    <EmbeddedResource Remove="MultiExplorer.ShareHost\**" />
+    <EmbeddedResource Remove="tools\NetFrameworkShareDiagnostic\**" />
+    <EmbeddedResource Remove="tools\MultiExplorer.MenuDiagnostic\**" />
+    <EmbeddedResource Remove="tmp\**" />
     <None Remove="MultiExplorer.Tests\**" />
     <None Remove="MultiExplorer.OperationHost\**" />
+    <None Remove="MultiExplorer.ShareHost\**" />
+    <None Remove="tools\NetFrameworkShareDiagnostic\**" />
+    <None Remove="tools\MultiExplorer.MenuDiagnostic\**" />
+    <None Remove="tmp\**" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="MultiExplorer.OperationHost\MultiExplorer.OperationHost.csproj"
-                      ReferenceOutputAssembly="false" />
+                      ReferenceOutputAssembly="false"
+                      AdditionalProperties="SelfContained=$(SelfContained)" />
   </ItemGroup>
 
   <ItemGroup>
     <Content Include="MultiExplorer-Installer.ico" />
+    <None Update="MultiExplorer.Help.html"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+    <None Update="release_notes.txt"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <Target Name="CopyOperationHostForBuild" AfterTargets="Build">
@@ -65,6 +106,7 @@
           SkipUnchangedFiles="true" />
   </Target>
 
+
   <Target Name="PublishOperationHost" AfterTargets="Publish">
     <PropertyGroup>
       <_OperationHostPublishDir Condition="$([System.IO.Path]::IsPathRooted('$(PublishDir)'))">$(PublishDir)</_OperationHostPublishDir>
@@ -72,6 +114,7 @@
     </PropertyGroup>
     <MSBuild Projects="$(MSBuildProjectDirectory)\MultiExplorer.OperationHost\MultiExplorer.OperationHost.csproj"
              Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(_OperationHostPublishDir);Version=$(Version)" />
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(_OperationHostPublishDir);Version=$(Version);FileVersion=$(FileVersion)" />
   </Target>
+
 </Project>

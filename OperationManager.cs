@@ -6,10 +6,15 @@ namespace MultiExplorer;
 
 internal sealed class OperationManager : IDisposable
 {
+    private static readonly TimeSpan OperationArtifactRetention = TimeSpan.FromDays(1);
+    private static readonly TimeSpan ArtifactCleanupInterval = TimeSpan.FromHours(1);
+
     private readonly object _gate = new();
     private readonly Dictionary<Guid, FileOperationState> _states = new();
     private readonly System.Windows.Forms.Timer _pollTimer;
     private readonly SynchronizationContext? _uiContext;
+    private readonly Func<OperationWindowPlacement?> _windowPlacementProvider;
+    private DateTime _nextArtifactCleanupUtc;
     private bool _disposed;
 
     internal static OperationManager? Current { get; private set; }
@@ -17,14 +22,17 @@ internal sealed class OperationManager : IDisposable
     internal event EventHandler? OperationsChanged;
     internal event EventHandler? OperationsBecameIdle;
 
-    internal OperationManager()
+    internal OperationManager(Func<OperationWindowPlacement?> windowPlacementProvider)
     {
+        ArgumentNullException.ThrowIfNull(windowPlacementProvider);
         if (Current != null)
             throw new InvalidOperationException("Only one operation manager may be active.");
 
         Current = this;
         _uiContext = SynchronizationContext.Current;
+        _windowPlacementProvider = windowPlacementProvider;
         DiscoverExistingOperations();
+        _nextArtifactCleanupUtc = DateTime.UtcNow + ArtifactCleanupInterval;
         _pollTimer = new System.Windows.Forms.Timer { Interval = 500 };
         _pollTimer.Tick += (_, _) => RefreshStates();
         _pollTimer.Start();
@@ -66,6 +74,7 @@ internal sealed class OperationManager : IDisposable
             Kind = kind,
             Sources = paths,
             Destination = destination,
+            WindowPlacement = GetWindowPlacement(),
             CreatedUtc = DateTime.UtcNow,
         };
         var state = new FileOperationState
@@ -74,12 +83,16 @@ internal sealed class OperationManager : IDisposable
             Kind = request.Kind,
             Status = FileOperationStatus.Queued,
             TotalItems = paths.Length,
+            CreatedUtc = request.CreatedUtc,
             UpdatedUtc = DateTime.UtcNow,
         };
+        FileOperationPresentation.ApplyRequestContext(state, request);
 
+        bool requestWritten = false;
         try
         {
             FileOperationStore.WriteRequest(request);
+            requestWritten = true;
             string hostPath = Path.Combine(AppContext.BaseDirectory,
                 "MultiExplorer.OperationHost.exe");
             if (!File.Exists(hostPath))
@@ -90,11 +103,10 @@ internal sealed class OperationManager : IDisposable
             {
                 FileName = hostPath,
                 UseShellExecute = false,
-                ArgumentList = { "--request", FileOperationStore.RequestPath(request.Id) },
+                ArgumentList = { "--broker" },
             });
             if (process == null)
                 throw new InvalidOperationException("Windows did not start the operation host.");
-            state.HostProcessId = process.Id;
             process.Dispose();
             RaiseChanged();
             return request.Id;
@@ -102,8 +114,24 @@ internal sealed class OperationManager : IDisposable
         catch (Exception ex)
         {
             lock (_gate) _states.Remove(state.Id);
+            if (requestWritten)
+                FileOperationStore.RemoveTransientArtifacts(request.Id);
             AppLog.Warn(ex, nameof(OperationManager), "Could not start the file operation.");
             RaiseChanged();
+            return null;
+        }
+    }
+
+    private OperationWindowPlacement? GetWindowPlacement()
+    {
+        try
+        {
+            return _windowPlacementProvider();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(GetWindowPlacement),
+                "Could not determine where to place the file-operation window.");
             return null;
         }
     }
@@ -156,12 +184,14 @@ internal sealed class OperationManager : IDisposable
     {
         try
         {
+            CleanupExpiredOperationArtifacts();
             if (!Directory.Exists(FileOperationStore.DirectoryPath)) return;
             foreach (string path in Directory.EnumerateFiles(
                          FileOperationStore.DirectoryPath, "*.state.json"))
             {
                 FileOperationState? state = FileOperationStore.TryReadState(path);
-                if (state != null && !state.IsTerminal)
+                if (state != null && !state.IsTerminal
+                    && IsOperationHostRunning(state.HostProcessId))
                     _states[state.Id] = state;
             }
         }
@@ -171,9 +201,128 @@ internal sealed class OperationManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// Keeps completed status files briefly for diagnostics, while removing the
+    /// request and cancellation files as soon as a job is terminal. The same pass
+    /// converts jobs abandoned by a terminated helper process into retained failures.
+    /// </summary>
+    internal static void CleanupExpiredOperationArtifacts()
+    {
+        try
+        {
+            string directory = FileOperationStore.DirectoryPath;
+            if (!Directory.Exists(directory)) return;
+
+            DateTime cutoffUtc = DateTime.UtcNow - OperationArtifactRetention;
+            foreach (string path in Directory.EnumerateFiles(directory, "*.state.json"))
+            {
+                FileOperationState? state = FileOperationStore.TryReadState(path);
+                if (state == null)
+                {
+                    DeleteIfExpired(path, cutoffUtc);
+                    continue;
+                }
+
+                if (state.IsTerminal)
+                {
+                    FileOperationStore.RemoveTransientArtifacts(state.Id);
+                    if (IsExpired(path, cutoffUtc))
+                        FileOperationStore.RemoveState(state.Id);
+                    continue;
+                }
+
+                if (!IsOperationHostRunning(state.HostProcessId))
+                    MarkInterruptedOperationAsFailed(state);
+            }
+
+            CleanupOrphanedRequests(directory, cutoffUtc);
+            CleanupExpiredFiles(directory, "*.cancel", cutoffUtc);
+            CleanupExpiredFiles(directory, "*.pause", cutoffUtc);
+            CleanupExpiredFiles(directory, "*.tmp", cutoffUtc);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(CleanupExpiredOperationArtifacts));
+        }
+    }
+
+    private static void CleanupOrphanedRequests(string directory, DateTime cutoffUtc)
+    {
+        foreach (string path in Directory.EnumerateFiles(directory, "*.request.json"))
+        {
+            if (!IsExpired(path, cutoffUtc)) continue;
+
+            try
+            {
+                FileOperationRequest request = FileOperationStore.ReadRequest(path);
+                if (!File.Exists(FileOperationStore.StatePath(request.Id)))
+                {
+                    FileOperationStore.WriteState(new FileOperationState
+                    {
+                        Id = request.Id,
+                        Kind = request.Kind,
+                        Status = FileOperationStatus.Failed,
+                        TotalItems = request.Sources.Length,
+                        Error = "The application exited before the operation host started.",
+                        Result = unchecked((int)0x80004005),
+                        UpdatedUtc = DateTime.UtcNow,
+                    });
+                    FileOperationStore.RemoveTransientArtifacts(request.Id);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Debug(ex, nameof(CleanupOrphanedRequests),
+                    $"Could not reconcile operation request '{path}'.");
+            }
+        }
+    }
+
+    private static void MarkInterruptedOperationAsFailed(FileOperationState state)
+    {
+        state.Status = FileOperationStatus.Failed;
+        state.Error = "The operation host exited before reporting completion.";
+        state.Result = unchecked((int)0x80004005);
+        state.UpdatedUtc = DateTime.UtcNow;
+        FileOperationStore.WriteState(state);
+        FileOperationStore.RemoveTransientArtifacts(state.Id);
+    }
+
+    private static void CleanupExpiredFiles(string directory, string searchPattern, DateTime cutoffUtc)
+    {
+        foreach (string path in Directory.EnumerateFiles(directory, searchPattern))
+            DeleteIfExpired(path, cutoffUtc);
+    }
+
+    private static void DeleteIfExpired(string path, DateTime cutoffUtc)
+    {
+        if (IsExpired(path, cutoffUtc))
+            FileOperationStore.TryDeleteFile(path);
+    }
+
+    private static bool IsExpired(string path, DateTime cutoffUtc)
+    {
+        try
+        {
+            return File.GetLastWriteTimeUtc(path) <= cutoffUtc;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AppLog.Debug(ex, nameof(IsExpired),
+                $"Could not read the last-write time for operation artifact '{path}'.");
+            return false;
+        }
+    }
+
     private void RefreshStates()
     {
         if (_disposed) return;
+        if (DateTime.UtcNow >= _nextArtifactCleanupUtc)
+        {
+            CleanupExpiredOperationArtifacts();
+            _nextArtifactCleanupUtc = DateTime.UtcNow + ArtifactCleanupInterval;
+        }
+
         bool wasActive;
         bool changed = false;
         var failures = new List<FileOperationState>();
@@ -212,7 +361,11 @@ internal sealed class OperationManager : IDisposable
                 state.Result = unchecked((int)0x80004005);
                 state.UpdatedUtc = DateTime.UtcNow;
                 try { FileOperationStore.WriteState(state); }
-                catch (IOException) { }
+                catch (IOException ex)
+                {
+                    AppLog.Debug(ex, nameof(RefreshStates),
+                        $"Could not persist the failed state for operation {state.Id:N}.");
+                }
             }
             lock (_gate)
             {
@@ -227,6 +380,12 @@ internal sealed class OperationManager : IDisposable
                     _states[id] = state;
                     changed = true;
                 }
+            }
+
+            if (state.IsTerminal)
+            {
+                FileOperationStore.RemoveTransientArtifacts(id);
+                lock (_gate) _states.Remove(id);
             }
         }
 
@@ -273,11 +432,18 @@ internal sealed class OperationManager : IDisposable
         Status = state.Status,
         TotalItems = state.TotalItems,
         CompletedItems = state.CompletedItems,
+        TotalWork = state.TotalWork,
+        WorkCompleted = state.WorkCompleted,
+        TotalBytes = state.TotalBytes,
+        BytesCompleted = state.BytesCompleted,
+        SourceDisplayName = state.SourceDisplayName,
+        DestinationDisplayName = state.DestinationDisplayName,
         CurrentItem = state.CurrentItem,
         Error = state.Error,
         Result = state.Result,
         Aborted = state.Aborted,
         HostProcessId = state.HostProcessId,
+        CreatedUtc = state.CreatedUtc,
         UpdatedUtc = state.UpdatedUtc,
     };
 

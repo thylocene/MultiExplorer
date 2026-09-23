@@ -1,0 +1,39 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "MultiExplorer.MenuDiagnostic/1.6.4": {
+        "dependencies": {
+          "MultiExplorer": "1.6.4"
+        },
+        "runtime": {
+          "MultiExplorer.MenuDiagnostic.dll": {}
+        }
+      },
+      "MultiExplorer/1.6.4": {
+        "runtime": {
+          "MultiExplorer.dll": {
+            "assemblyVersion": "1.6.4.0",
+            "fileVersion": "1.6.4.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "MultiExplorer.MenuDiagnostic/1.6.4": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "MultiExplorer/1.6.4": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

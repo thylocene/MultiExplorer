@@ -10,7 +10,15 @@ namespace MultiExplorer;
 
 public class MainForm : Form, IMessageFilter
 {
-    private const int MinimumPanelWidth = 100;
+    // Keeps the native navigation tree and Details view usable at the splitter
+    // limit. Windows 11 renders this view through DirectUI, whose columns have
+    // no supported live-width API; reserving this width preserves the Name
+    // column and the most important metadata instead of clipping the whole view.
+    private const int MinimumPanelWidth = 600;
+    private const int MinimumWindowWidth = MinimumPanelWidth * 2 + SplitterBar.BarWidth;
+    internal const int ActiveRefreshIntervalMilliseconds = 300;
+    internal const int IdleRefreshIntervalMilliseconds = 2000;
+    internal const int ActiveRefreshWindowMilliseconds = 1500;
     private const string ApplicationIconResourceName =
         "MultiExplorer.MultiExplorer-Installer.ico";
 
@@ -18,13 +26,21 @@ public class MainForm : Form, IMessageFilter
     private readonly SplitterBar _splitterBar;
     private readonly PanelView   _leftPanel;
     private readonly PanelView   _rightPanel;
+    private PanelView? _focusedPanel;
 
     private int  _splitterLeft;
-    private int  _savedSplitterLeft;
+    private double _splitterRatio = 0.5;
+    private bool _splitterInitialized;
     private bool _leftCollapsed;
     private bool _rightCollapsed;
     private readonly System.Windows.Forms.Timer _pathPollTimer;
+    private long _fastRefreshUntilTick;
     private readonly AppSettings    _settings;
+    private readonly bool           _startInSystemTray;
+    private readonly string?        _startupFolder;
+    private List<string> _initialLeftPaths = [];
+    private List<string> _initialRightPaths = [];
+    private bool _explorerPanelsLaunched;
 
     private readonly StatusStrip                  _statusBar;
     private readonly ToolStripStatusLabel         _statusIcon;
@@ -35,25 +51,47 @@ public class MainForm : Form, IMessageFilter
     private readonly NotifyIcon          _trayIcon;
     private readonly ToolStripMenuItem   _miMinimizeToTray;
     private readonly ContextMenuStrip    _trayMenu;
+    private bool _isInSystemTray;
     private bool _forceClose;
     private bool _skipOperationPrompt;
     private bool _exitWhenOperationsComplete;
     private int  _lastActiveOperationCount;
     private readonly OperationManager _operations;
 
-    // Arbitrary unique ID for the global show-window hotkey
-    private const int HotkeyShowWindow = 0x3001;
+    // Arbitrary unique ID for the global window-toggle hotkey.
+    private const int HotkeyToggleWindow = 0x3001;
 
     // Modifiers and VK that are actually registered (0 = nothing registered)
     private int _registeredModifiers;
     private int _registeredVk;
 
-    public MainForm() : this(SettingsManager.Load()) { }
+    public MainForm() : this(SettingsManager.Load(), startInSystemTray: false,
+        startupFolder: null) { }
 
-    internal MainForm(AppSettings settings)
+    internal MainForm(AppSettings settings) : this(settings,
+        startInSystemTray: false, startupFolder: null) { }
+
+    internal MainForm(AppSettings settings, bool startInSystemTray)
+        : this(settings, startInSystemTray, startupFolder: null) { }
+
+    internal MainForm(AppSettings settings, bool startInSystemTray,
+        string? startupFolder)
     {
         _settings = settings;
-        _operations = new OperationManager();
+        _startInSystemTray = startInSystemTray;
+        _startupFolder = Directory.Exists(startupFolder)
+            ? Path.GetFullPath(startupFolder)
+            : null;
+        _operations = new OperationManager(GetOperationWindowPlacement);
+
+        if (_startInSystemTray)
+        {
+            // Keep the initial window out of both the taskbar and the visible desktop.
+            // Opacity is restored after the first Shown event so later user activation
+            // displays the window normally.
+            ShowInTaskbar = false;
+            Opacity = 0;
+        }
 
         Text = "MultiExplorer";
         using var iconStream = GetType().Assembly.GetManifestResourceStream(ApplicationIconResourceName);
@@ -64,13 +102,20 @@ public class MainForm : Form, IMessageFilter
             using var embeddedIcon = new Icon(iconStream);
             Icon = (Icon)embeddedIcon.Clone();
         }
-        MinimumSize = new Size(800, 600);
+        MinimumSize = SizeFromClientSize(new Size(MinimumWindowWidth, 600));
 
         _layoutPanel = new Panel { Dock = DockStyle.Fill };
         _leftPanel   = new PanelView();
         _rightPanel  = new PanelView();
+        _leftPanel.SetPreviewPaneWidth(_settings.LeftPreviewPaneWidth);
+        _rightPanel.SetPreviewPaneWidth(_settings.RightPreviewPaneWidth);
+        _leftPanel.PreviewPaneWidthChanged += (_, width) =>
+            SavePreviewPaneWidth(isLeftPane: true, width);
+        _rightPanel.PreviewPaneWidthChanged += (_, width) =>
+            SavePreviewPaneWidth(isLeftPane: false, width);
+        _leftPanel.SetFocusBorderEdge(PaneDividerEdge.Right);
+        _rightPanel.SetFocusBorderEdge(PaneDividerEdge.Left);
         _splitterBar = new SplitterBar();
-
         _splitterBar.CollapseLeftClicked  += (_, _) => ToggleCollapseLeft();
         _splitterBar.CollapseRightClicked += (_, _) => ToggleCollapseRight();
         _splitterBar.DragMoved            += OnSplitterDragMoved;
@@ -92,6 +137,14 @@ public class MainForm : Form, IMessageFilter
         // Hotkey configuration
         _leftPanel.SetHotkeyRequested  += (_, _) => OnSetHotkeyRequested();
         _rightPanel.SetHotkeyRequested += (_, _) => OnSetHotkeyRequested();
+
+        _leftPanel.StartWithWindowsToggled  += OnStartWithWindowsToggled;
+        _rightPanel.StartWithWindowsToggled += OnStartWithWindowsToggled;
+        _leftPanel.MinimizeToTrayToggled  += OnMinimizeToTrayToggled;
+        _rightPanel.MinimizeToTrayToggled += OnMinimizeToTrayToggled;
+
+        _leftPanel.FocusReceived  += (_, _) => SetFocusedPanel(_leftPanel);
+        _rightPanel.FocusReceived += (_, _) => SetFocusedPanel(_rightPanel);
 
         _leftPanel.ThemeSelected  += (_, theme) => ChangeTheme(theme);
         _rightPanel.ThemeSelected += (_, theme) => ChangeTheme(theme);
@@ -134,12 +187,16 @@ public class MainForm : Form, IMessageFilter
         _statusClearTimer.Tick += (_, _) => ClearStatus();
         AppLog.MessageLogged += OnLogMessage;
 
-        _pathPollTimer = new System.Windows.Forms.Timer { Interval = 300 };
+        _pathPollTimer = new System.Windows.Forms.Timer
+        {
+            Interval = IdleRefreshIntervalMilliseconds,
+        };
         _pathPollTimer.Tick += OnPathPollTick;
+        _leftPanel.RefreshActivityObserved += OnRefreshActivityObserved;
+        _rightPanel.RefreshActivityObserved += OnRefreshActivityObserved;
 
         Load        += OnLoad;
         FormClosing += OnFormClosing;
-
         _miMinimizeToTray = new ToolStripMenuItem("Minimize to tray on close")
         {
             Checked      = _settings.MinimizeToTray,
@@ -149,6 +206,7 @@ public class MainForm : Form, IMessageFilter
         {
             _settings.MinimizeToTray = _miMinimizeToTray.Checked;
             SettingsManager.Save(_settings);
+            UpdateMinimizeToTrayUi();
         };
 
         var openItem = new ToolStripMenuItem("Open MultiExplorer");
@@ -183,14 +241,43 @@ public class MainForm : Form, IMessageFilter
             Visible          = false,
         };
         _trayIcon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowMainWindow(); };
+        _trayIcon.BalloonTipClicked += (_, _) => ShowMainWindow();
 
         _operations.OperationsChanged += OnOperationsChanged;
         _operations.OperationsBecameIdle += OnOperationsBecameIdle;
         _lastActiveOperationCount = _operations.ActiveCount;
         UpdateOperationTrayStatus();
 
+        UpdateStartWithWindowsUi();
+        UpdateMinimizeToTrayUi();
+
         RestoreWindowState();
         ApplyApplicationTheme();
+
+        // Keep sign-in registration independent of whether Windows ever presents
+        // the initial form. Startup launches begin fully transparent and hidden,
+        // and some launchers can suppress the first Shown event altogether.
+        _ = SynchronizeStartupRegistrationAsync();
+    }
+
+    private OperationWindowPlacement GetOperationWindowPlacement()
+    {
+        Rectangle anchor = WindowState == FormWindowState.Minimized
+            ? RestoreBounds
+            : Bounds;
+        Screen screen = Screen.FromRectangle(anchor);
+        Rectangle workArea = screen.WorkingArea;
+        return new OperationWindowPlacement
+        {
+            AnchorLeft = anchor.Left,
+            AnchorTop = anchor.Top,
+            AnchorWidth = anchor.Width,
+            AnchorHeight = anchor.Height,
+            WorkAreaLeft = workArea.Left,
+            WorkAreaTop = workArea.Top,
+            WorkAreaWidth = workArea.Width,
+            WorkAreaHeight = workArea.Height,
+        };
     }
 
     private void ChangeTheme(ApplicationTheme theme)
@@ -232,26 +319,76 @@ public class MainForm : Form, IMessageFilter
 
         _leftCollapsed     = _settings.LeftPanelCollapsed;
         _rightCollapsed    = _settings.RightPanelCollapsed;
-        _splitterLeft      = _settings.SplitterDistance > 0
-                             ? _settings.SplitterDistance
-                             : _layoutPanel.Width / 2;
-        _savedSplitterLeft = _splitterLeft;
-
-        // Browsers require non-zero bounds to initialise, so launch with both panels
-        // visible at full size, then apply the saved collapse state afterwards.
-        bool savedLc = _leftCollapsed, savedRc = _rightCollapsed;
-        _leftCollapsed = false; _rightCollapsed = false;
-        ApplyLayout();
+        if (_settings.SplitterPositionVersion < AppSettings.CurrentSplitterPositionVersion)
+        {
+            // Apply a newly chosen product default once to existing installations.
+            // Merely changing AppSettings.SplitterDistance does not affect an existing
+            // settings file because its saved SplitterRatio otherwise wins here.
+            _splitterLeft = AppSettings.DefaultSplitterDistance;
+            _splitterRatio = CalculateSplitterRatio(_splitterLeft, _layoutPanel.Width);
+            _settings.SplitterPositionVersion = AppSettings.CurrentSplitterPositionVersion;
+        }
+        else if (_settings.SplitterRatio > 0 && _settings.SplitterRatio < 1)
+        {
+            _splitterRatio = _settings.SplitterRatio;
+            _splitterLeft = SplitterLeftFromRatio(_splitterRatio, _layoutPanel.Width);
+        }
+        else
+        {
+            _splitterLeft = _settings.SplitterDistance > 0
+                            ? _settings.SplitterDistance
+                            : _layoutPanel.Width / 2;
+            _splitterRatio = CalculateSplitterRatio(_splitterLeft, _layoutPanel.Width);
+        }
+        _splitterInitialized = true;
 
         if (_settings.WindowWidth == 0)
             _settings.QuickLookEnabled = IsQuickLookAvailable();
 
         ExplorerHost.QuickLookEnabled = _settings.QuickLookEnabled;
 
-        var leftPaths  = _settings.LeftPanelTabs.Count  > 0 ? _settings.LeftPanelTabs
-                       : new List<string> { _settings.LeftPanelPath };
-        var rightPaths = _settings.RightPanelTabs.Count > 0 ? _settings.RightPanelTabs
-                       : new List<string> { _settings.RightPanelPath };
+        _initialLeftPaths = _settings.LeftPanelTabs.Count > 0
+            ? [.. _settings.LeftPanelTabs]
+            : [_settings.LeftPanelPath];
+        _initialRightPaths = _settings.RightPanelTabs.Count > 0
+            ? [.. _settings.RightPanelTabs]
+            : [_settings.RightPanelPath];
+        if (_startupFolder is not null)
+            _initialLeftPaths[0] = _startupFolder;
+
+        _leftPanel.SetPathHistory(_settings.LeftPathHistory);
+        _rightPanel.SetPathHistory(_settings.RightPathHistory);
+
+        if (_startInSystemTray)
+        {
+            // A Windows sign-in launch only needs the message window, hotkey, and
+            // notification icon. Creating IExplorerBrowser instances here competes
+            // with every other sign-in application and delays the tray icon. The
+            // saved panes are launched on demand when the user first opens the app.
+            BeginInvoke((Action)(() =>
+            {
+                StartInSystemTray();
+            }));
+            return;
+        }
+
+        LaunchExplorerPanels();
+    }
+
+    private void LaunchExplorerPanels()
+    {
+        if (_explorerPanelsLaunched || IsDisposed || Disposing)
+            return;
+
+        _explorerPanelsLaunched = true;
+
+        // Browsers require non-zero bounds to initialise, so launch with both panels
+        // visible at full size, then apply the saved collapse state afterwards.
+        bool savedLc = _leftCollapsed;
+        bool savedRc = _rightCollapsed;
+        _leftCollapsed = false;
+        _rightCollapsed = false;
+        ApplyLayout();
 
         // ExplorerBrowser's two navigation trees share Shell image-list state.
         // Initializing both on separate STA threads at exactly the same time can
@@ -263,23 +400,115 @@ public class MainForm : Form, IMessageFilter
         {
             _leftPanel.InitialBrowserReady -= launchRightPanel;
             if (!IsDisposed && !Disposing)
-                _rightPanel.Launch(rightPaths);
+            {
+                // ExplorerBrowser navigation trees share process-wide Shell
+                // state. Initialising the second tree can reset the expansion
+                // applied to the first, so restore the left tree once the right
+                // browser has completed its own initial navigation.
+                EventHandler? restoreLeftNavigation = null;
+                restoreLeftNavigation = (_, _) =>
+                {
+                    _rightPanel.InitialBrowserReady -= restoreLeftNavigation;
+                    if (!IsDisposed && !Disposing)
+                        _leftPanel.RestoreActiveNavigationPane();
+                };
+                _rightPanel.InitialBrowserReady += restoreLeftNavigation;
+                _rightPanel.Launch(_initialRightPaths);
+            }
         };
         _leftPanel.InitialBrowserReady += launchRightPanel;
-        _leftPanel.Launch(leftPaths);
+        _leftPanel.Launch(_initialLeftPaths);
 
         _leftCollapsed  = savedLc;
         _rightCollapsed = savedRc;
         if (_leftCollapsed || _rightCollapsed)
             ApplyLayout();
 
+        BeginFastRefreshWindow();
         _pathPollTimer.Start();
+        SetFocusedPanel(_leftPanel);
+        _ = WarmContextMenuCachesAsync();
+        _ = StartPinService.RefreshPinnedTileLogosAsync();
+    }
+
+    private static async Task WarmContextMenuCachesAsync()
+    {
+        try
+        {
+            await Task.WhenAll(
+                ShellNewMenu.WarmCacheAsync(),
+                QuickAccessService.WarmCacheAsync());
+        }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(WarmContextMenuCachesAsync),
+                "Could not pre-load context-menu data.");
+        }
+    }
+
+    private void StartInSystemTray()
+    {
+        if (IsDisposed || Disposing) return;
+
+        _isInSystemTray = true;
+        _pathPollTimer.Stop();
+        _trayIcon.Visible = true;
+        Hide();
+        Opacity = 1;
+        _trayIcon.ShowBalloonTip(
+            5000,
+            "MultiExplorer",
+            "MultiExplorer started with Windows and is running in the system tray.",
+            ToolTipIcon.Info);
+    }
+
+    /// <summary>Hides the main window while keeping the app available from the notification area.</summary>
+    private void HideMainWindowToTray()
+    {
+        _isInSystemTray = true;
+        SaveSettings();
+        _pathPollTimer.Stop();
+        _trayIcon.Visible = true;
+        Hide();
     }
 
     private void OnPathPollTick(object? sender, EventArgs e)
     {
         _leftPanel.PollPath();
         _rightPanel.PollPath();
+        SetPathPollInterval(GetPathPollInterval(
+            Environment.TickCount64, _fastRefreshUntilTick));
+    }
+
+    private void OnRefreshActivityObserved(object? sender, EventArgs e) =>
+        BeginFastRefreshWindow();
+
+    private void BeginFastRefreshWindow()
+    {
+        _fastRefreshUntilTick = Environment.TickCount64
+            + ActiveRefreshWindowMilliseconds;
+        SetPathPollInterval(ActiveRefreshIntervalMilliseconds);
+    }
+
+    private void SetPathPollInterval(int interval)
+    {
+        if (_pathPollTimer.Interval != interval)
+            _pathPollTimer.Interval = interval;
+    }
+
+    internal static int GetPathPollInterval(long now, long fastRefreshUntil) =>
+        now < fastRefreshUntil
+            ? ActiveRefreshIntervalMilliseconds
+            : IdleRefreshIntervalMilliseconds;
+
+    private void SetFocusedPanel(PanelView panel)
+    {
+        ArgumentNullException.ThrowIfNull(panel);
+        if (ReferenceEquals(_focusedPanel, panel)) return;
+
+        _focusedPanel?.SetFocusIndicator(false);
+        _focusedPanel = panel;
+        _focusedPanel.SetFocusIndicator(true);
     }
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
@@ -300,20 +529,14 @@ public class MainForm : Form, IMessageFilter
                     e.Cancel = true;
                     _forceClose = false;
                     _exitWhenOperationsComplete = true;
-                    SaveSettings();
-                    _pathPollTimer.Stop();
-                    _trayIcon.Visible = true;
-                    Hide();
+                    HideMainWindowToTray();
                     return;
                 case OperationExitChoice.CancelAndExit:
                     e.Cancel = true;
                     _forceClose = false;
                     _exitWhenOperationsComplete = true;
                     _operations.CancelAll();
-                    SaveSettings();
-                    _pathPollTimer.Stop();
-                    _trayIcon.Visible = true;
-                    Hide();
+                    HideMainWindowToTray();
                     return;
                 default:
                     e.Cancel = true;
@@ -325,10 +548,7 @@ public class MainForm : Form, IMessageFilter
         if (!_forceClose && e.CloseReason == CloseReason.UserClosing && _settings.MinimizeToTray)
         {
             e.Cancel = true;
-            SaveSettings();
-            _pathPollTimer.Stop();
-            _trayIcon.Visible = true;
-            Hide();
+            HideMainWindowToTray();
             return;
         }
 
@@ -367,27 +587,51 @@ public class MainForm : Form, IMessageFilter
         _settings.WindowHeight     = bounds.Height;
         _settings.WindowState      = WindowState == FormWindowState.Maximized ? "Maximized" : "Normal";
         _settings.SplitterDistance    = _splitterLeft;
+        _settings.SplitterRatio       = _splitterRatio;
         _settings.LeftPanelCollapsed  = _leftCollapsed;
         _settings.RightPanelCollapsed = _rightCollapsed;
 
-        _settings.LeftPanelTabs  = _leftPanel.GetAllPaths();
-        _settings.RightPanelTabs = _rightPanel.GetAllPaths();
-        _settings.LeftPanelPath  = _leftPanel.CurrentPath();
-        _settings.RightPanelPath = _rightPanel.CurrentPath();
+        // A sign-in launch deliberately leaves the Explorer panes dormant. Keep
+        // their persisted paths intact if the session ends before the user opens
+        // the window, rather than replacing them with empty/default values.
+        if (_explorerPanelsLaunched)
+        {
+            _settings.LeftPanelTabs  = _leftPanel.GetAllPaths();
+            _settings.RightPanelTabs = _rightPanel.GetAllPaths();
+            _settings.LeftPanelPath  = _leftPanel.CurrentPath();
+            _settings.RightPanelPath = _rightPanel.CurrentPath();
+        }
+        _settings.LeftPreviewPaneWidth = _leftPanel.PreviewPaneWidth;
+        _settings.RightPreviewPaneWidth = _rightPanel.PreviewPaneWidth;
+        _settings.LeftPathHistory  = _leftPanel.GetPathHistory();
+        _settings.RightPathHistory = _rightPanel.GetPathHistory();
 
         SettingsManager.Save(_settings);
     }
 
     private void ShowMainWindow()
     {
+        _isInSystemTray = false;
+        ShowInTaskbar = true;
+        Opacity = 1;
         Show();
         WindowState = _settings.WindowState == "Maximized"
                           ? FormWindowState.Maximized
                           : FormWindowState.Normal;
+        LaunchExplorerPanels();
         Activate();
         BringToFront();
         _trayIcon.Visible = false;
+        BeginFastRefreshWindow();
         _pathPollTimer.Start();
+    }
+
+    private void ToggleMainWindowFromGlobalHotkey()
+    {
+        if (ShouldShowMainWindowForGlobalHotkey(_isInSystemTray))
+            ShowMainWindow();
+        else
+            HideMainWindowToTray();
     }
 
     private void ExitApplication()
@@ -444,7 +688,7 @@ public class MainForm : Form, IMessageFilter
         int mods = _settings.ShowWindowModifiers;
         int vk   = _settings.ShowWindowVk;
 
-        if (NativeMethods.RegisterHotKey(Handle, HotkeyShowWindow,
+        if (NativeMethods.RegisterHotKey(Handle, HotkeyToggleWindow,
                 mods | NativeMethods.MOD_NOREPEAT, vk))
         {
             _registeredModifiers = mods;
@@ -456,7 +700,7 @@ public class MainForm : Form, IMessageFilter
         int fbMods = NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT;
         int fbVk   = NativeMethods.VK_M;
         if ((mods != fbMods || vk != fbVk)
-            && NativeMethods.RegisterHotKey(Handle, HotkeyShowWindow,
+            && NativeMethods.RegisterHotKey(Handle, HotkeyToggleWindow,
                    fbMods | NativeMethods.MOD_NOREPEAT, fbVk))
         {
             _registeredModifiers = fbMods;
@@ -484,9 +728,9 @@ public class MainForm : Form, IMessageFilter
         int newVk   = dlg.SelectedVk;
         if (newMods == _registeredModifiers && newVk == _registeredVk) return;
 
-        NativeMethods.UnregisterHotKey(Handle, HotkeyShowWindow);
+        NativeMethods.UnregisterHotKey(Handle, HotkeyToggleWindow);
 
-        if (NativeMethods.RegisterHotKey(Handle, HotkeyShowWindow,
+        if (NativeMethods.RegisterHotKey(Handle, HotkeyToggleWindow,
                 newMods | NativeMethods.MOD_NOREPEAT, newVk))
         {
             _registeredModifiers          = newMods;
@@ -499,7 +743,7 @@ public class MainForm : Form, IMessageFilter
         {
             // Restore the previous registration and inform the user
             if (_registeredModifiers != 0)
-                NativeMethods.RegisterHotKey(Handle, HotkeyShowWindow,
+                NativeMethods.RegisterHotKey(Handle, HotkeyToggleWindow,
                     curMods | NativeMethods.MOD_NOREPEAT, curVk);
 
             MessageBox.Show(this,
@@ -511,16 +755,23 @@ public class MainForm : Form, IMessageFilter
 
     protected override void OnHandleDestroyed(EventArgs e)
     {
-        NativeMethods.UnregisterHotKey(Handle, HotkeyShowWindow);
+        NativeMethods.UnregisterHotKey(Handle, HotkeyToggleWindow);
         base.OnHandleDestroyed(e);
     }
 
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == (int)Program.WM_SHOW_INSTANCE ||
-            (m.Msg == NativeMethods.WM_HOTKEY && m.WParam.ToInt32() == HotkeyShowWindow))
+        if (m.Msg == (int)Program.WM_SHOW_INSTANCE)
         {
             ShowMainWindow();
+            string? requestedFolder = ActivationRequestStore.TryTakeFolder();
+            if (requestedFolder is not null)
+                (_focusedPanel ?? _leftPanel).NavigateTo(requestedFolder);
+            return;
+        }
+        if (m.Msg == NativeMethods.WM_HOTKEY && m.WParam.ToInt32() == HotkeyToggleWindow)
+        {
+            ToggleMainWindowFromGlobalHotkey();
             return;
         }
         base.WndProc(ref m);
@@ -528,14 +779,14 @@ public class MainForm : Form, IMessageFilter
 
     public bool PreFilterMessage(ref Message m)
     {
-        // Do not treat these as process-global hotkeys while the main window is
+        // Do not treat these application-level shortcuts while the main window is
         // hidden in the notification area. ExplorerHost separately forwards the
         // shortcuts from native browser STAs while the window is visible.
         CommandBar.Cmd? shortcut = GetApplicationShortcut(
             m.Msg, m.WParam, Control.ModifierKeys);
         if (Visible && shortcut.HasValue)
         {
-            _leftPanel.ExecuteCommand(shortcut.Value);
+            (_focusedPanel ?? _leftPanel).ExecuteCommand(shortcut.Value);
             return true;
         }
         return false;
@@ -545,17 +796,38 @@ public class MainForm : Form, IMessageFilter
         int message, IntPtr virtualKey, Keys modifiers)
     {
         const int WM_KEYDOWN = 0x0100;
-        if (message != WM_KEYDOWN || modifiers != Keys.Control)
+        if (message != WM_KEYDOWN)
             return null;
+
+        if (virtualKey.ToInt32() == (int)Keys.F1 && modifiers == Keys.None)
+            return CommandBar.Cmd.Help;
+
+        if (virtualKey.ToInt32() == (int)Keys.F5 && modifiers == Keys.None)
+            return CommandBar.Cmd.Refresh;
+
+        if (virtualKey.ToInt32() == (int)Keys.N
+            && modifiers == (Keys.Control | Keys.Shift))
+            return CommandBar.Cmd.NewFolder;
+
+        if (virtualKey.ToInt32() == (int)Keys.C
+            && modifiers == (Keys.Control | Keys.Shift))
+            return CommandBar.Cmd.CopyPaths;
+
+        if (modifiers != Keys.Control) return null;
 
         return virtualKey.ToInt32() switch
         {
+            0x4E => CommandBar.Cmd.NewTab,        // N
+            0x54 => CommandBar.Cmd.NewTab,        // T
             0x4F => CommandBar.Cmd.FolderOptions, // O
             0x4C => CommandBar.Cmd.ViewLog,       // L
             0x51 => CommandBar.Cmd.Exit,          // Q
             _    => null,
         };
     }
+
+    internal static bool ShouldShowMainWindowForGlobalHotkey(bool isInSystemTray) =>
+        isInSystemTray;
 
     internal static bool IsQuitShortcut(int message, IntPtr virtualKey, Keys modifiers)
         => GetApplicationShortcut(message, virtualKey, modifiers) == CommandBar.Cmd.Exit;
@@ -606,6 +878,8 @@ public class MainForm : Form, IMessageFilter
         }
         else
         {
+            if (_splitterInitialized)
+                _splitterLeft = SplitterLeftFromRatio(_splitterRatio, tw);
             _splitterLeft = ConstrainSplitterLeft(_splitterLeft, tw);
 
             _leftPanel.Visible  = true;
@@ -621,23 +895,37 @@ public class MainForm : Form, IMessageFilter
 
     internal static int ConstrainSplitterLeft(int splitterLeft, int layoutWidth)
     {
-        int maxLeft = layoutWidth - SplitterBar.BarWidth - MinimumPanelWidth;
-        return Math.Clamp(splitterLeft, MinimumPanelWidth, maxLeft);
+        int usableWidth = Math.Max(0, layoutWidth - SplitterBar.BarWidth);
+        int minimumPanelWidth = Math.Min(MinimumPanelWidth, usableWidth / 2);
+        return Math.Clamp(splitterLeft, minimumPanelWidth, usableWidth - minimumPanelWidth);
     }
 
     internal static bool CanLayoutExpandedPanels(int layoutWidth) =>
-        layoutWidth >= MinimumPanelWidth * 2 + SplitterBar.BarWidth;
+        layoutWidth >= MinimumWindowWidth;
+
+    internal static double CalculateSplitterRatio(int splitterLeft, int layoutWidth)
+    {
+        int usableWidth = layoutWidth - SplitterBar.BarWidth;
+        if (usableWidth <= 0) return 0.5;
+        return Math.Clamp((double)splitterLeft / usableWidth, 0, 1);
+    }
+
+    internal static int SplitterLeftFromRatio(double ratio, int layoutWidth)
+    {
+        int usableWidth = Math.Max(0, layoutWidth - SplitterBar.BarWidth);
+        int splitterLeft = (int)Math.Round(usableWidth * Math.Clamp(ratio, 0, 1));
+        return ConstrainSplitterLeft(splitterLeft, layoutWidth);
+    }
 
     private void ToggleCollapseLeft()
     {
         if (_leftCollapsed)
         {
             _leftCollapsed = false;
-            _splitterLeft  = _savedSplitterLeft > 0 ? _savedSplitterLeft : _layoutPanel.Width / 2;
+            _splitterLeft = SplitterLeftFromRatio(_splitterRatio, _layoutPanel.Width);
         }
         else if (!_rightCollapsed)
         {
-            _savedSplitterLeft = _splitterLeft;
             _leftCollapsed     = true;
         }
         ApplyLayout();
@@ -648,11 +936,10 @@ public class MainForm : Form, IMessageFilter
         if (_rightCollapsed)
         {
             _rightCollapsed = false;
-            _splitterLeft   = _savedSplitterLeft > 0 ? _savedSplitterLeft : _layoutPanel.Width / 2;
+            _splitterLeft = SplitterLeftFromRatio(_splitterRatio, _layoutPanel.Width);
         }
         else if (!_leftCollapsed)
         {
-            _savedSplitterLeft = _splitterLeft;
             _rightCollapsed    = true;
         }
         ApplyLayout();
@@ -661,7 +948,8 @@ public class MainForm : Form, IMessageFilter
     private void OnSplitterDragMoved(object? sender, int newLeft)
     {
         if (_leftCollapsed || _rightCollapsed) return;
-        _splitterLeft = newLeft;
+        _splitterLeft = ConstrainSplitterLeft(newLeft, _layoutPanel.Width);
+        _splitterRatio = CalculateSplitterRatio(_splitterLeft, _layoutPanel.Width);
         ApplyLayout();
     }
 
@@ -690,6 +978,71 @@ public class MainForm : Form, IMessageFilter
     {
         _settings.QuickLookEnabled = ExplorerHost.QuickLookEnabled;
         SettingsManager.Save(_settings);
+    }
+
+    private void SavePreviewPaneWidth(bool isLeftPane, int width)
+    {
+        if (isLeftPane)
+        {
+            if (_settings.LeftPreviewPaneWidth == width) return;
+            _settings.LeftPreviewPaneWidth = width;
+        }
+        else
+        {
+            if (_settings.RightPreviewPaneWidth == width) return;
+            _settings.RightPreviewPaneWidth = width;
+        }
+
+        SettingsManager.Save(_settings);
+    }
+
+    private async void OnStartWithWindowsToggled(object? sender, EventArgs e)
+    {
+        bool enabled = !_settings.StartWithWindows;
+        (bool success, Exception? error) =
+            await StartupManager.TrySetEnabledAsync(enabled);
+        if (!success)
+        {
+            AppLog.Warn(error!, nameof(OnStartWithWindowsToggled),
+                $"Could not {(enabled ? "enable" : "disable")} start with Windows.");
+            return;
+        }
+
+        _settings.StartWithWindows = enabled;
+        SettingsManager.Save(_settings);
+        UpdateStartWithWindowsUi();
+    }
+
+    private void OnMinimizeToTrayToggled(object? sender, EventArgs e) =>
+        _miMinimizeToTray.Checked = !_settings.MinimizeToTray;
+
+    private async Task SynchronizeStartupRegistrationAsync()
+    {
+        AppLog.Debug(nameof(SynchronizeStartupRegistrationAsync),
+            $"Synchronizing start-with-Windows registration (enabled={_settings.StartWithWindows}).");
+        (bool success, Exception? error) =
+            await StartupManager.TrySetEnabledAsync(_settings.StartWithWindows);
+        if (!success)
+        {
+            AppLog.Warn(error!, nameof(SynchronizeStartupRegistrationAsync),
+                "Could not synchronize the start-with-Windows preference.");
+            return;
+        }
+
+        AppLog.Debug(nameof(SynchronizeStartupRegistrationAsync),
+            "Start-with-Windows registration is synchronized.");
+    }
+
+    private void UpdateStartWithWindowsUi()
+    {
+        _leftPanel.SetStartWithWindowsChecked(_settings.StartWithWindows);
+        _rightPanel.SetStartWithWindowsChecked(_settings.StartWithWindows);
+    }
+
+    private void UpdateMinimizeToTrayUi()
+    {
+        _leftPanel.SetMinimizeToTrayChecked(_settings.MinimizeToTray);
+        _rightPanel.SetMinimizeToTrayChecked(_settings.MinimizeToTray);
     }
 
     private void ClearStatus()

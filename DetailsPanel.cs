@@ -30,6 +30,13 @@ internal sealed class DetailsPanel : Panel
         Invalidate();
     }
 
+    internal void ApplyTheme()
+    {
+        BackColor = ThemeManager.Window;
+        ForeColor = ThemeManager.Text;
+        Invalidate();
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);

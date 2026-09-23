@@ -1,0 +1,14 @@
+C:\Projects\MultiExplorer\tools\NetFrameworkShareDiagnostic\obj\Release\net48\NetFrameworkShareDiagnostic.csproj.AssemblyReference.cache
+C:\Projects\MultiExplorer\tools\NetFrameworkShareDiagnostic\obj\Release\net48\NetFrameworkShareDiagnostic.GeneratedMSBuildEditorConfig.editorconfig
+C:\Projects\MultiExplorer\tools\NetFrameworkShareDiagnostic\obj\Release\net48\NetFrameworkShareDiagnostic.AssemblyInfoInputs.cache
+C:\Projects\MultiExplorer\tools\NetFrameworkShareDiagnostic\obj\Release\net48\NetFrameworkShareDiagnostic.AssemblyInfo.cs
+C:\Projects\MultiExplorer\tools\NetFrameworkShareDiagnostic\obj\Release\net48\NetFrameworkShareDiagnostic.csproj.CoreCompileInputs.cache
+C:\Projects\MultiExplorer\tools\NetFrameworkShareDiagnostic\bin\Release\net48\NetFrameworkShareDiagnostic.exe.config
+C:\Projects\MultiExplorer\tools\NetFrameworkShareDiagnostic\bin\Release\net48\NetFrameworkShareDiagnostic.exe
+C:\Projects\MultiExplorer\tools\NetFrameworkShareDiagnostic\bin\Release\net48\NetFrameworkShareDiagnostic.pdb
+C:\Projects\MultiExplorer\tools\NetFrameworkShareDiagnostic\bin\Release\net48\System.Runtime.WindowsRuntime.dll
+C:\Projects\MultiExplorer\tools\NetFrameworkShareDiagnostic\bin\Release\net48\Windows.WinMD
+C:\Projects\MultiExplorer\tools\NetFrameworkShareDiagnostic\bin\Release\net48\System.Runtime.WindowsRuntime.xml
+C:\Projects\MultiExplorer\tools\NetFrameworkShareDiagnostic\obj\Release\net48\NetFrame.74B0556C.Up2Date
+C:\Projects\MultiExplorer\tools\NetFrameworkShareDiagnostic\obj\Release\net48\NetFrameworkShareDiagnostic.exe
+C:\Projects\MultiExplorer\tools\NetFrameworkShareDiagnostic\obj\Release\net48\NetFrameworkShareDiagnostic.pdb

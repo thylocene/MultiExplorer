@@ -105,3 +105,5 @@ C:\Projects\MultiExplorer\MultiExplorer.Tests\obj\Release\net8.0-windows\ref\Mul
 C:\Projects\MultiExplorer\MultiExplorer.Tests\bin\Release\net8.0-windows\MultiExplorer.OperationHost.deps.json
 C:\Projects\MultiExplorer\MultiExplorer.Tests\bin\Release\net8.0-windows\MultiExplorer.OperationHost.runtimeconfig.json
 C:\Projects\MultiExplorer\MultiExplorer.Tests\bin\Release\net8.0-windows\MultiExplorer.OperationHost.exe
+C:\Projects\MultiExplorer\MultiExplorer.Tests\bin\Release\net8.0-windows\MultiExplorer.Help.html
+C:\Projects\MultiExplorer\MultiExplorer.Tests\bin\Release\net8.0-windows\release_notes.txt

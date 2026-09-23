@@ -1,6 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Fragment>
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Directory Id="PublishedDirectory_3B8B91C75627BEE566DC" Name="cs" />
+      <Directory Id="PublishedDirectory_959A45D44E6FCF58361E" Name="de" />
+      <Directory Id="PublishedDirectory_C0BC1E08F9743B2D50D5" Name="es" />
+      <Directory Id="PublishedDirectory_67AD8F41A7BB0A18C45F" Name="fr" />
+      <Directory Id="PublishedDirectory_2AD8A7049D7C5511AC25" Name="it" />
+      <Directory Id="PublishedDirectory_3702FC1866630796050C" Name="ja" />
+      <Directory Id="PublishedDirectory_1FDBC74CCFD68D0714AE" Name="ko" />
+      <Directory Id="PublishedDirectory_3485639FAF1591F3C16F" Name="pl" />
+      <Directory Id="PublishedDirectory_1B73C3C06B6E69A67886" Name="pt-BR" />
+      <Directory Id="PublishedDirectory_ED5AD332C10604371270" Name="ru" />
+      <Directory Id="PublishedDirectory_7817BB812E82168BD48F" Name="tr" />
+      <Directory Id="PublishedDirectory_D4A32CE6781B6DCE587E" Name="zh-Hans" />
+      <Directory Id="PublishedDirectory_C7CD3509327A1B61138F" Name="zh-Hant" />
+    </DirectoryRef>
     <ComponentGroup Id="PublishedRuntimeFiles">
       <Component Id="PublishedComponent_E3B0C44298FC1C149AFB" Directory="INSTALLFOLDER" Guid="1B2EF7D9-0B4E-9BDC-0ACD-3DCAD0B5E1F4">
         <File Id="PublishedFile_D6B37C3650206B639A7F" Source="$(var.PublishDir)Accessibility.dll" />
@@ -22,14 +37,16 @@
         <File Id="PublishedFile_4A25AEA997BB0B2EDADD" Source="$(var.PublishDir)Microsoft.Win32.Registry.AccessControl.dll" />
         <File Id="PublishedFile_8783E2A440C4D650BCF4" Source="$(var.PublishDir)Microsoft.Win32.Registry.dll" />
         <File Id="PublishedFile_52AE605D0E6BC2A659A3" Source="$(var.PublishDir)Microsoft.Win32.SystemEvents.dll" />
+        <File Id="PublishedFile_BA47285BC60A319CFA9B" Source="$(var.PublishDir)Microsoft.Windows.SDK.NET.dll" />
         <File Id="PublishedFile_8C66DF24863BB9736C42" Source="$(var.PublishDir)mscordaccore.dll" />
-        <File Id="PublishedFile_43DCF7263D70ECEA1D53" Source="$(var.PublishDir)mscordaccore_amd64_amd64_8.0.3026.36720.dll" />
+        <File Id="PublishedFile_071E885548CC910EE027" Source="$(var.PublishDir)mscordaccore_amd64_amd64_8.0.3126.42015.dll" />
         <File Id="PublishedFile_BC5F2AF83838747AA55C" Source="$(var.PublishDir)mscordbi.dll" />
         <File Id="PublishedFile_137265D3F5FCE293DD28" Source="$(var.PublishDir)mscorlib.dll" />
         <File Id="PublishedFile_40C15684035B909A22ED" Source="$(var.PublishDir)mscorrc.dll" />
         <File Id="PublishedFile_0BD7B8E834D81AEE2E99" Source="$(var.PublishDir)msquic.dll" />
         <File Id="PublishedFile_DE645FB8ED10C1E013E7" Source="$(var.PublishDir)MultiExplorer.deps.json" />
         <File Id="PublishedFile_8A077C2DF0F225CDF8AF" Source="$(var.PublishDir)MultiExplorer.dll" />
+        <File Id="PublishedFile_03B5F23A3BAAD7B03D0F" Source="$(var.PublishDir)MultiExplorer.Help.html" />
         <File Id="PublishedFile_73A4BDB22F855A0DB457" Source="$(var.PublishDir)MultiExplorer.OperationHost.deps.json" />
         <File Id="PublishedFile_E298F94A7A3327FAAA84" Source="$(var.PublishDir)MultiExplorer.OperationHost.dll" />
         <File Id="PublishedFile_D9AB5541A8535BC77DEA" Source="$(var.PublishDir)MultiExplorer.OperationHost.exe" />
@@ -54,6 +71,8 @@
         <File Id="PublishedFile_265B345A39F6D71A8825" Source="$(var.PublishDir)PresentationNative_cor3.dll" />
         <File Id="PublishedFile_1EFD8EE56FB1A97D737A" Source="$(var.PublishDir)PresentationUI.dll" />
         <File Id="PublishedFile_04678FC9C14EECF56909" Source="$(var.PublishDir)ReachFramework.dll" />
+        <File Id="PublishedFile_3C86F520C95AAF218062" Source="$(var.PublishDir)release_notes.txt" />
+        <File Id="PublishedFile_84B487E3D2CEEF72D57B" Source="$(var.PublishDir)resources.pri" />
         <File Id="PublishedFile_5C75F878B42E2BE09005" Source="$(var.PublishDir)System.AppContext.dll" />
         <File Id="PublishedFile_683F01FA4F33538FFE5C" Source="$(var.PublishDir)System.Buffers.dll" />
         <File Id="PublishedFile_74C85702DB6BBCF50912" Source="$(var.PublishDir)System.CodeDom.dll" />
@@ -248,8 +267,381 @@
         <File Id="PublishedFile_704E70145F90900F61E5" Source="$(var.PublishDir)vcruntime140_cor3.dll" />
         <File Id="PublishedFile_F850ED95FF8FB8FA9B83" Source="$(var.PublishDir)WindowsBase.dll" />
         <File Id="PublishedFile_92127B392D95372C87FF" Source="$(var.PublishDir)WindowsFormsIntegration.dll" />
+        <File Id="PublishedFile_4C8A4B1D616FF2370111" Source="$(var.PublishDir)WinRT.Runtime.dll" />
         <File Id="PublishedFile_B5ACBF26EAE8C27B770E" Source="$(var.PublishDir)wpfgfx_cor3.dll" />
         <RegistryValue Root="HKCU" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_E3B0C44298FC1C149AFB" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="PublishedComponent_8BF729FFE074CAEE622C" Directory="IDENTITYASSETSFOLDER" Guid="15515482-3B41-3E2F-A780-8994B722D3AA">
+        <File Id="PublishedFile_79B7B8942B5C43361717" Source="$(var.PublishDir)Assets\FolderPinLogo.png" />
+        <File Id="PublishedFile_D1013AF55A0DCFCBCDA3" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-16.png" />
+        <File Id="PublishedFile_8161A7086D6CB812B49F" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-16_altform-lightunplated.png" />
+        <File Id="PublishedFile_19B29B54B940A3FC0D92" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-16_altform-unplated.png" />
+        <File Id="PublishedFile_D45025964CECB8921BAE" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-20.png" />
+        <File Id="PublishedFile_4C4FC202B3BCFFBC9FAC" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-20_altform-lightunplated.png" />
+        <File Id="PublishedFile_A69ADF45181526651C43" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-20_altform-unplated.png" />
+        <File Id="PublishedFile_272A3F95E2F385E552A8" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-24.png" />
+        <File Id="PublishedFile_3F00C4DDBA1AA1DA28D7" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-24_altform-lightunplated.png" />
+        <File Id="PublishedFile_8B2E2669E9215D747F58" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-24_altform-unplated.png" />
+        <File Id="PublishedFile_86CEE96C813CF84103C9" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-256.png" />
+        <File Id="PublishedFile_0E9614DF3F0E30BFD1A0" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-256_altform-lightunplated.png" />
+        <File Id="PublishedFile_FC71505E98508CC19C7B" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-256_altform-unplated.png" />
+        <File Id="PublishedFile_29633CB323AA926FCCE6" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-30.png" />
+        <File Id="PublishedFile_AA02427A569BA42369F5" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-30_altform-lightunplated.png" />
+        <File Id="PublishedFile_FA2F8CEB8CC50E026219" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-30_altform-unplated.png" />
+        <File Id="PublishedFile_45F25394AE230F464353" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-32.png" />
+        <File Id="PublishedFile_7AC50DF7A31DEF61F8ED" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-32_altform-lightunplated.png" />
+        <File Id="PublishedFile_E4AA59E01B7E1FFBCE8F" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-32_altform-unplated.png" />
+        <File Id="PublishedFile_F1E8FB27091DF947EF51" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-36.png" />
+        <File Id="PublishedFile_B37743F85B35277FB2CE" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-36_altform-lightunplated.png" />
+        <File Id="PublishedFile_1719E7937254932C3F52" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-36_altform-unplated.png" />
+        <File Id="PublishedFile_E59A3C074CEF065FBE1E" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-40.png" />
+        <File Id="PublishedFile_FC3B16245054EDD02659" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-40_altform-lightunplated.png" />
+        <File Id="PublishedFile_ED19073F671A8D4FBC85" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-40_altform-unplated.png" />
+        <File Id="PublishedFile_CCDF45F178648841AFC4" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-44.png" />
+        <File Id="PublishedFile_0D08F101EDDFF82B3905" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-44_altform-lightunplated.png" />
+        <File Id="PublishedFile_DC3CDBA14600CD2E73D1" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-44_altform-unplated.png" />
+        <File Id="PublishedFile_1CF3ED17CE505CC7B69D" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-48.png" />
+        <File Id="PublishedFile_70631510B851C803533B" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-48_altform-lightunplated.png" />
+        <File Id="PublishedFile_C66D265573D6F0343105" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-48_altform-unplated.png" />
+        <File Id="PublishedFile_F049277A4ADFE7E1EB25" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-60.png" />
+        <File Id="PublishedFile_3277EAEAA1F0867B808E" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-60_altform-lightunplated.png" />
+        <File Id="PublishedFile_F1A59A09860CEB0EC5CA" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-60_altform-unplated.png" />
+        <File Id="PublishedFile_CC183599804C1029C830" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-64.png" />
+        <File Id="PublishedFile_98271B44D2A802BE5813" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-64_altform-lightunplated.png" />
+        <File Id="PublishedFile_73A7F686AF699A4DC12C" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-64_altform-unplated.png" />
+        <File Id="PublishedFile_464638EEEF66EB7C9728" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-72.png" />
+        <File Id="PublishedFile_B6ECD4B20508C449F133" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-72_altform-lightunplated.png" />
+        <File Id="PublishedFile_EAFBD08D4433D076F58D" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-72_altform-unplated.png" />
+        <File Id="PublishedFile_89A8A56F80C0D2A1BE9A" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-80.png" />
+        <File Id="PublishedFile_FF0E2838E331C67377D1" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-80_altform-lightunplated.png" />
+        <File Id="PublishedFile_040F6A8B75FE01B4176B" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-80_altform-unplated.png" />
+        <File Id="PublishedFile_C04FA36F6A2FF10B6511" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-96.png" />
+        <File Id="PublishedFile_B654359438785E919EF6" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-96_altform-lightunplated.png" />
+        <File Id="PublishedFile_070E6992498556F3FC52" Source="$(var.PublishDir)Assets\FolderPinLogo.targetsize-96_altform-unplated.png" />
+        <File Id="PublishedFile_3259D851826695E5E30E" Source="$(var.PublishDir)Assets\FolderPinTileLogo.png" />
+        <File Id="PublishedFile_EB03E4E007EDD077EBAD" Source="$(var.PublishDir)Assets\Square150x150Logo.png" />
+        <File Id="PublishedFile_21F0E3A01F781A5AC42C" Source="$(var.PublishDir)Assets\Square44x44Logo.png" />
+        <File Id="PublishedFile_AC1B48EC206C5004BC61" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-16.png" />
+        <File Id="PublishedFile_85C9D7967165E44BB130" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-16_altform-lightunplated.png" />
+        <File Id="PublishedFile_F05FD8E3FA1DA608060C" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-16_altform-unplated.png" />
+        <File Id="PublishedFile_1CAA1C9C99DB4CB970A4" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-20.png" />
+        <File Id="PublishedFile_2FFD101817A45F1FE79E" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-20_altform-lightunplated.png" />
+        <File Id="PublishedFile_3FF3372FD6520C6576EF" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-20_altform-unplated.png" />
+        <File Id="PublishedFile_307148923C3A54077C6A" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-24.png" />
+        <File Id="PublishedFile_A558B2FCBE52E7B30BB7" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-24_altform-lightunplated.png" />
+        <File Id="PublishedFile_30D885DA1EC00B9D621A" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
+        <File Id="PublishedFile_DE02CCBB1A9744547DBC" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-256.png" />
+        <File Id="PublishedFile_2983D77DCC1F3B17984F" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-256_altform-lightunplated.png" />
+        <File Id="PublishedFile_F30DA534A53C55DA3526" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-256_altform-unplated.png" />
+        <File Id="PublishedFile_C021E6175275B247558A" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-30.png" />
+        <File Id="PublishedFile_13D8B076466C4B97143D" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-30_altform-lightunplated.png" />
+        <File Id="PublishedFile_DC5D9F50EDED98AE2816" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-30_altform-unplated.png" />
+        <File Id="PublishedFile_B63C12681F96E4901C94" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-32.png" />
+        <File Id="PublishedFile_EF618128FC6A03E2899E" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-32_altform-lightunplated.png" />
+        <File Id="PublishedFile_9D2A2BB6EBD44543272B" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-32_altform-unplated.png" />
+        <File Id="PublishedFile_5F9CE8D585FB72867F63" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-36.png" />
+        <File Id="PublishedFile_7B4CD8E0BC292BDB561F" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-36_altform-lightunplated.png" />
+        <File Id="PublishedFile_F92F626F8DA30AD8712D" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-36_altform-unplated.png" />
+        <File Id="PublishedFile_3FA47F672DCEDAD0F9A1" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-40.png" />
+        <File Id="PublishedFile_9918FCDD54CF1F9496A1" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-40_altform-lightunplated.png" />
+        <File Id="PublishedFile_2D99F2A6324FDD3142FF" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-40_altform-unplated.png" />
+        <File Id="PublishedFile_9EF8A6EBB77E7BC7ED19" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-44.png" />
+        <File Id="PublishedFile_927EB1D069CE7C572BF5" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-44_altform-lightunplated.png" />
+        <File Id="PublishedFile_174C9B9180D6FA7074DA" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-44_altform-unplated.png" />
+        <File Id="PublishedFile_BE9BF26D0A958CC231B1" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-48.png" />
+        <File Id="PublishedFile_4D681D8A0F2F708765CF" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-48_altform-lightunplated.png" />
+        <File Id="PublishedFile_235F0217B8D4B86E9C47" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-48_altform-unplated.png" />
+        <File Id="PublishedFile_1D33BCB3D62CD2303D74" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-60.png" />
+        <File Id="PublishedFile_80000E37E73E2FFB88B5" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-60_altform-lightunplated.png" />
+        <File Id="PublishedFile_A518BEF741C3154EC7BB" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-60_altform-unplated.png" />
+        <File Id="PublishedFile_012521035FCB7F34F3B4" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-64.png" />
+        <File Id="PublishedFile_94E67FCC897F09513744" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-64_altform-lightunplated.png" />
+        <File Id="PublishedFile_BCBBF6AB0785309D1836" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-64_altform-unplated.png" />
+        <File Id="PublishedFile_077BE6945820B4F38CEB" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-72.png" />
+        <File Id="PublishedFile_2A53561ECE0B5D52503E" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-72_altform-lightunplated.png" />
+        <File Id="PublishedFile_CD0E85687451C60D7F8F" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-72_altform-unplated.png" />
+        <File Id="PublishedFile_F433032A5D33AAB40EAC" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-80.png" />
+        <File Id="PublishedFile_4B06584838DD12B630D0" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-80_altform-lightunplated.png" />
+        <File Id="PublishedFile_BEC81B071B82256F3A1D" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-80_altform-unplated.png" />
+        <File Id="PublishedFile_4150A9ABC25DBBD9EE31" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-96.png" />
+        <File Id="PublishedFile_21CCD0DA887229FF9D3E" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-96_altform-lightunplated.png" />
+        <File Id="PublishedFile_7729069691BA5B264A90" Source="$(var.PublishDir)Assets\Square44x44Logo.targetsize-96_altform-unplated.png" />
+        <File Id="PublishedFile_F244FAD4FBB8FBC97EB8" Source="$(var.PublishDir)Assets\StoreLogo.png" />
+        <RemoveFolder Id="RemovePublishedDir_8BF729FFE074CAEE622C" Directory="IDENTITYASSETSFOLDER" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_8BF729FFE074CAEE622C" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="PublishedComponent_3B8B91C75627BEE566DC" Directory="PublishedDirectory_3B8B91C75627BEE566DC" Guid="23CF4196-EF66-CE13-3409-872A1986E6E7">
+        <File Id="PublishedFile_C11FD0E499B8C0C5B411" Source="$(var.PublishDir)cs\Microsoft.VisualBasic.Forms.resources.dll" />
+        <File Id="PublishedFile_BF5D6EBA857CB921A210" Source="$(var.PublishDir)cs\PresentationCore.resources.dll" />
+        <File Id="PublishedFile_B9A9838E272C54869CB0" Source="$(var.PublishDir)cs\PresentationFramework.resources.dll" />
+        <File Id="PublishedFile_9D7C7B66440EB9D4287C" Source="$(var.PublishDir)cs\PresentationUI.resources.dll" />
+        <File Id="PublishedFile_96D75498D4F81622B546" Source="$(var.PublishDir)cs\ReachFramework.resources.dll" />
+        <File Id="PublishedFile_C0853230769FF0BC3BE2" Source="$(var.PublishDir)cs\System.Windows.Controls.Ribbon.resources.dll" />
+        <File Id="PublishedFile_3DD2801E184AA0B73232" Source="$(var.PublishDir)cs\System.Windows.Forms.Design.resources.dll" />
+        <File Id="PublishedFile_3F81CE327504F653EEE0" Source="$(var.PublishDir)cs\System.Windows.Forms.Primitives.resources.dll" />
+        <File Id="PublishedFile_073D141E4E49417825E7" Source="$(var.PublishDir)cs\System.Windows.Forms.resources.dll" />
+        <File Id="PublishedFile_D666A2688FC73EF4CD98" Source="$(var.PublishDir)cs\System.Windows.Input.Manipulations.resources.dll" />
+        <File Id="PublishedFile_98EA74071605E57250AB" Source="$(var.PublishDir)cs\System.Xaml.resources.dll" />
+        <File Id="PublishedFile_D3DEF9D19C800204EB44" Source="$(var.PublishDir)cs\UIAutomationClient.resources.dll" />
+        <File Id="PublishedFile_9D0A822E1072BB4102ED" Source="$(var.PublishDir)cs\UIAutomationClientSideProviders.resources.dll" />
+        <File Id="PublishedFile_A65A4C5F7AAD6C494600" Source="$(var.PublishDir)cs\UIAutomationProvider.resources.dll" />
+        <File Id="PublishedFile_D66EA15F9E88DA549105" Source="$(var.PublishDir)cs\UIAutomationTypes.resources.dll" />
+        <File Id="PublishedFile_4A80BA6537BDB69A76A9" Source="$(var.PublishDir)cs\WindowsBase.resources.dll" />
+        <File Id="PublishedFile_411609CF6B37389FA9F1" Source="$(var.PublishDir)cs\WindowsFormsIntegration.resources.dll" />
+        <RemoveFolder Id="RemovePublishedDir_3B8B91C75627BEE566DC" Directory="PublishedDirectory_3B8B91C75627BEE566DC" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_3B8B91C75627BEE566DC" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="PublishedComponent_959A45D44E6FCF58361E" Directory="PublishedDirectory_959A45D44E6FCF58361E" Guid="FCF67803-440E-55DA-0A53-08A8A5D3ABA1">
+        <File Id="PublishedFile_A0558A64725D6B162537" Source="$(var.PublishDir)de\Microsoft.VisualBasic.Forms.resources.dll" />
+        <File Id="PublishedFile_2077BC9F8218A1319931" Source="$(var.PublishDir)de\PresentationCore.resources.dll" />
+        <File Id="PublishedFile_4AA51331EF675EF43377" Source="$(var.PublishDir)de\PresentationFramework.resources.dll" />
+        <File Id="PublishedFile_FFA5E892F5566C9C63F4" Source="$(var.PublishDir)de\PresentationUI.resources.dll" />
+        <File Id="PublishedFile_B7D12CDEDAD52CF1A84E" Source="$(var.PublishDir)de\ReachFramework.resources.dll" />
+        <File Id="PublishedFile_221647880EF81F2FCA33" Source="$(var.PublishDir)de\System.Windows.Controls.Ribbon.resources.dll" />
+        <File Id="PublishedFile_56E22FE24270AE2AF6D2" Source="$(var.PublishDir)de\System.Windows.Forms.Design.resources.dll" />
+        <File Id="PublishedFile_CDC02EF697E6EA357251" Source="$(var.PublishDir)de\System.Windows.Forms.Primitives.resources.dll" />
+        <File Id="PublishedFile_CE9A70EA94843E699CEF" Source="$(var.PublishDir)de\System.Windows.Forms.resources.dll" />
+        <File Id="PublishedFile_8700D0E1E87F08BC12DC" Source="$(var.PublishDir)de\System.Windows.Input.Manipulations.resources.dll" />
+        <File Id="PublishedFile_46A976B1FA5DDF0C9F40" Source="$(var.PublishDir)de\System.Xaml.resources.dll" />
+        <File Id="PublishedFile_6464DE76312E5C918302" Source="$(var.PublishDir)de\UIAutomationClient.resources.dll" />
+        <File Id="PublishedFile_8B4146FC2A07BB910B1F" Source="$(var.PublishDir)de\UIAutomationClientSideProviders.resources.dll" />
+        <File Id="PublishedFile_1F39A4B43E789667BB10" Source="$(var.PublishDir)de\UIAutomationProvider.resources.dll" />
+        <File Id="PublishedFile_F852753DAF720BA72EB4" Source="$(var.PublishDir)de\UIAutomationTypes.resources.dll" />
+        <File Id="PublishedFile_7268BEBF55C759C03896" Source="$(var.PublishDir)de\WindowsBase.resources.dll" />
+        <File Id="PublishedFile_7505A04A6C1833A456D5" Source="$(var.PublishDir)de\WindowsFormsIntegration.resources.dll" />
+        <RemoveFolder Id="RemovePublishedDir_959A45D44E6FCF58361E" Directory="PublishedDirectory_959A45D44E6FCF58361E" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_959A45D44E6FCF58361E" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="PublishedComponent_C0BC1E08F9743B2D50D5" Directory="PublishedDirectory_C0BC1E08F9743B2D50D5" Guid="7303675D-8B46-D577-4C8B-C988EC8F374A">
+        <File Id="PublishedFile_26EEE281C258102AB21D" Source="$(var.PublishDir)es\Microsoft.VisualBasic.Forms.resources.dll" />
+        <File Id="PublishedFile_8566FF349ADE7DE4A083" Source="$(var.PublishDir)es\PresentationCore.resources.dll" />
+        <File Id="PublishedFile_B845050C408AD37E839F" Source="$(var.PublishDir)es\PresentationFramework.resources.dll" />
+        <File Id="PublishedFile_48E163F2A7BE07DCDC32" Source="$(var.PublishDir)es\PresentationUI.resources.dll" />
+        <File Id="PublishedFile_94A6CFB6DC6ED137D0B1" Source="$(var.PublishDir)es\ReachFramework.resources.dll" />
+        <File Id="PublishedFile_7764E30396D59FF3473A" Source="$(var.PublishDir)es\System.Windows.Controls.Ribbon.resources.dll" />
+        <File Id="PublishedFile_F3B806F4AAF11023A409" Source="$(var.PublishDir)es\System.Windows.Forms.Design.resources.dll" />
+        <File Id="PublishedFile_51BB5A89AB730495C382" Source="$(var.PublishDir)es\System.Windows.Forms.Primitives.resources.dll" />
+        <File Id="PublishedFile_038473D5FA0E5E73BBE3" Source="$(var.PublishDir)es\System.Windows.Forms.resources.dll" />
+        <File Id="PublishedFile_F4FB6862FD32C80F0176" Source="$(var.PublishDir)es\System.Windows.Input.Manipulations.resources.dll" />
+        <File Id="PublishedFile_2D48EBEB986914E03DEB" Source="$(var.PublishDir)es\System.Xaml.resources.dll" />
+        <File Id="PublishedFile_954B39C63368561D20B2" Source="$(var.PublishDir)es\UIAutomationClient.resources.dll" />
+        <File Id="PublishedFile_3354F8AB1F24F7B947D6" Source="$(var.PublishDir)es\UIAutomationClientSideProviders.resources.dll" />
+        <File Id="PublishedFile_320A386DA583056F720D" Source="$(var.PublishDir)es\UIAutomationProvider.resources.dll" />
+        <File Id="PublishedFile_C355E0F78F277C69188F" Source="$(var.PublishDir)es\UIAutomationTypes.resources.dll" />
+        <File Id="PublishedFile_6E848C72D2239970F3DF" Source="$(var.PublishDir)es\WindowsBase.resources.dll" />
+        <File Id="PublishedFile_2F24BD0F103D92920DE6" Source="$(var.PublishDir)es\WindowsFormsIntegration.resources.dll" />
+        <RemoveFolder Id="RemovePublishedDir_C0BC1E08F9743B2D50D5" Directory="PublishedDirectory_C0BC1E08F9743B2D50D5" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_C0BC1E08F9743B2D50D5" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="PublishedComponent_67AD8F41A7BB0A18C45F" Directory="PublishedDirectory_67AD8F41A7BB0A18C45F" Guid="273E5A87-87C6-7B29-55E8-E68AAC3A46D6">
+        <File Id="PublishedFile_37633BF7656E9CA455AD" Source="$(var.PublishDir)fr\Microsoft.VisualBasic.Forms.resources.dll" />
+        <File Id="PublishedFile_A7F00F02D6E5500A55CB" Source="$(var.PublishDir)fr\PresentationCore.resources.dll" />
+        <File Id="PublishedFile_809A407246377161584C" Source="$(var.PublishDir)fr\PresentationFramework.resources.dll" />
+        <File Id="PublishedFile_F9CB4E3CF4215B9415B3" Source="$(var.PublishDir)fr\PresentationUI.resources.dll" />
+        <File Id="PublishedFile_214B4199AE3A26F5D177" Source="$(var.PublishDir)fr\ReachFramework.resources.dll" />
+        <File Id="PublishedFile_FFCD800592601BA8430B" Source="$(var.PublishDir)fr\System.Windows.Controls.Ribbon.resources.dll" />
+        <File Id="PublishedFile_DF67D9B86717332FA5BA" Source="$(var.PublishDir)fr\System.Windows.Forms.Design.resources.dll" />
+        <File Id="PublishedFile_CDC6FD4086544F7E6F65" Source="$(var.PublishDir)fr\System.Windows.Forms.Primitives.resources.dll" />
+        <File Id="PublishedFile_9455DA4E7FAD8307553B" Source="$(var.PublishDir)fr\System.Windows.Forms.resources.dll" />
+        <File Id="PublishedFile_3355B3B060D630A82EF0" Source="$(var.PublishDir)fr\System.Windows.Input.Manipulations.resources.dll" />
+        <File Id="PublishedFile_1FAEACC76BD54DF64C5D" Source="$(var.PublishDir)fr\System.Xaml.resources.dll" />
+        <File Id="PublishedFile_0EEE68967C8FFEAD9987" Source="$(var.PublishDir)fr\UIAutomationClient.resources.dll" />
+        <File Id="PublishedFile_24CCF3BC9DC008274957" Source="$(var.PublishDir)fr\UIAutomationClientSideProviders.resources.dll" />
+        <File Id="PublishedFile_C2C4291AB96EEA8DA754" Source="$(var.PublishDir)fr\UIAutomationProvider.resources.dll" />
+        <File Id="PublishedFile_716023D8493C87C4095A" Source="$(var.PublishDir)fr\UIAutomationTypes.resources.dll" />
+        <File Id="PublishedFile_6AF6D4E55468412BBE62" Source="$(var.PublishDir)fr\WindowsBase.resources.dll" />
+        <File Id="PublishedFile_4101CB31723E38A66833" Source="$(var.PublishDir)fr\WindowsFormsIntegration.resources.dll" />
+        <RemoveFolder Id="RemovePublishedDir_67AD8F41A7BB0A18C45F" Directory="PublishedDirectory_67AD8F41A7BB0A18C45F" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_67AD8F41A7BB0A18C45F" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="PublishedComponent_2AD8A7049D7C5511AC25" Directory="PublishedDirectory_2AD8A7049D7C5511AC25" Guid="BA91D3AB-AD6D-B190-8120-91C1D2D666C8">
+        <File Id="PublishedFile_A6AFD5BAA27D08657657" Source="$(var.PublishDir)it\Microsoft.VisualBasic.Forms.resources.dll" />
+        <File Id="PublishedFile_BD0CE66B62EF5C16CE13" Source="$(var.PublishDir)it\PresentationCore.resources.dll" />
+        <File Id="PublishedFile_35D11C5881F4EC1E0287" Source="$(var.PublishDir)it\PresentationFramework.resources.dll" />
+        <File Id="PublishedFile_21CCCD8BC5D4971787AA" Source="$(var.PublishDir)it\PresentationUI.resources.dll" />
+        <File Id="PublishedFile_2739EF0596CE28669F6E" Source="$(var.PublishDir)it\ReachFramework.resources.dll" />
+        <File Id="PublishedFile_EB2DB66271203F76958A" Source="$(var.PublishDir)it\System.Windows.Controls.Ribbon.resources.dll" />
+        <File Id="PublishedFile_1E9287E5091D8BE23D6D" Source="$(var.PublishDir)it\System.Windows.Forms.Design.resources.dll" />
+        <File Id="PublishedFile_A1DD5297E4CFA2F4D8AD" Source="$(var.PublishDir)it\System.Windows.Forms.Primitives.resources.dll" />
+        <File Id="PublishedFile_B532263E9A36197812DD" Source="$(var.PublishDir)it\System.Windows.Forms.resources.dll" />
+        <File Id="PublishedFile_1D552CEC188DB77129CE" Source="$(var.PublishDir)it\System.Windows.Input.Manipulations.resources.dll" />
+        <File Id="PublishedFile_FFBCD923AED3C13DF43D" Source="$(var.PublishDir)it\System.Xaml.resources.dll" />
+        <File Id="PublishedFile_24E2909D0066184D0ACA" Source="$(var.PublishDir)it\UIAutomationClient.resources.dll" />
+        <File Id="PublishedFile_6A3B4467C95DDA2008B4" Source="$(var.PublishDir)it\UIAutomationClientSideProviders.resources.dll" />
+        <File Id="PublishedFile_FA079EA43EAD526527BB" Source="$(var.PublishDir)it\UIAutomationProvider.resources.dll" />
+        <File Id="PublishedFile_4DA15DCBE4310AFF19C5" Source="$(var.PublishDir)it\UIAutomationTypes.resources.dll" />
+        <File Id="PublishedFile_66BBB6BBCA8E1E311480" Source="$(var.PublishDir)it\WindowsBase.resources.dll" />
+        <File Id="PublishedFile_B22857616ACD52588169" Source="$(var.PublishDir)it\WindowsFormsIntegration.resources.dll" />
+        <RemoveFolder Id="RemovePublishedDir_2AD8A7049D7C5511AC25" Directory="PublishedDirectory_2AD8A7049D7C5511AC25" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_2AD8A7049D7C5511AC25" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="PublishedComponent_3702FC1866630796050C" Directory="PublishedDirectory_3702FC1866630796050C" Guid="810A2667-5C40-35AD-EADE-B5C4DABCDB08">
+        <File Id="PublishedFile_63296DC500D6D7B5CE89" Source="$(var.PublishDir)ja\Microsoft.VisualBasic.Forms.resources.dll" />
+        <File Id="PublishedFile_69D56E96AD32FBC3019A" Source="$(var.PublishDir)ja\PresentationCore.resources.dll" />
+        <File Id="PublishedFile_CA4832CE298053A79F43" Source="$(var.PublishDir)ja\PresentationFramework.resources.dll" />
+        <File Id="PublishedFile_25803529702D01D79A60" Source="$(var.PublishDir)ja\PresentationUI.resources.dll" />
+        <File Id="PublishedFile_6B7B88EB468329CD174B" Source="$(var.PublishDir)ja\ReachFramework.resources.dll" />
+        <File Id="PublishedFile_BF5A45F1060492FB0142" Source="$(var.PublishDir)ja\System.Windows.Controls.Ribbon.resources.dll" />
+        <File Id="PublishedFile_DCDCB466B18F11DFAF09" Source="$(var.PublishDir)ja\System.Windows.Forms.Design.resources.dll" />
+        <File Id="PublishedFile_6FE8BA9C150F1ABEDB39" Source="$(var.PublishDir)ja\System.Windows.Forms.Primitives.resources.dll" />
+        <File Id="PublishedFile_3781E6E8873A57508066" Source="$(var.PublishDir)ja\System.Windows.Forms.resources.dll" />
+        <File Id="PublishedFile_897C10BFCE565CD33F08" Source="$(var.PublishDir)ja\System.Windows.Input.Manipulations.resources.dll" />
+        <File Id="PublishedFile_53CF3EA6D597A1D7755E" Source="$(var.PublishDir)ja\System.Xaml.resources.dll" />
+        <File Id="PublishedFile_885DE7395B9C9015451E" Source="$(var.PublishDir)ja\UIAutomationClient.resources.dll" />
+        <File Id="PublishedFile_5C2193EC5D4334C1FC7A" Source="$(var.PublishDir)ja\UIAutomationClientSideProviders.resources.dll" />
+        <File Id="PublishedFile_1F61C278D44EF29B33B6" Source="$(var.PublishDir)ja\UIAutomationProvider.resources.dll" />
+        <File Id="PublishedFile_C304B859590BFDCA6FBC" Source="$(var.PublishDir)ja\UIAutomationTypes.resources.dll" />
+        <File Id="PublishedFile_959534D5724FAF6EFFD1" Source="$(var.PublishDir)ja\WindowsBase.resources.dll" />
+        <File Id="PublishedFile_B2D9115E4CB5693E16A1" Source="$(var.PublishDir)ja\WindowsFormsIntegration.resources.dll" />
+        <RemoveFolder Id="RemovePublishedDir_3702FC1866630796050C" Directory="PublishedDirectory_3702FC1866630796050C" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_3702FC1866630796050C" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="PublishedComponent_1FDBC74CCFD68D0714AE" Directory="PublishedDirectory_1FDBC74CCFD68D0714AE" Guid="113AE9B2-4902-CBAB-1164-8DC6B3D3C76C">
+        <File Id="PublishedFile_890A152CA9EBA886B1CC" Source="$(var.PublishDir)ko\Microsoft.VisualBasic.Forms.resources.dll" />
+        <File Id="PublishedFile_7334392C2C4AF47EF6FF" Source="$(var.PublishDir)ko\PresentationCore.resources.dll" />
+        <File Id="PublishedFile_4685CD80D8F5CFEC9E0B" Source="$(var.PublishDir)ko\PresentationFramework.resources.dll" />
+        <File Id="PublishedFile_814D3EC7A54254DEC57D" Source="$(var.PublishDir)ko\PresentationUI.resources.dll" />
+        <File Id="PublishedFile_31DD826F438C33B5853A" Source="$(var.PublishDir)ko\ReachFramework.resources.dll" />
+        <File Id="PublishedFile_958C007F8D0FE96DCB6E" Source="$(var.PublishDir)ko\System.Windows.Controls.Ribbon.resources.dll" />
+        <File Id="PublishedFile_7CA20B7129D5043103EC" Source="$(var.PublishDir)ko\System.Windows.Forms.Design.resources.dll" />
+        <File Id="PublishedFile_146D225E46538AD1A0CE" Source="$(var.PublishDir)ko\System.Windows.Forms.Primitives.resources.dll" />
+        <File Id="PublishedFile_7BA073A3B4179E33BDB6" Source="$(var.PublishDir)ko\System.Windows.Forms.resources.dll" />
+        <File Id="PublishedFile_02739CCE857F4E9C899D" Source="$(var.PublishDir)ko\System.Windows.Input.Manipulations.resources.dll" />
+        <File Id="PublishedFile_79FA2494011B2F1D5259" Source="$(var.PublishDir)ko\System.Xaml.resources.dll" />
+        <File Id="PublishedFile_91DB712652F8D6B51F37" Source="$(var.PublishDir)ko\UIAutomationClient.resources.dll" />
+        <File Id="PublishedFile_F68FEA3B19D9B37A60E7" Source="$(var.PublishDir)ko\UIAutomationClientSideProviders.resources.dll" />
+        <File Id="PublishedFile_324263D4068B05EB109C" Source="$(var.PublishDir)ko\UIAutomationProvider.resources.dll" />
+        <File Id="PublishedFile_78EBE36BB99BFDE3443A" Source="$(var.PublishDir)ko\UIAutomationTypes.resources.dll" />
+        <File Id="PublishedFile_A37642E55F3F3A8B67E0" Source="$(var.PublishDir)ko\WindowsBase.resources.dll" />
+        <File Id="PublishedFile_A72C9515F3CA37BBED3D" Source="$(var.PublishDir)ko\WindowsFormsIntegration.resources.dll" />
+        <RemoveFolder Id="RemovePublishedDir_1FDBC74CCFD68D0714AE" Directory="PublishedDirectory_1FDBC74CCFD68D0714AE" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_1FDBC74CCFD68D0714AE" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="PublishedComponent_3485639FAF1591F3C16F" Directory="PublishedDirectory_3485639FAF1591F3C16F" Guid="199FCA39-D8A5-A599-C2E0-4F72A06EB6AF">
+        <File Id="PublishedFile_544DC9F35C2533B1FB2F" Source="$(var.PublishDir)pl\Microsoft.VisualBasic.Forms.resources.dll" />
+        <File Id="PublishedFile_68230E05A2D477B07FFD" Source="$(var.PublishDir)pl\PresentationCore.resources.dll" />
+        <File Id="PublishedFile_B5F58ED4E805835B499D" Source="$(var.PublishDir)pl\PresentationFramework.resources.dll" />
+        <File Id="PublishedFile_94E128AE8DC80D23C630" Source="$(var.PublishDir)pl\PresentationUI.resources.dll" />
+        <File Id="PublishedFile_0FA3BD3BA76BC69FE480" Source="$(var.PublishDir)pl\ReachFramework.resources.dll" />
+        <File Id="PublishedFile_0C7AD9D8BF3EFED08354" Source="$(var.PublishDir)pl\System.Windows.Controls.Ribbon.resources.dll" />
+        <File Id="PublishedFile_D9B8B721585C1CC88202" Source="$(var.PublishDir)pl\System.Windows.Forms.Design.resources.dll" />
+        <File Id="PublishedFile_DD3F7CE564F42F665B68" Source="$(var.PublishDir)pl\System.Windows.Forms.Primitives.resources.dll" />
+        <File Id="PublishedFile_3541AFA799FB8D417434" Source="$(var.PublishDir)pl\System.Windows.Forms.resources.dll" />
+        <File Id="PublishedFile_2BAF55A73E879239583D" Source="$(var.PublishDir)pl\System.Windows.Input.Manipulations.resources.dll" />
+        <File Id="PublishedFile_480F2EEABC22253601DF" Source="$(var.PublishDir)pl\System.Xaml.resources.dll" />
+        <File Id="PublishedFile_294BA2956B986B42EA3B" Source="$(var.PublishDir)pl\UIAutomationClient.resources.dll" />
+        <File Id="PublishedFile_DCEB9C4441A5BA61E64C" Source="$(var.PublishDir)pl\UIAutomationClientSideProviders.resources.dll" />
+        <File Id="PublishedFile_219A7750922847F0E0A1" Source="$(var.PublishDir)pl\UIAutomationProvider.resources.dll" />
+        <File Id="PublishedFile_1BD828EFF43B1D38C645" Source="$(var.PublishDir)pl\UIAutomationTypes.resources.dll" />
+        <File Id="PublishedFile_A26785680B1CF3706A81" Source="$(var.PublishDir)pl\WindowsBase.resources.dll" />
+        <File Id="PublishedFile_7414E1E16344981204A1" Source="$(var.PublishDir)pl\WindowsFormsIntegration.resources.dll" />
+        <RemoveFolder Id="RemovePublishedDir_3485639FAF1591F3C16F" Directory="PublishedDirectory_3485639FAF1591F3C16F" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_3485639FAF1591F3C16F" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="PublishedComponent_1B73C3C06B6E69A67886" Directory="PublishedDirectory_1B73C3C06B6E69A67886" Guid="CF3199EA-C936-FD70-BC9C-7D179B51B6C7">
+        <File Id="PublishedFile_F28D82B395983B32D747" Source="$(var.PublishDir)pt-BR\Microsoft.VisualBasic.Forms.resources.dll" />
+        <File Id="PublishedFile_66E60DC4134C94B95BA5" Source="$(var.PublishDir)pt-BR\PresentationCore.resources.dll" />
+        <File Id="PublishedFile_64F4FEFF96C730A92367" Source="$(var.PublishDir)pt-BR\PresentationFramework.resources.dll" />
+        <File Id="PublishedFile_038B6527756A35415886" Source="$(var.PublishDir)pt-BR\PresentationUI.resources.dll" />
+        <File Id="PublishedFile_B086E6EC99E06614D04E" Source="$(var.PublishDir)pt-BR\ReachFramework.resources.dll" />
+        <File Id="PublishedFile_03E430EC7A8A0127A9E7" Source="$(var.PublishDir)pt-BR\System.Windows.Controls.Ribbon.resources.dll" />
+        <File Id="PublishedFile_10064AC93F122E5EB7A7" Source="$(var.PublishDir)pt-BR\System.Windows.Forms.Design.resources.dll" />
+        <File Id="PublishedFile_756FC93FB4C2F54A066C" Source="$(var.PublishDir)pt-BR\System.Windows.Forms.Primitives.resources.dll" />
+        <File Id="PublishedFile_A094A174CF53EF8C6303" Source="$(var.PublishDir)pt-BR\System.Windows.Forms.resources.dll" />
+        <File Id="PublishedFile_E2304219A3EAFAF95801" Source="$(var.PublishDir)pt-BR\System.Windows.Input.Manipulations.resources.dll" />
+        <File Id="PublishedFile_815842165E69988D7CA4" Source="$(var.PublishDir)pt-BR\System.Xaml.resources.dll" />
+        <File Id="PublishedFile_C7A4911559688A3FE6A6" Source="$(var.PublishDir)pt-BR\UIAutomationClient.resources.dll" />
+        <File Id="PublishedFile_F5E2E568815A4D2A54E0" Source="$(var.PublishDir)pt-BR\UIAutomationClientSideProviders.resources.dll" />
+        <File Id="PublishedFile_17C55B9E01FF7104809E" Source="$(var.PublishDir)pt-BR\UIAutomationProvider.resources.dll" />
+        <File Id="PublishedFile_530974DAA7D92E065DAE" Source="$(var.PublishDir)pt-BR\UIAutomationTypes.resources.dll" />
+        <File Id="PublishedFile_F877756FDC8DB1D14869" Source="$(var.PublishDir)pt-BR\WindowsBase.resources.dll" />
+        <File Id="PublishedFile_5EF7B734AAD6A6679662" Source="$(var.PublishDir)pt-BR\WindowsFormsIntegration.resources.dll" />
+        <RemoveFolder Id="RemovePublishedDir_1B73C3C06B6E69A67886" Directory="PublishedDirectory_1B73C3C06B6E69A67886" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_1B73C3C06B6E69A67886" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="PublishedComponent_ED5AD332C10604371270" Directory="PublishedDirectory_ED5AD332C10604371270" Guid="598273FD-1224-380E-7EBE-4EC79A4BA54A">
+        <File Id="PublishedFile_7B1F411F31EE9810CA73" Source="$(var.PublishDir)ru\Microsoft.VisualBasic.Forms.resources.dll" />
+        <File Id="PublishedFile_B1F51186D3289AB454A8" Source="$(var.PublishDir)ru\PresentationCore.resources.dll" />
+        <File Id="PublishedFile_043E1E89D96413F97B1A" Source="$(var.PublishDir)ru\PresentationFramework.resources.dll" />
+        <File Id="PublishedFile_FA3EF962A9E4A846E488" Source="$(var.PublishDir)ru\PresentationUI.resources.dll" />
+        <File Id="PublishedFile_7BB87115DC5A330B6F2D" Source="$(var.PublishDir)ru\ReachFramework.resources.dll" />
+        <File Id="PublishedFile_FC65DE120B2DBD781B57" Source="$(var.PublishDir)ru\System.Windows.Controls.Ribbon.resources.dll" />
+        <File Id="PublishedFile_BD6788D8782A28AD4111" Source="$(var.PublishDir)ru\System.Windows.Forms.Design.resources.dll" />
+        <File Id="PublishedFile_06235E48FCF0096FB5D4" Source="$(var.PublishDir)ru\System.Windows.Forms.Primitives.resources.dll" />
+        <File Id="PublishedFile_EDB727EBF043089F4B29" Source="$(var.PublishDir)ru\System.Windows.Forms.resources.dll" />
+        <File Id="PublishedFile_B9CBB0805DD836AC89E7" Source="$(var.PublishDir)ru\System.Windows.Input.Manipulations.resources.dll" />
+        <File Id="PublishedFile_1B8AF2003855C551DE5B" Source="$(var.PublishDir)ru\System.Xaml.resources.dll" />
+        <File Id="PublishedFile_B1915057C65B277BDFEE" Source="$(var.PublishDir)ru\UIAutomationClient.resources.dll" />
+        <File Id="PublishedFile_35DB8C47206D7A4036AA" Source="$(var.PublishDir)ru\UIAutomationClientSideProviders.resources.dll" />
+        <File Id="PublishedFile_FBC2BEC920ACF850C9E9" Source="$(var.PublishDir)ru\UIAutomationProvider.resources.dll" />
+        <File Id="PublishedFile_E3121943D7BEB8D80F4B" Source="$(var.PublishDir)ru\UIAutomationTypes.resources.dll" />
+        <File Id="PublishedFile_FDCD7D29E4A850302056" Source="$(var.PublishDir)ru\WindowsBase.resources.dll" />
+        <File Id="PublishedFile_13D09CC478822251BE10" Source="$(var.PublishDir)ru\WindowsFormsIntegration.resources.dll" />
+        <RemoveFolder Id="RemovePublishedDir_ED5AD332C10604371270" Directory="PublishedDirectory_ED5AD332C10604371270" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_ED5AD332C10604371270" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="PublishedComponent_7817BB812E82168BD48F" Directory="PublishedDirectory_7817BB812E82168BD48F" Guid="FCD15D91-0BE5-077E-DCAC-BED5C1CEA7C6">
+        <File Id="PublishedFile_820520ECCEED205CBB37" Source="$(var.PublishDir)tr\Microsoft.VisualBasic.Forms.resources.dll" />
+        <File Id="PublishedFile_ADF7C168D19699A7AF17" Source="$(var.PublishDir)tr\PresentationCore.resources.dll" />
+        <File Id="PublishedFile_04FB3C4460DD80D597CB" Source="$(var.PublishDir)tr\PresentationFramework.resources.dll" />
+        <File Id="PublishedFile_243B57A77072DEA549C7" Source="$(var.PublishDir)tr\PresentationUI.resources.dll" />
+        <File Id="PublishedFile_E9DE04C9910B43A8860A" Source="$(var.PublishDir)tr\ReachFramework.resources.dll" />
+        <File Id="PublishedFile_01F22EA057C55780284A" Source="$(var.PublishDir)tr\System.Windows.Controls.Ribbon.resources.dll" />
+        <File Id="PublishedFile_68B4F8F26EA223F60444" Source="$(var.PublishDir)tr\System.Windows.Forms.Design.resources.dll" />
+        <File Id="PublishedFile_F3258CC0CF7ABD042D74" Source="$(var.PublishDir)tr\System.Windows.Forms.Primitives.resources.dll" />
+        <File Id="PublishedFile_0F026BD3BE41909E2DD3" Source="$(var.PublishDir)tr\System.Windows.Forms.resources.dll" />
+        <File Id="PublishedFile_EE63AB11FB71200ED52C" Source="$(var.PublishDir)tr\System.Windows.Input.Manipulations.resources.dll" />
+        <File Id="PublishedFile_D4A8CCBEDFA2D1D02A30" Source="$(var.PublishDir)tr\System.Xaml.resources.dll" />
+        <File Id="PublishedFile_55CC40D90D93A172B853" Source="$(var.PublishDir)tr\UIAutomationClient.resources.dll" />
+        <File Id="PublishedFile_18F77ED64971D7BE8889" Source="$(var.PublishDir)tr\UIAutomationClientSideProviders.resources.dll" />
+        <File Id="PublishedFile_4AA6B6C9F86152B92148" Source="$(var.PublishDir)tr\UIAutomationProvider.resources.dll" />
+        <File Id="PublishedFile_3AF10DBA4961D17D7B8F" Source="$(var.PublishDir)tr\UIAutomationTypes.resources.dll" />
+        <File Id="PublishedFile_9463F295679D52CE532C" Source="$(var.PublishDir)tr\WindowsBase.resources.dll" />
+        <File Id="PublishedFile_90C038B9DDFE9A8F9534" Source="$(var.PublishDir)tr\WindowsFormsIntegration.resources.dll" />
+        <RemoveFolder Id="RemovePublishedDir_7817BB812E82168BD48F" Directory="PublishedDirectory_7817BB812E82168BD48F" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_7817BB812E82168BD48F" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="PublishedComponent_D4A32CE6781B6DCE587E" Directory="PublishedDirectory_D4A32CE6781B6DCE587E" Guid="F1486EDA-FC50-9A3C-D488-0E5F90CD833D">
+        <File Id="PublishedFile_3BDB6347F86DFA2F1DDE" Source="$(var.PublishDir)zh-Hans\Microsoft.VisualBasic.Forms.resources.dll" />
+        <File Id="PublishedFile_14B5E48EF4FB7BDC18F6" Source="$(var.PublishDir)zh-Hans\PresentationCore.resources.dll" />
+        <File Id="PublishedFile_51B81F58199383FBEA18" Source="$(var.PublishDir)zh-Hans\PresentationFramework.resources.dll" />
+        <File Id="PublishedFile_DC2C4F04D885BE16D4AA" Source="$(var.PublishDir)zh-Hans\PresentationUI.resources.dll" />
+        <File Id="PublishedFile_E9B836BA77800536E9AD" Source="$(var.PublishDir)zh-Hans\ReachFramework.resources.dll" />
+        <File Id="PublishedFile_BFCF100488D2D63020FE" Source="$(var.PublishDir)zh-Hans\System.Windows.Controls.Ribbon.resources.dll" />
+        <File Id="PublishedFile_D3E66CFF3B1543BB5124" Source="$(var.PublishDir)zh-Hans\System.Windows.Forms.Design.resources.dll" />
+        <File Id="PublishedFile_6404A6E80F386483CD83" Source="$(var.PublishDir)zh-Hans\System.Windows.Forms.Primitives.resources.dll" />
+        <File Id="PublishedFile_6DCB912536C902A50FFC" Source="$(var.PublishDir)zh-Hans\System.Windows.Forms.resources.dll" />
+        <File Id="PublishedFile_0D59B0DF352850D0F9EA" Source="$(var.PublishDir)zh-Hans\System.Windows.Input.Manipulations.resources.dll" />
+        <File Id="PublishedFile_CA9089637511531CB755" Source="$(var.PublishDir)zh-Hans\System.Xaml.resources.dll" />
+        <File Id="PublishedFile_812D843E3BCDF123AA2B" Source="$(var.PublishDir)zh-Hans\UIAutomationClient.resources.dll" />
+        <File Id="PublishedFile_CF4F8C967A10F1E2AE3C" Source="$(var.PublishDir)zh-Hans\UIAutomationClientSideProviders.resources.dll" />
+        <File Id="PublishedFile_13B04A16BD6E633B6C5D" Source="$(var.PublishDir)zh-Hans\UIAutomationProvider.resources.dll" />
+        <File Id="PublishedFile_C8146D72BEFFD7F2BE5C" Source="$(var.PublishDir)zh-Hans\UIAutomationTypes.resources.dll" />
+        <File Id="PublishedFile_D2195449720FBDDDE34B" Source="$(var.PublishDir)zh-Hans\WindowsBase.resources.dll" />
+        <File Id="PublishedFile_C7879438B29EC2CB77B0" Source="$(var.PublishDir)zh-Hans\WindowsFormsIntegration.resources.dll" />
+        <RemoveFolder Id="RemovePublishedDir_D4A32CE6781B6DCE587E" Directory="PublishedDirectory_D4A32CE6781B6DCE587E" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_D4A32CE6781B6DCE587E" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="PublishedComponent_C7CD3509327A1B61138F" Directory="PublishedDirectory_C7CD3509327A1B61138F" Guid="F4E8DE74-7538-5285-10CE-430395AB427A">
+        <File Id="PublishedFile_1F599E4D9EAE60D83A5B" Source="$(var.PublishDir)zh-Hant\Microsoft.VisualBasic.Forms.resources.dll" />
+        <File Id="PublishedFile_58526665F706BF79DCEE" Source="$(var.PublishDir)zh-Hant\PresentationCore.resources.dll" />
+        <File Id="PublishedFile_2834091A782999B468FE" Source="$(var.PublishDir)zh-Hant\PresentationFramework.resources.dll" />
+        <File Id="PublishedFile_D1DF6F478F499AEC8895" Source="$(var.PublishDir)zh-Hant\PresentationUI.resources.dll" />
+        <File Id="PublishedFile_AB4FA2B1E07EA46A9DC3" Source="$(var.PublishDir)zh-Hant\ReachFramework.resources.dll" />
+        <File Id="PublishedFile_11AADA4B16EC429583BC" Source="$(var.PublishDir)zh-Hant\System.Windows.Controls.Ribbon.resources.dll" />
+        <File Id="PublishedFile_68C734BF13727D978D1E" Source="$(var.PublishDir)zh-Hant\System.Windows.Forms.Design.resources.dll" />
+        <File Id="PublishedFile_A12DD68B516902F1CDE8" Source="$(var.PublishDir)zh-Hant\System.Windows.Forms.Primitives.resources.dll" />
+        <File Id="PublishedFile_91358D7B1757FD47B7E0" Source="$(var.PublishDir)zh-Hant\System.Windows.Forms.resources.dll" />
+        <File Id="PublishedFile_D34187839C45DA690C35" Source="$(var.PublishDir)zh-Hant\System.Windows.Input.Manipulations.resources.dll" />
+        <File Id="PublishedFile_CC2BBDEDD2644F0C8088" Source="$(var.PublishDir)zh-Hant\System.Xaml.resources.dll" />
+        <File Id="PublishedFile_451D3A63617960A56DFA" Source="$(var.PublishDir)zh-Hant\UIAutomationClient.resources.dll" />
+        <File Id="PublishedFile_185D598449F4ACFD781C" Source="$(var.PublishDir)zh-Hant\UIAutomationClientSideProviders.resources.dll" />
+        <File Id="PublishedFile_9E10F9480757BCFAA9A7" Source="$(var.PublishDir)zh-Hant\UIAutomationProvider.resources.dll" />
+        <File Id="PublishedFile_A50371CF7DC8828964BE" Source="$(var.PublishDir)zh-Hant\UIAutomationTypes.resources.dll" />
+        <File Id="PublishedFile_64B69C4F4726CECEA802" Source="$(var.PublishDir)zh-Hant\WindowsBase.resources.dll" />
+        <File Id="PublishedFile_E78EF3892E43067551E8" Source="$(var.PublishDir)zh-Hant\WindowsFormsIntegration.resources.dll" />
+        <RemoveFolder Id="RemovePublishedDir_C7CD3509327A1B61138F" Directory="PublishedDirectory_C7CD3509327A1B61138F" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MultiExplorer\RuntimeComponents" Name="Runtime_C7CD3509327A1B61138F" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </ComponentGroup>
   </Fragment>

@@ -5,7 +5,7 @@
   },
   "projects": {
     "C:\\Projects\\MultiExplorer\\MultiExplorer.OperationHost\\MultiExplorer.OperationHost.csproj": {
-      "version": "1.4.8",
+      "version": "1.6.8",
       "restore": {
         "projectUniqueName": "C:\\Projects\\MultiExplorer\\MultiExplorer.OperationHost\\MultiExplorer.OperationHost.csproj",
         "projectName": "MultiExplorer.OperationHost",
@@ -65,27 +65,30 @@
           "downloadDependencies": [
             {
               "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
-              "version": "[8.0.30, 8.0.30]"
+              "version": "[8.0.31, 8.0.31]"
             },
             {
               "name": "Microsoft.NETCore.App.Crossgen2.win-x64",
-              "version": "[8.0.30, 8.0.30]"
+              "version": "[8.0.31, 8.0.31]"
             },
             {
               "name": "Microsoft.NETCore.App.Runtime.win-x64",
-              "version": "[8.0.30, 8.0.30]"
+              "version": "[8.0.31, 8.0.31]"
             },
             {
               "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
-              "version": "[8.0.30, 8.0.30]"
+              "version": "[8.0.31, 8.0.31]"
             }
           ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
+            },
+            "Microsoft.WindowsDesktop.App.WindowsForms": {
+              "privateAssets": "none"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.400/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.401/PortableRuntimeIdentifierGraph.json"
         }
       },
       "runtimes": {

@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "dgSpecHash": "Ea4+qfaA6fw=",
+  "success": true,
+  "projectFilePath": "C:\\Projects\\MultiExplorer\\tools\\MultiExplorer.MenuDiagnostic\\MultiExplorer.MenuDiagnostic.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\piscda\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.31\\microsoft.netcore.app.runtime.win-x64.8.0.31.nupkg.sha512",
+    "C:\\Users\\piscda\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\8.0.31\\microsoft.windowsdesktop.app.runtime.win-x64.8.0.31.nupkg.sha512",
+    "C:\\Users\\piscda\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.31\\microsoft.aspnetcore.app.runtime.win-x64.8.0.31.nupkg.sha512",
+    "C:\\Users\\piscda\\.nuget\\packages\\microsoft.windows.sdk.net.ref\\10.0.22621.42\\microsoft.windows.sdk.net.ref.10.0.22621.42.nupkg.sha512"
+  ],
+  "logs": []
+}

@@ -1,0 +1,3 @@
+HWND=0x2609B2
+Title=What 7 HOURS of BREAM Fishing Looks Like in PERTH - YouTube - Work 2 - Microsoft​ Edge
+Bounds={X=0,Y=0,Width=2569,Height=1389}

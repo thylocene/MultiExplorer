@@ -5,6 +5,7 @@ using System.Text;
 using System.Runtime.InteropServices.ComTypes;
 
 [assembly: InternalsVisibleTo("MultiExplorer.Tests")]
+[assembly: InternalsVisibleTo("MultiExplorer.MenuDiagnostic")]
 
 namespace MultiExplorer;
 
@@ -28,6 +29,33 @@ public static class NativeMethods
     public struct POINTL
     {
         public int x, y;
+    }
+
+    // The shell reads this clipboard format while an OLE drag is in progress
+    // and draws its standard cursor-following Copy / Move feedback, including
+    // the appropriate operation glyph.
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct DROPDESCRIPTION
+    {
+        public DROPIMAGETYPE type;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string? szMessage;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string? szInsert;
+    }
+
+    public enum DROPIMAGETYPE
+    {
+        Invalid = -1,
+        None = 0,
+        Copy = 1,
+        Move = 2,
+        Link = 3,
+        Label = 6,
+        Warning = 7,
+        NoImage = 8,
     }
 
     [ComVisible(true)]
@@ -73,11 +101,35 @@ public static class NativeMethods
     public const uint LVHT_NOWHERE = 0x0001;
     public const uint LVHT_ONITEM  = 0x000E; // LVHT_ONITEMICON | LVHT_ONITEMLABEL | LVHT_ONITEMSTATEICON
 
+    // Used with TVM_HITTEST to distinguish a folder label from its
+    // expand/collapse button in the Explorer navigation tree.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TVHITTESTINFO
+    {
+        public POINT  pt;
+        public uint   flags;
+        public IntPtr hItem;
+    }
+
+    public const uint TVHT_ONITEMBUTTON = 0x0010;
+
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT
     {
         public int Left, Top, Right, Bottom;
         public RECT(int l, int t, int r, int b) { Left = l; Top = t; Right = r; Bottom = b; }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SCROLLINFO
+    {
+        public uint cbSize;
+        public uint fMask;
+        public int nMin;
+        public int nMax;
+        public uint nPage;
+        public int nPos;
+        public int nTrackPos;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -93,6 +145,37 @@ public static class NativeMethods
     {
         public Guid fmtid;
         public uint pid;
+    }
+
+    /// <summary>
+    /// Native PROPVARIANT layout. The property system owns any payload returned
+    /// by IPropertyStore; callers must pass it to PropVariantClear when finished.
+    /// </summary>
+    [StructLayout(LayoutKind.Explicit)]
+    public struct PROPVARIANT
+    {
+        [FieldOffset(0)] public ushort vt;
+        [FieldOffset(2)] public ushort wReserved1;
+        [FieldOffset(4)] public ushort wReserved2;
+        [FieldOffset(6)] public ushort wReserved3;
+        [FieldOffset(8)] public IntPtr pointerValue;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MENUITEMINFO
+    {
+        public uint cbSize;
+        public uint fMask;
+        public uint fType;
+        public uint fState;
+        public uint wID;
+        public IntPtr hSubMenu;
+        public IntPtr hbmpChecked;
+        public IntPtr hbmpUnchecked;
+        public nuint dwItemData;
+        public IntPtr dwTypeData;
+        public uint cch;
+        public IntPtr hbmpItem;
     }
 
     // direction: 1=ascending, -1=descending
@@ -163,8 +246,8 @@ public static class NativeMethods
     //
     // The shell view queries the host's IServiceProvider for this interface
     // (guidService == IID_IFolderViewSettings) during view creation.
-    // Returning S_OK with FVM_DETAILS and no suppression flags tells the view
-    // to render a full Details layout — including the column header band.
+    // View mode and icon-size methods may return E_NOTIMPL so ExplorerBrowser can
+    // restore those values from its named, per-folder property bag.
     //
     // No [ComImport] — we implement this interface (CCW), not import it.
 
@@ -173,13 +256,13 @@ public static class NativeMethods
     [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     public interface IFolderViewSettings
     {
-        [PreserveSig] int GetFolderFlags(out uint pfolderMask, out uint pfolderFlags);
-        [PreserveSig] int GetSortColumns(IntPtr rgSortColumns, uint cColumns);
-        [PreserveSig] int GetGroupBy(IntPtr pkey, out int pfGroupAscending);
+        [PreserveSig] int GetColumnPropertyList(ref Guid riid, out IntPtr ppv);
+        [PreserveSig] int GetGroupByProperty(out PROPERTYKEY pkey, out int pfGroupAscending);
         [PreserveSig] int GetViewMode(out uint puViewMode);
         [PreserveSig] int GetIconSize(out uint puIconSize);
-        [PreserveSig] int GetColumnStates(IntPtr rgKeyNames, uint cColumns);
-        [PreserveSig] int GetDefaultColumnWidth(IntPtr pkey, out uint pcxColumn);
+        [PreserveSig] int GetFolderFlags(out uint pfolderMask, out uint pfolderFlags);
+        [PreserveSig] int GetSortColumns(IntPtr rgSortColumns, uint cColumnsIn, out uint cColumnsOut);
+        [PreserveSig] int GetGroupSubsetCount(out uint pcVisibleRows);
     }
 
     // ── IServiceProvider — implemented by us as the browser's site ────────────
@@ -196,6 +279,7 @@ public static class NativeMethods
     {
         [PreserveSig] int QueryService(ref Guid guidService, ref Guid riid, out IntPtr ppvObject);
     }
+
 
     // ── IShellView — called by us to select items ────────────────────────────
     //
@@ -229,6 +313,12 @@ public static class NativeMethods
         /// SVSI_SELECT (1) selects; SVSI_DESELECT (0) deselects.
         /// </summary>
         [PreserveSig] int SelectItem(IntPtr pidlItem, uint uFlags);
+        /// <summary>
+        /// Retrieves an object for a region of the live Shell view. Passing
+        /// SVGIO_BACKGROUND (0) and IContextMenu obtains the same background
+        /// menu source that Explorer uses for View, Sort by, Group by, and New.
+        /// </summary>
+        [PreserveSig] int GetItemObject(uint svgIo, ref Guid riid, out IntPtr ppv);
     }
 
     // ── IFolderView — called by us to query the current folder and selection ─────
@@ -491,6 +581,38 @@ public static class NativeMethods
         [PreserveSig] int Compare(IShellItem psi, uint hint, out int piOrder);
     }
 
+    [ComImport]
+    [Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IPropertyStore
+    {
+        [PreserveSig] int GetCount(out uint cProps);
+        [PreserveSig] int GetAt(uint iProp, out PROPERTYKEY pkey);
+        [PreserveSig] int GetValue(ref PROPERTYKEY key, out PROPVARIANT value);
+        [PreserveSig] int SetValue(ref PROPERTYKEY key, ref PROPVARIANT value);
+        [PreserveSig] int Commit();
+    }
+
+    [ComImport]
+    [Guid("1F9FC1D0-C39B-4B26-817F-011967D3440E")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IPropertyDescriptionList
+    {
+        [PreserveSig] int GetCount(out uint count);
+        [PreserveSig] int GetAt(uint index, ref Guid riid, out IntPtr description);
+    }
+
+    [ComImport]
+    [Guid("6F79D558-3E96-4549-A1D1-7D75D2288814")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IPropertyDescription
+    {
+        [PreserveSig] int GetPropertyKey(out PROPERTYKEY key);
+        [PreserveSig] int GetCanonicalName(out IntPtr canonicalName);
+        [PreserveSig] int GetPropertyType(out ushort propertyType);
+        [PreserveSig] int GetDisplayName(out IntPtr displayName);
+    }
+
     // ── IShellBrowser — partial, through GetControlWindow ───────────────────────
     //
     // Inherits IOleWindow → IUnknown.  Methods are declared in vtable order so that
@@ -525,7 +647,7 @@ public static class NativeMethods
     // is exactly the "expand to current folder" behaviour.
 
     [ComImport]
-    [Guid("028212A3-B627-47E9-8855-9F598112A7AB")]
+    [Guid("028212A3-B627-47E9-8856-C14265554E4F")]
     [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     public interface INameSpaceTreeControl
     {
@@ -543,6 +665,11 @@ public static class NativeMethods
         [PreserveSig] int GetItemCustomState(IShellItem psi, out int piStateNumber);
         [PreserveSig] int SetItemCustomState(IShellItem psi, int iStateNumber);
         [PreserveSig] int EnsureItemVisible(IShellItem psi);
+        [PreserveSig] int SetTheme([MarshalAs(UnmanagedType.LPWStr)] string theme);
+        [PreserveSig] int GetNextItem(IShellItem? item, int relation, out IntPtr nextItem);
+        [PreserveSig] int HitTest(ref POINT point, out IntPtr item);
+        [PreserveSig] int GetItemRect(IShellItem item, out RECT rect);
+        [PreserveSig] int CollapseAll();
     }
 
     // ── SysTreeView32 — used to sync the navigation pane ────────────────────────
@@ -572,12 +699,15 @@ public static class NativeMethods
     public const uint TVGN_ROOT  = 0x0000; // first root item
     public const uint TVGN_NEXT  = 0x0001; // next sibling
     public const uint TVGN_CHILD = 0x0004; // first child
+    public const uint TVGN_PARENT = 0x0003; // parent item
     public const uint TVGN_CARET = 0x0009; // currently selected (keyboard caret) item
 
     public const uint TVE_EXPAND    = 0x0002;
     public const uint TVM_EXPAND        = 0x1102;
     public const uint TVM_GETNEXTITEM   = 0x110A;
     public const uint TVM_SELECTITEM    = 0x110B;
+    public const uint TVM_EDITLABEL     = 0x1141; // TVM_EDITLABELW (Unicode)
+    public const uint TVM_HITTEST       = 0x1111;
     public const uint TVM_GETITEM       = 0x113E; // TVM_GETITEMW (Unicode)
     public const uint TVM_ENSUREVISIBLE = 0x1114;
 
@@ -645,11 +775,20 @@ public static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool RedrawWindow(IntPtr hwnd, IntPtr updateRect, IntPtr updateRegion, uint flags);
 
+    public const uint RDW_INVALIDATE  = 0x0001;
+    public const uint RDW_ALLCHILDREN = 0x0080;
+    public const uint RDW_UPDATENOW   = 0x0100;
+
     /// <summary>Sends LVM_HITTEST to a SysListView32 to find the item under a point.</summary>
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     public static extern int SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, ref LVHITTESTINFO lParam);
 
     public const uint LVM_HITTEST = 0x1012; // LVM_FIRST (0x1000) + 18
+    public const uint LVM_GETEDITCONTROL = 0x1018; // LVM_FIRST (0x1000) + 24
+    public const uint LVM_GETHEADER = 0x101F; // LVM_FIRST (0x1000) + 31
+    public const uint EM_SETSEL = 0x00B1;
+
+    public const int WM_CONTEXTMENU = 0x007B;
 
     /// <summary>Sets Win32 keyboard focus to the specified window.</summary>
     [DllImport("user32.dll")]
@@ -707,6 +846,17 @@ public static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetScrollInfo(IntPtr hWnd, int nBar,
+        ref SCROLLINFO scrollInfo);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetWindowDC(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
     public const uint GW_HWNDNEXT = 2;
 
     // ── Shell context-menu P/Invokes and interfaces ───────────────────────────
@@ -753,6 +903,70 @@ public static class NativeMethods
             IntPtr pReserved, IntPtr pszName, uint cchMax);
     }
 
+    /// <summary>
+    /// Extends <see cref="IContextMenu"/> with handling for dynamic and
+    /// owner-drawn menu content. Shell menus use this to populate cascades such
+    /// as the folder-background <c>New</c> menu.
+    /// </summary>
+    [ComImport]
+    [Guid("000214F4-0000-0000-C000-000000000046")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IContextMenu2
+    {
+        [PreserveSig] int QueryContextMenu(IntPtr hmenu, uint indexMenu,
+            uint idCmdFirst, uint idCmdLast, uint uFlags);
+        [PreserveSig] int InvokeCommand(ref CMINVOKECOMMANDINFO pici);
+        [PreserveSig] int GetCommandString(UIntPtr idCmd, uint uType,
+            IntPtr pReserved, IntPtr pszName, uint cchMax);
+        [PreserveSig] int HandleMenuMsg(uint uMsg, IntPtr wParam, IntPtr lParam);
+    }
+
+    /// <summary>
+    /// Adds result-aware context-menu message handling, including keyboard menu
+    /// navigation, to <see cref="IContextMenu2"/>.
+    /// </summary>
+    [ComImport]
+    [Guid("BCFCE0A0-EC17-11D0-8D10-00A0C90F2719")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IContextMenu3
+    {
+        [PreserveSig] int QueryContextMenu(IntPtr hmenu, uint indexMenu,
+            uint idCmdFirst, uint idCmdLast, uint uFlags);
+        [PreserveSig] int InvokeCommand(ref CMINVOKECOMMANDINFO pici);
+        [PreserveSig] int GetCommandString(UIntPtr idCmd, uint uType,
+            IntPtr pReserved, IntPtr pszName, uint cchMax);
+        [PreserveSig] int HandleMenuMsg(uint uMsg, IntPtr wParam, IntPtr lParam);
+        [PreserveSig] int HandleMenuMsg2(uint uMsg, IntPtr wParam, IntPtr lParam,
+            out IntPtr result);
+    }
+
+    [ComImport]
+    [Guid("000214F9-0000-0000-C000-000000000046")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IShellLinkW
+    {
+        [PreserveSig] int GetPath(IntPtr file, int cch, IntPtr findData, uint flags);
+        [PreserveSig] int GetIDList(out IntPtr itemIdList);
+        [PreserveSig] int SetIDList(IntPtr itemIdList);
+        [PreserveSig] int GetDescription(IntPtr name, int cch);
+        [PreserveSig] int SetDescription([MarshalAs(UnmanagedType.LPWStr)] string name);
+        [PreserveSig] int GetWorkingDirectory(IntPtr directory, int cch);
+        [PreserveSig] int SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string directory);
+        [PreserveSig] int GetArguments(IntPtr arguments, int cch);
+        [PreserveSig] int SetArguments([MarshalAs(UnmanagedType.LPWStr)] string arguments);
+        [PreserveSig] int GetHotkey(out ushort hotkey);
+        [PreserveSig] int SetHotkey(ushort hotkey);
+        [PreserveSig] int GetShowCmd(out int showCommand);
+        [PreserveSig] int SetShowCmd(int showCommand);
+        [PreserveSig] int GetIconLocation(IntPtr iconPath, int cch, out int iconIndex);
+        [PreserveSig] int SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string iconPath,
+            int iconIndex);
+        [PreserveSig] int SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string relativePath,
+            uint reserved);
+        [PreserveSig] int Resolve(IntPtr ownerWindow, uint flags);
+        [PreserveSig] int SetPath([MarshalAs(UnmanagedType.LPWStr)] string file);
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct CMINVOKECOMMANDINFO
     {
@@ -765,6 +979,12 @@ public static class NativeMethods
         public int    nShow;
         public uint   dwHotKey;
         public IntPtr hIcon;
+        public IntPtr lpTitle;
+        public IntPtr lpVerbW;
+        public IntPtr lpParametersW;
+        public IntPtr lpDirectoryW;
+        public IntPtr lpTitleW;
+        public POINT  ptInvoke;
     }
 
     [DllImport("user32.dll")]
@@ -774,6 +994,61 @@ public static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool DestroyMenu(IntPtr hMenu);
 
+    [DllImport("user32.dll")]
+    public static extern int GetMenuItemCount(IntPtr hMenu);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetSubMenu(IntPtr hMenu, int position);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool DeleteMenu(IntPtr hMenu, uint position, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool AppendMenu(IntPtr hMenu, uint flags, nuint newItemId,
+        string? text);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "InsertMenuW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool InsertMenu(IntPtr hMenu, uint position, uint flags,
+        nuint newItemId, string? text);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetMenuString(IntPtr hMenu, uint item,
+        StringBuilder text, int maxCount, uint flags);
+
+    public static bool SetMenuItemText(IntPtr menu, uint position, string text)
+    {
+        if (menu == IntPtr.Zero)
+            throw new ArgumentException("A menu handle is required.", nameof(menu));
+        ArgumentNullException.ThrowIfNull(text);
+
+        IntPtr textPointer = Marshal.StringToCoTaskMemUni(text);
+        try
+        {
+            var item = new MENUITEMINFO
+            {
+                cbSize = (uint)Marshal.SizeOf<MENUITEMINFO>(),
+                fMask = 0x00000040, // MIIM_STRING
+                dwTypeData = textPointer,
+                cch = (uint)text.Length,
+            };
+            return SetMenuItemInfo(menu, position, true, ref item);
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(textPointer);
+        }
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode,
+        EntryPoint = "SetMenuItemInfoW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetMenuItemInfo(IntPtr menu, uint item,
+        [MarshalAs(UnmanagedType.Bool)] bool byPosition,
+        ref MENUITEMINFO menuItemInfo);
+
     /// <summary>Displays a context menu and returns the selected command ID
     /// when TPM_RETURNCMD is set (0 = cancelled).</summary>
     [DllImport("user32.dll")]
@@ -782,7 +1057,12 @@ public static class NativeMethods
 
     public const uint TPM_RETURNCMD   = 0x0100;
     public const uint TPM_RIGHTBUTTON = 0x0002;
+    public const uint CMF_DEFAULTONLY = 0x0001; // request only the registered default action
     public const uint CMF_EXPLORE     = 0x0004; // adds "Explore" verb + standard shell extras
+    public const uint CMF_NOVERBS     = 0x0008; // omit extension verbs from the compact menu
+    public const uint MF_BYPOSITION   = 0x0400;
+    public const uint MF_SEPARATOR    = 0x0800;
+    public const uint MF_STRING       = 0x0000;
 
     // ── Shell P/Invokes ───────────────────────────────────────────────────────
 
@@ -808,6 +1088,33 @@ public static class NativeMethods
         IntPtr pbc,
         ref Guid riid,
         out IntPtr ppv);
+
+    /// <summary>Gets a read-only Shell property store for a file-system path.</summary>
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern int SHGetPropertyStoreFromParsingName(
+        [MarshalAs(UnmanagedType.LPWStr)] string path,
+        IntPtr bindContext,
+        int flags,
+        ref Guid riid,
+        out IntPtr propertyStore);
+
+    /// <summary>Enumerates registered Shell properties which are suitable as view columns.</summary>
+    [DllImport("propsys.dll")]
+    public static extern int PSEnumeratePropertyDescriptions(
+        uint filter,
+        ref Guid riid,
+        out IntPtr propertyDescriptionList);
+
+    /// <summary>Formats a Shell property value using its registered display formatter.</summary>
+    [DllImport("propsys.dll")]
+    public static extern int PSFormatForDisplayAlloc(
+        ref PROPERTYKEY key,
+        ref PROPVARIANT value,
+        uint flags,
+        out IntPtr displayText);
+
+    [DllImport("ole32.dll")]
+    public static extern int PropVariantClear(ref PROPVARIANT value);
 
     /// <summary>Retrieves a COM interface pointer from an accessible object in a window.</summary>
     [DllImport("oleacc.dll")]
@@ -910,18 +1217,15 @@ public static class NativeMethods
     public static extern IntPtr SHGetFileInfoW(string pszPath, uint dwFileAttributes,
         ref SHFILEINFOW psfi, uint cbFileInfo, uint uFlags);
 
+    public const uint SHGFI_ICON              = 0x00000100;
+    public const uint SHGFI_SMALLICON         = 0x00000001;
+    public const uint SHGFI_USEFILEATTRIBUTES = 0x00000010;
+    public const uint FILE_ATTRIBUTE_NORMAL   = 0x00000080;
+    public const uint FILE_ATTRIBUTE_DIRECTORY = 0x00000010;
+
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool DestroyIcon(IntPtr hIcon);
-
-    // ── Layered-window helpers (Windows 8+: WS_EX_LAYERED on child windows) ─────
-
-    /// <summary>Sets window opacity / colour-key for a WS_EX_LAYERED window.</summary>
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
-
-    public const uint LWA_ALPHA = 0x00000002; // bAlpha controls per-window opacity
 
     /// <summary>Retrieves a window's style or extended style word.</summary>
     [DllImport("user32.dll", SetLastError = true)]
@@ -937,6 +1241,9 @@ public static class NativeMethods
     public const int GWL_STYLE       = -16;
     public const int GWL_EXSTYLE     = -20;
     public const int WS_EX_LAYERED   = 0x00080000;
+    public const int WS_VSCROLL      = 0x00200000;
+    public const int SB_VERT         = 1;
+    public const uint SIF_ALL        = 0x0017;
 
     // ── Global hotkey registration ────────────────────────────────────────────
 

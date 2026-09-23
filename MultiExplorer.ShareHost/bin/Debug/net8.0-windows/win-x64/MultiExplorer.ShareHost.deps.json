@@ -1,0 +1,24 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0/win-x64",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {},
+    ".NETCoreApp,Version=v8.0/win-x64": {
+      "MultiExplorer.ShareHost/1.6.4": {
+        "runtime": {
+          "MultiExplorer.ShareHost.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "MultiExplorer.ShareHost/1.6.4": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

@@ -5,7 +5,7 @@
   },
   "projects": {
     "C:\\Projects\\MultiExplorer\\MultiExplorer.csproj": {
-      "version": "1.4.7",
+      "version": "1.6.6",
       "restore": {
         "projectUniqueName": "C:\\Projects\\MultiExplorer\\MultiExplorer.csproj",
         "projectName": "MultiExplorer",
@@ -22,16 +22,16 @@
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
         "originalTargetFrameworks": [
-          "net8.0-windows"
+          "net8.0-windows10.0.18362.0"
         ],
         "sources": {
           "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
-          "net8.0-windows": {
-            "framework": "net8.0-windows7.0",
-            "targetAlias": "net8.0-windows",
+          "net8.0-windows10.0.18362.0": {
+            "framework": "net8.0-windows10.0.18362",
+            "targetAlias": "net8.0-windows10.0.18362.0",
             "projectReferences": {}
           }
         },
@@ -48,9 +48,9 @@
         "SdkAnalysisLevel": "10.0.400"
       },
       "frameworks": {
-        "net8.0-windows": {
-          "framework": "net8.0-windows7.0",
-          "targetAlias": "net8.0-windows",
+        "net8.0-windows10.0.18362.0": {
+          "framework": "net8.0-windows10.0.18362",
+          "targetAlias": "net8.0-windows10.0.18362.0",
           "imports": [
             "net461",
             "net462",
@@ -65,30 +65,37 @@
           "downloadDependencies": [
             {
               "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
-              "version": "[8.0.30, 8.0.30]"
+              "version": "[8.0.31, 8.0.31]"
             },
             {
               "name": "Microsoft.NETCore.App.Crossgen2.win-x64",
-              "version": "[8.0.30, 8.0.30]"
+              "version": "[8.0.31, 8.0.31]"
             },
             {
               "name": "Microsoft.NETCore.App.Runtime.win-x64",
-              "version": "[8.0.30, 8.0.30]"
+              "version": "[8.0.31, 8.0.31]"
+            },
+            {
+              "name": "Microsoft.Windows.SDK.NET.Ref",
+              "version": "[10.0.22621.42, 10.0.22621.42]"
             },
             {
               "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
-              "version": "[8.0.30, 8.0.30]"
+              "version": "[8.0.31, 8.0.31]"
             }
           ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
             },
+            "Microsoft.Windows.SDK.NET.Ref.Windows": {
+              "privateAssets": "all"
+            },
             "Microsoft.WindowsDesktop.App.WindowsForms": {
               "privateAssets": "none"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.400/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.401/PortableRuntimeIdentifierGraph.json"
         }
       },
       "runtimes": {
@@ -98,7 +105,7 @@
       }
     },
     "C:\\Projects\\MultiExplorer\\MultiExplorer.Tests\\MultiExplorer.Tests.csproj": {
-      "version": "1.4.7",
+      "version": "1.6.6",
       "restore": {
         "projectUniqueName": "C:\\Projects\\MultiExplorer\\MultiExplorer.Tests\\MultiExplorer.Tests.csproj",
         "projectName": "MultiExplorer.Tests",
@@ -115,16 +122,16 @@
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
         "originalTargetFrameworks": [
-          "net8.0-windows"
+          "net8.0-windows10.0.18362.0"
         ],
         "sources": {
           "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
-          "net8.0-windows": {
-            "framework": "net8.0-windows7.0",
-            "targetAlias": "net8.0-windows",
+          "net8.0-windows10.0.18362.0": {
+            "framework": "net8.0-windows10.0.18362",
+            "targetAlias": "net8.0-windows10.0.18362.0",
             "projectReferences": {
               "C:\\Projects\\MultiExplorer\\MultiExplorer.csproj": {
                 "projectPath": "C:\\Projects\\MultiExplorer\\MultiExplorer.csproj"
@@ -145,9 +152,9 @@
         "SdkAnalysisLevel": "10.0.400"
       },
       "frameworks": {
-        "net8.0-windows": {
-          "framework": "net8.0-windows7.0",
-          "targetAlias": "net8.0-windows",
+        "net8.0-windows10.0.18362.0": {
+          "framework": "net8.0-windows10.0.18362",
+          "targetAlias": "net8.0-windows10.0.18362.0",
           "dependencies": {
             "Microsoft.NET.Test.Sdk": {
               "target": "Package",
@@ -177,15 +184,24 @@
           ],
           "assetTargetFallback": true,
           "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.Windows.SDK.NET.Ref",
+              "version": "[10.0.22621.42, 10.0.22621.42]"
+            }
+          ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            },
+            "Microsoft.Windows.SDK.NET.Ref.Windows": {
               "privateAssets": "all"
             },
             "Microsoft.WindowsDesktop.App.WindowsForms": {
               "privateAssets": "none"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.400/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.401/PortableRuntimeIdentifierGraph.json"
         }
       }
     }

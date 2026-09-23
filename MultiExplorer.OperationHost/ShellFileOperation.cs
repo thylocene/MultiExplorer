@@ -5,12 +5,19 @@ namespace MultiExplorer;
 public static class ShellFileOperation
 {
     private const int EAbort = unchecked((int)0x80004004);
+    private const uint FofSilent = 0x0004;
+    private const uint FofNoConfirmation = 0x0010;
     private const uint FofAllowUndo = 0x0040;
     private const uint FofNoConfirmMkdir = 0x0200;
     private const uint FofxRecycleOnDelete = 0x00080000;
 
-    internal static FileOperationState Execute(FileOperationRequest request)
+    internal static FileOperationState Execute(
+        FileOperationRequest request, bool showNativeProgressDialog = true)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        using var windowPromoter = new OperationWindowPromoter(
+            request.WindowPlacement);
+
         var state = new FileOperationState
         {
             Id = request.Id,
@@ -18,25 +25,42 @@ public static class ShellFileOperation
             Status = FileOperationStatus.Running,
             TotalItems = request.Sources.Length,
             HostProcessId = Environment.ProcessId,
+            CreatedUtc = request.CreatedUtc,
             UpdatedUtc = DateTime.UtcNow,
         };
+        FileOperationPresentation.ApplyRequestContext(state, request);
         FileOperationStore.WriteState(state);
 
+        var control = new OperationControlProbe(request.Id);
         IFileOperation? operation = null;
         FileOperationProgressSink? sink = null;
         uint cookie = 0;
         var shellItems = new List<IShellItem>();
         try
         {
+            SourceMetrics metrics = CalculateSourceMetrics(request.Sources, control);
+            state.TotalItems = metrics.ItemCount > 0
+                ? metrics.ItemCount
+                : request.Sources.Length;
+            state.TotalBytes = metrics.TotalBytes;
+            state.UpdatedUtc = DateTime.UtcNow;
+            FileOperationStore.WriteState(state);
+
+            if (control.IsCancellationRequested(force: true))
+                throw new OperationCanceledException();
+
             var operationType = Type.GetTypeFromCLSID(
                 new Guid("3AD05575-8857-4850-9277-11B85BDB8E09"))
                 ?? throw new InvalidOperationException("IFileOperation is unavailable.");
             operation = (IFileOperation)Activator.CreateInstance(operationType)!;
-            var cancellation = new CancellationProbe(request.Id);
-            sink = new FileOperationProgressSink(state, cancellation);
+            sink = new FileOperationProgressSink(state, control);
             ThrowIfFailed(operation.Advise(sink, out cookie));
 
             uint flags = FofNoConfirmMkdir;
+            if (!showNativeProgressDialog)
+                flags |= FofSilent;
+            if (request.Kind == FileOperationKind.DeletePermanently)
+                flags |= FofNoConfirmation;
             if (request.Kind != FileOperationKind.DeletePermanently)
                 flags |= FofAllowUndo;
             if (request.Kind == FileOperationKind.Delete)
@@ -54,7 +78,7 @@ public static class ShellFileOperation
 
             foreach (string sourcePath in request.Sources)
             {
-                if (cancellation.IsRequested())
+                if (sink.CheckControlState() == EAbort)
                     throw new OperationCanceledException();
 
                 IShellItem source = CreateShellItem(sourcePath);
@@ -70,7 +94,7 @@ public static class ShellFileOperation
                 ThrowIfFailed(result);
             }
 
-            if (cancellation.IsRequested(force: true))
+            if (sink.CheckControlState() == EAbort)
                 throw new OperationCanceledException();
 
             int performResult = operation.PerformOperations();
@@ -82,6 +106,12 @@ public static class ShellFileOperation
                 : performResult < 0 || state.Error != null
                     ? FileOperationStatus.Failed
                     : FileOperationStatus.Completed;
+            if (state.Status == FileOperationStatus.Completed && state.TotalWork > 0)
+                state.WorkCompleted = state.TotalWork;
+            if (state.Status == FileOperationStatus.Completed && state.TotalBytes > 0)
+                state.BytesCompleted = state.TotalBytes;
+            if (state.Status == FileOperationStatus.Completed)
+                state.CompletedItems = state.TotalItems;
             if (performResult < 0 && !state.Aborted)
                 state.Error = Marshal.GetExceptionForHR(performResult)?.Message;
         }
@@ -125,6 +155,76 @@ public static class ShellFileOperation
         return state;
     }
 
+    private static SourceMetrics CalculateSourceMetrics(
+        IEnumerable<string> sourcePaths, OperationControlProbe control)
+    {
+        var enumerationOptions = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+            AttributesToSkip = FileAttributes.ReparsePoint,
+        };
+        int itemCount = 0;
+        ulong totalBytes = 0;
+        foreach (string sourcePath in sourcePaths)
+        {
+            if (control.IsCancellationRequested(force: true))
+                break;
+
+            try
+            {
+                if (File.Exists(sourcePath))
+                {
+                    itemCount = AddItem(itemCount);
+                    totalBytes = AddFileLength(totalBytes, sourcePath);
+                    continue;
+                }
+
+                if (!Directory.Exists(sourcePath))
+                    continue;
+                itemCount = AddItem(itemCount);
+                var directory = new DirectoryInfo(sourcePath);
+                foreach (FileSystemInfo entry in directory.EnumerateFileSystemInfos(
+                             "*", enumerationOptions))
+                {
+                    if (control.IsCancellationRequested())
+                        return new SourceMetrics(itemCount, totalBytes);
+                    itemCount = AddItem(itemCount);
+                    if (entry is FileInfo file)
+                        totalBytes = AddFileLength(totalBytes, file);
+                }
+            }
+            catch (Exception ex) when (ex is IOException
+                                       or UnauthorizedAccessException
+                                       or System.Security.SecurityException)
+            {
+                // Totals are estimates only. The Shell remains responsible for
+                // reporting an actionable operation error if an item is unreadable.
+                System.Diagnostics.Debug.WriteLine(
+                    $"Could not measure '{sourcePath}' for progress: {ex}");
+            }
+        }
+
+        return new SourceMetrics(itemCount, totalBytes);
+    }
+
+    private static ulong AddFileLength(ulong totalBytes, string filePath)
+        => AddFileLength(totalBytes, new FileInfo(filePath));
+
+    private static ulong AddFileLength(ulong totalBytes, FileInfo file)
+    {
+        long length = file.Length;
+        ulong positiveLength = length > 0 ? (ulong)length : 0;
+        return ulong.MaxValue - totalBytes < positiveLength
+            ? ulong.MaxValue
+            : totalBytes + positiveLength;
+    }
+
+    private static int AddItem(int itemCount) =>
+        itemCount == int.MaxValue ? int.MaxValue : itemCount + 1;
+
+    private readonly record struct SourceMetrics(int ItemCount, ulong TotalBytes);
+
     private static IShellItem CreateShellItem(string path)
     {
         var iid = typeof(IShellItem).GUID;
@@ -143,27 +243,25 @@ public static class ShellFileOperation
     public sealed class FileOperationProgressSink : IFileOperationProgressSink
     {
         private readonly FileOperationState _state;
-        private readonly CancellationProbe _cancellation;
+        private readonly OperationControlProbe _control;
         private long _nextPublishAt;
+        private bool _publishedPaused;
 
         private const int StatePublishIntervalMilliseconds = 150;
 
         internal FileOperationProgressSink(
             FileOperationState state,
-            CancellationProbe cancellation)
+            OperationControlProbe control)
         {
             _state = state;
-            _cancellation = cancellation;
+            _control = control;
         }
 
         private int Before(IShellItem item)
         {
-            if (_cancellation.IsRequested())
-            {
-                _state.Status = FileOperationStatus.Cancelling;
-                Save(force: true);
-                return EAbort;
-            }
+            int controlResult = CheckControlState();
+            if (controlResult < 0)
+                return controlResult;
 
             // Shell name resolution can itself be relatively expensive. Only do
             // it when the next externally visible state snapshot is due.
@@ -178,7 +276,11 @@ public static class ShellFileOperation
 
         private int After(int result)
         {
-            if (result >= 0) _state.CompletedItems++;
+            if (result >= 0)
+            {
+                if (_state.TotalItems <= 0 || _state.CompletedItems < _state.TotalItems)
+                    _state.CompletedItems++;
+            }
             else
             {
                 _state.Result = result;
@@ -186,7 +288,47 @@ public static class ShellFileOperation
                     ?? $"The Shell operation failed with HRESULT 0x{result:X8}.";
             }
             Save(force: result < 0);
-            return _cancellation.IsRequested() ? EAbort : 0;
+            return CheckControlState();
+        }
+
+        internal int CheckControlState()
+        {
+            if (_control.IsCancellationRequested())
+            {
+                _state.Status = FileOperationStatus.Cancelling;
+                Save(force: true);
+                return EAbort;
+            }
+
+            while (_control.IsPauseRequested(force: true))
+            {
+                if (!_publishedPaused)
+                {
+                    _publishedPaused = true;
+                    _state.Status = FileOperationStatus.Paused;
+                    Save(force: true);
+                }
+
+                if (_control.IsCancellationRequested(force: true))
+                {
+                    _state.Status = FileOperationStatus.Cancelling;
+                    Save(force: true);
+                    return EAbort;
+                }
+
+                // IFileOperation callbacks are synchronous. Holding the callback
+                // is what prevents the Shell operation from advancing while paused.
+                Thread.Sleep(OperationControlProbe.CheckIntervalMilliseconds);
+            }
+
+            if (_publishedPaused)
+            {
+                _publishedPaused = false;
+                _state.Status = FileOperationStatus.Running;
+                Save(force: true);
+            }
+
+            return _control.IsCancellationRequested() ? EAbort : 0;
         }
 
         private void Save(bool force = false)
@@ -198,7 +340,7 @@ public static class ShellFileOperation
             FileOperationStore.WriteState(_state);
         }
 
-        public int StartOperations() { Save(force: true); return 0; }
+        public int StartOperations() { Save(force: true); return CheckControlState(); }
         public int FinishOperations(int result) { _state.Result = result; Save(force: true); return 0; }
         public int PreRenameItem(uint flags, IShellItem item, string newName) => Before(item);
         public int PostRenameItem(uint flags, IShellItem item, string newName, int result, IShellItem? newItem) => After(result);
@@ -210,28 +352,46 @@ public static class ShellFileOperation
         public int PostDeleteItem(uint flags, IShellItem item, int result, IShellItem? newItem) => After(result);
         public int PreNewItem(uint flags, IShellItem destination, string newName) => Before(destination);
         public int PostNewItem(uint flags, IShellItem destination, string newName, string? templateName, uint attributes, int result, IShellItem? newItem) => After(result);
-        public int UpdateProgress(uint totalWork, uint workSoFar) =>
-            _cancellation.IsRequested() ? EAbort : 0;
+        public int UpdateProgress(uint totalWork, uint workSoFar)
+        {
+            OperationProgressMath.ApplyMonotonicWorkProgress(
+                _state, totalWork, workSoFar);
+            Save();
+            return CheckControlState();
+        }
         public int ResetTimer() => 0;
         public int PauseTimer() => 0;
         public int ResumeTimer() => 0;
     }
 
-    internal sealed class CancellationProbe(Guid operationId)
+    internal sealed class OperationControlProbe(Guid operationId)
     {
-        private const int CheckIntervalMilliseconds = 75;
-        private long _nextCheckAt;
-        private bool _requested;
+        internal const int CheckIntervalMilliseconds = 75;
+        private long _nextCancellationCheckAt;
+        private long _nextPauseCheckAt;
+        private bool _cancellationRequested;
+        private bool _pauseRequested;
 
-        internal bool IsRequested(bool force = false)
+        internal bool IsCancellationRequested(bool force = false)
         {
-            if (_requested) return true;
+            if (_cancellationRequested) return true;
             long now = Environment.TickCount64;
-            if (!force && now < _nextCheckAt) return false;
+            if (!force && now < _nextCancellationCheckAt) return false;
 
-            _nextCheckAt = now + CheckIntervalMilliseconds;
-            _requested = FileOperationStore.IsCancellationRequested(operationId);
-            return _requested;
+            _nextCancellationCheckAt = now + CheckIntervalMilliseconds;
+            _cancellationRequested = FileOperationStore.IsCancellationRequested(operationId);
+            return _cancellationRequested;
+        }
+
+        internal bool IsPauseRequested(bool force = false)
+        {
+            long now = Environment.TickCount64;
+            if (!force && now < _nextPauseCheckAt)
+                return _pauseRequested;
+
+            _nextPauseCheckAt = now + CheckIntervalMilliseconds;
+            _pauseRequested = FileOperationStore.IsPauseRequested(operationId);
+            return _pauseRequested;
         }
     }
 

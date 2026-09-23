@@ -12,8 +12,22 @@ if (-not (Test-Path -LiteralPath $publishRoot -PathType Container)) {
     throw "Published application directory does not exist: $publishRoot"
 }
 
+$requiredIdentityVisuals = @(
+    "resources.pri"
+    "Assets\Square44x44Logo.png"
+    "Assets\Square44x44Logo.targetsize-32_altform-unplated.png"
+)
+$missingIdentityVisuals = @($requiredIdentityVisuals | Where-Object {
+    -not (Test-Path -LiteralPath (Join-Path $publishRoot $_) -PathType Leaf)
+})
+if ($missingIdentityVisuals.Count -gt 0) {
+    throw "Published application is missing sparse-package taskbar assets: " +
+        ($missingIdentityVisuals -join ", ")
+}
+
 $directoryIds = @{
-    "" = "INSTALLFOLDER"
+    ""       = "INSTALLFOLDER"
+    "Assets" = "IDENTITYASSETSFOLDER"
 }
 
 function Get-StableId([string]$prefix, [string]$value) {
@@ -43,7 +57,10 @@ function Escape-Xml([string]$value) {
 }
 
 $files = Get-ChildItem -LiteralPath $publishRoot -Recurse -File |
-    Where-Object { $_.FullName -ne (Join-Path $publishRoot "MultiExplorer.exe") } |
+    Where-Object {
+        $_.FullName -ne (Join-Path $publishRoot "MultiExplorer.exe") -and
+        $_.FullName -ne (Join-Path $publishRoot "MultiExplorer.Identity.msix")
+    } |
     Sort-Object FullName
 
 if (-not $files) { throw "No runtime files were found in $publishRoot" }
@@ -54,7 +71,45 @@ $groups = $files | Group-Object {
     if ($null -eq $relativeDirectory) { "" } else { $relativeDirectory }
 }
 
-$unknown = @($groups | Where-Object { -not $directoryIds.ContainsKey($_.Name) })
+$cultureDirectories = [Collections.Generic.List[object]]::new()
+$unknown = [Collections.Generic.List[object]]::new()
+
+foreach ($group in $groups) {
+    $directory = [string]$group.Name
+    if ($directoryIds.ContainsKey($directory)) {
+        continue
+    }
+
+    $isTopLevelDirectory = -not [string]::IsNullOrWhiteSpace($directory) -and
+        $directory.IndexOfAny([char[]]@('\', '/')) -lt 0
+    $containsOnlySatelliteAssemblies = @($group.Group | Where-Object {
+        -not $_.Name.EndsWith('.resources.dll', [StringComparison]::OrdinalIgnoreCase)
+    }).Count -eq 0
+
+    $isCultureDirectory = $false
+    if ($isTopLevelDirectory -and $containsOnlySatelliteAssemblies) {
+        try {
+            $culture = [Globalization.CultureInfo]::GetCultureInfo($directory)
+            $isCultureDirectory = $culture.Name.Equals($directory, [StringComparison]::OrdinalIgnoreCase)
+        }
+        catch [Globalization.CultureNotFoundException] {
+            $isCultureDirectory = $false
+        }
+    }
+
+    if (-not $isCultureDirectory) {
+        $unknown.Add($group)
+        continue
+    }
+
+    $directoryId = Get-StableId 'PublishedDirectory' $directory
+    $directoryIds[$directory] = $directoryId
+    $cultureDirectories.Add([pscustomobject]@{
+        Id = $directoryId
+        Name = $directory
+    })
+}
+
 if ($unknown.Count -gt 0) {
     throw "Publish output contains unhandled subdirectories: $($unknown.Name -join ', ')"
 }
@@ -63,6 +118,15 @@ $sb = [Text.StringBuilder]::new()
 [void]$sb.AppendLine('<?xml version="1.0" encoding="utf-8"?>')
 [void]$sb.AppendLine('<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">')
 [void]$sb.AppendLine('  <Fragment>')
+
+if ($cultureDirectories.Count -gt 0) {
+    [void]$sb.AppendLine('    <DirectoryRef Id="INSTALLFOLDER">')
+    foreach ($cultureDirectory in $cultureDirectories | Sort-Object Name) {
+        [void]$sb.AppendLine("      <Directory Id=`"$($cultureDirectory.Id)`" Name=`"$(Escape-Xml $cultureDirectory.Name)`" />")
+    }
+    [void]$sb.AppendLine('    </DirectoryRef>')
+}
+
 [void]$sb.AppendLine('    <ComponentGroup Id="PublishedRuntimeFiles">')
 
 foreach ($group in $groups | Sort-Object Name) {

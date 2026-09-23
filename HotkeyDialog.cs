@@ -23,7 +23,7 @@ internal sealed class HotkeyDialog : Form
 
     public HotkeyDialog(int currentModifiers, int currentVk)
     {
-        Text            = "Set show-window hotkey";
+        Text            = "Set window hotkey";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox     = false;
         MinimizeBox     = false;

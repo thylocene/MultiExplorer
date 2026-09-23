@@ -99,6 +99,13 @@ public sealed class TabBar : UserControl
         Invalidate();
     }
 
+    internal void ApplyTheme()
+    {
+        BackColor = ThemeManager.Background;
+        ForeColor = ThemeManager.Text;
+        Invalidate();
+    }
+
     public void UpdateLabel(int index, string label, string tooltip)
     {
         bool changed = false;
@@ -155,7 +162,9 @@ public sealed class TabBar : UserControl
 
             // Background fill with rounded top corners
             using (var path = TopRoundedRect(tabR, Radius))
-            using (var br   = new SolidBrush(isActive ? ThemeManager.Window : (isHovered ? ThemeManager.Hover : ThemeManager.Surface)))
+            using (var br   = new SolidBrush(isActive
+                       ? ThemeManager.Window
+                       : isHovered ? ThemeManager.Hover : ThemeManager.Surface))
                 g.FillPath(br, path);
 
             // Accent bar across top of active tab

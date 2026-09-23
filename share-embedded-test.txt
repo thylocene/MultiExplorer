@@ -1,0 +1,3 @@
+HWND=0xB51484
+Title=empty project
+Bounds={X=471,Y=51,Width=1492,Height=989}
