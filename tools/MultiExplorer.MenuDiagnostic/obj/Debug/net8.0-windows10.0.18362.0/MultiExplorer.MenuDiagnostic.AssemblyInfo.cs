@@ -12,11 +12,11 @@ using System.Reflection;
 
 [assembly: System.Reflection.AssemblyCompanyAttribute("MultiExplorer.MenuDiagnostic")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
-[assembly: System.Reflection.AssemblyFileVersionAttribute("1.6.5.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.6.5")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("1.7.9.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.7.9")]
 [assembly: System.Reflection.AssemblyProductAttribute("MultiExplorer.MenuDiagnostic")]
 [assembly: System.Reflection.AssemblyTitleAttribute("MultiExplorer.MenuDiagnostic")]
-[assembly: System.Reflection.AssemblyVersionAttribute("1.6.5.0")]
+[assembly: System.Reflection.AssemblyVersionAttribute("1.7.9.0")]
 [assembly: System.Runtime.Versioning.TargetPlatformAttribute("Windows10.0.18362.0")]
 [assembly: System.Runtime.Versioning.SupportedOSPlatformAttribute("Windows10.0.18362.0")]
 

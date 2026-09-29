@@ -1,6 +1,3 @@
-using System.Drawing;
-using System.Drawing.Imaging;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
@@ -12,7 +9,11 @@ static class Program
 {
     // Registered once at startup; shared with MainForm so it can handle the message in WndProc.
     internal static readonly uint WM_SHOW_INSTANCE =
+#if DEBUG
+        NativeMethods.RegisterWindowMessage("MultiExplorer.ShowInstance.Debug.v1");
+#else
         NativeMethods.RegisterWindowMessage("MultiExplorer.ShowInstance.v1");
+#endif
 
     [STAThread]
     static void Main(string[] args)
@@ -50,7 +51,7 @@ static class Program
         // Single-instance guard: if another instance is already running, signal it to
         // show its window and then exit immediately. A Windows sign-in launch is
         // intentionally silent if the application is already running.
-        using var mutex = new Mutex(true, "MultiExplorer.SingleInstance.v1", out bool ownsMutex);
+        using var mutex = new Mutex(true, SingleInstanceMutexName, out bool ownsMutex);
         if (!ownsMutex)
         {
             if (activationPath is not null)
@@ -67,67 +68,13 @@ static class Program
         // is used.  Our hand-written Main() must call it explicitly so WinForms
         // opts into per-monitor DPI handling rather than bitmap-scaling content.
         var settings = SettingsManager.Load();
-        // --theme=light/dark is also useful for deterministic screenshot diagnostics;
-        // normal interactive launches always use the persisted selection.
-        string? themeOverride = args.FirstOrDefault(a =>
-            a.StartsWith("--theme=", StringComparison.OrdinalIgnoreCase));
-        string selectedTheme = themeOverride is null
-            ? settings.ApplicationTheme
-            : themeOverride["--theme=".Length..];
-        ThemeManager.SetCurrent(ThemeManager.Parse(selectedTheme));
+        ThemeManager.SetCurrent(ThemeManager.Parse(settings.ApplicationTheme));
 
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        int captureIndex = Array.FindIndex(args, a => a == "--capture");
         var form = new MainForm(settings, startedWithWindows,
             activationPath);
-        if (captureIndex >= 0 && captureIndex + 1 < args.Length)
-        {
-            string capturePath = args[captureIndex + 1];
-            bool selectAllForCapture = args.Any(a => a == "--select-all");
-            bool showPreviewForCapture = args.Any(a => a == "--show-preview");
-            form.Shown += (_, _) =>
-            {
-                if (showPreviewForCapture)
-                {
-                    form.BeginInvoke((Action)(() =>
-                    {
-                        foreach (PanelView panel in FindControls<PanelView>(form))
-                            panel.ExecuteCommand(CommandBar.Cmd.TogglePreviewPane);
-                    }));
-                }
-
-                var timer = new System.Windows.Forms.Timer { Interval = 2000 };
-                timer.Tick += (_, _) =>
-                {
-                    timer.Stop();
-                    if (selectAllForCapture)
-                    {
-                        ExplorerHost? host = FindControls<ExplorerHost>(form).FirstOrDefault(h => h.Visible);
-                        if (host != null)
-                        {
-                            host.FocusShellView();
-                            host.SelectAll();
-                            Application.DoEvents();
-                        }
-                    }
-                    using var image = new Bitmap(form.Width, form.Height);
-                    using (Graphics graphics = Graphics.FromImage(image))
-                        graphics.CopyFromScreen(form.Left, form.Top, 0, 0, image.Size);
-                    image.Save(capturePath, ImageFormat.Png);
-                    var windows = new List<string>();
-                    try { DumpWindows(form.Handle, 0, windows); }
-                    catch (System.Exception ex) { windows.Add(ex.ToString()); }
-                    System.IO.File.WriteAllLines(capturePath + ".txt", windows);
-                    // Application.Exit produces ApplicationExitCall rather than
-                    // UserClosing, so the diagnostic run cannot remain hidden in
-                    // the tray when MinimizeToTray is enabled.
-                    Application.Exit();
-                };
-                timer.Start();
-            };
-        }
         Application.Run(form);
     }
 
@@ -138,9 +85,8 @@ static class Program
     {
         ArgumentNullException.ThrowIfNull(args);
 #if DEBUG
-        // A developer launching bin\Debug must run that exact executable. If a
-        // sparse identity is registered, activating it instead starts the installed
-        // Release payload and makes an old build look like the current Debug build.
+        // The installed package points to its own executable. A developer build
+        // must run directly so testing it never starts the installed version.
         return false;
 #else
         return !args.Any(static argument =>
@@ -149,33 +95,10 @@ static class Program
 #endif
     }
 
-    private static IEnumerable<T> FindControls<T>(Control root) where T : Control
-    {
-        foreach (Control child in root.Controls)
-        {
-            if (child is T match) yield return match;
-            foreach (T descendant in FindControls<T>(child))
-                yield return descendant;
-        }
-    }
-
-    private static void DumpWindows(System.IntPtr parent, int depth, List<string> output)
-    {
-        if (depth >= 12 || output.Count >= 1000) return;
-        System.IntPtr child = NativeMethods.GetWindow(parent, 5);
-        while (child != System.IntPtr.Zero
-               && NativeMethods.GetParent(child) == parent
-               && output.Count < 1000)
-        {
-            var name = new System.Text.StringBuilder(256);
-            NativeMethods.GetClassName(child, name, name.Capacity);
-            NativeMethods.GetWindowRect(child, out NativeMethods.RECT rect);
-            output.Add($"{new string(' ', depth * 2)}0x{child.ToInt64():X} {name} " +
-                       $"({rect.Left},{rect.Top})-({rect.Right},{rect.Bottom})");
-            DumpWindows(child, depth + 1, output);
-            System.IntPtr next = NativeMethods.GetWindow(child, NativeMethods.GW_HWNDNEXT);
-            if (next == child) break;
-            child = next;
-        }
-    }
+    internal static string SingleInstanceMutexName =>
+#if DEBUG
+        "MultiExplorer.SingleInstance.Debug.v1";
+#else
+        "MultiExplorer.SingleInstance.v1";
+#endif
 }

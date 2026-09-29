@@ -18,6 +18,9 @@ internal enum CompactMenuGlyph
     CreateShortcut,
     Properties,
     ShowMore,
+    CopyToOtherPane,
+    MoveToOtherPane,
+    Favorite,
 }
 
 /// <summary>
@@ -28,6 +31,7 @@ internal sealed class NativeMenuIconSet(int dpi) : IDisposable
 {
     private const int LogicalIconSize = 20;
     private const int LogicalTextGap = 12;
+    private const int GlyphRenderScale = 4;
     private const uint MiimBitmap = 0x0080;
     private const uint DibRgbColors = 0;
     private const uint SiigbfIconOnly = 0x00000004;
@@ -236,12 +240,57 @@ internal sealed class NativeMenuIconSet(int dpi) : IDisposable
         },
     };
 
-    private static void DrawGlyph(Graphics graphics, RectangleF bounds,
+    internal static void DrawGlyph(Graphics graphics, RectangleF bounds,
+        CompactMenuGlyph glyph)
+    {
+        ArgumentNullException.ThrowIfNull(graphics);
+        // Render above the destination resolution, then downsample. GDI+'s
+        // single-pass anti-aliasing leaves visible steps on 20-pixel stars and
+        // diagonal strokes. This also covers dark menus drawn straight to an
+        // HDC, whose Graphics starts with smoothing disabled.
+        int renderWidth = Math.Max(1,
+            (int)Math.Ceiling(bounds.Width * GlyphRenderScale));
+        int renderHeight = Math.Max(1,
+            (int)Math.Ceiling(bounds.Height * GlyphRenderScale));
+        using var source = new Bitmap(renderWidth, renderHeight,
+            PixelFormat.Format32bppPArgb);
+        using (Graphics sourceGraphics = Graphics.FromImage(source))
+        {
+            sourceGraphics.Clear(Color.Transparent);
+            sourceGraphics.SmoothingMode = SmoothingMode.AntiAlias;
+            sourceGraphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            DrawGlyphCore(sourceGraphics,
+                new RectangleF(0, 0, renderWidth, renderHeight), glyph);
+        }
+
+        GraphicsState state = graphics.Save();
+        try
+        {
+            graphics.CompositingQuality = CompositingQuality.HighQuality;
+            graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            graphics.DrawImage(source, bounds,
+                new RectangleF(0, 0, renderWidth, renderHeight),
+                GraphicsUnit.Pixel);
+        }
+        finally
+        {
+            graphics.Restore(state);
+        }
+    }
+
+    private static void DrawGlyphCore(Graphics graphics, RectangleF bounds,
         CompactMenuGlyph glyph)
     {
         float scale = bounds.Width / 20f;
-        Color color = ThemeManager.AccentText;
-        using var pen = new Pen(color, Math.Max(1.25f, 1.35f * scale))
+        // Use Explorer's blue accent for the Favorites outline; other document
+        // and tool outlines use neutral ink in both themes.
+        Color color = glyph == CompactMenuGlyph.Favorite
+            ? ThemeManager.AccentText
+            : ThemeManager.Text;
+        // One logical pixel at 100% DPI. Scale that thin outline with the
+        // monitor so it remains readable without becoming heavy.
+        using var pen = new Pen(color, scale)
         {
             StartCap = LineCap.Round,
             EndCap = LineCap.Round,
@@ -274,8 +323,17 @@ internal sealed class NativeMenuIconSet(int dpi) : IDisposable
             case CompactMenuGlyph.PinStart:
                 DrawPinStart(graphics, pen, bounds);
                 break;
+            case CompactMenuGlyph.Favorite:
+                DrawFavorite(graphics, pen, bounds);
+                break;
             case CompactMenuGlyph.CopyPath:
                 DrawCopyPath(graphics, pen, bounds);
+                break;
+            case CompactMenuGlyph.CopyToOtherPane:
+                DrawOppositePaneTransfer(graphics, pen, bounds, copy: true);
+                break;
+            case CompactMenuGlyph.MoveToOtherPane:
+                DrawOppositePaneTransfer(graphics, pen, bounds, copy: false);
                 break;
             case CompactMenuGlyph.CreateShortcut:
                 DrawCreateShortcut(graphics, pen, bounds);
@@ -299,8 +357,6 @@ internal sealed class NativeMenuIconSet(int dpi) : IDisposable
             P(bounds, 18, 8), P(bounds, 16, 17), P(bounds, 2, 17),
         ]);
         path.CloseFigure();
-        using var fill = new SolidBrush(Color.FromArgb(45, pen.Color));
-        graphics.FillPath(fill, path);
         graphics.DrawPath(pen, path);
         graphics.DrawLine(pen, P(bounds, 2, 6), P(bounds, 2, 4));
         graphics.DrawLine(pen, P(bounds, 2, 4), P(bounds, 8, 4));
@@ -341,12 +397,47 @@ internal sealed class NativeMenuIconSet(int dpi) : IDisposable
 
     private static void DrawCopyPath(Graphics graphics, Pen pen, RectangleF bounds)
     {
-        graphics.DrawRectangle(pen, Rectangle.Round(R(bounds, 3, 2, 10, 13)));
-        graphics.DrawLine(pen, P(bounds, 6, 6), P(bounds, 10, 6));
-        graphics.DrawLine(pen, P(bounds, 6, 9), P(bounds, 10, 9));
-        graphics.DrawLine(pen, P(bounds, 6, 12), P(bounds, 9, 12));
-        graphics.DrawArc(pen, R(bounds, 9, 10, 8, 6), 40, 280);
-        graphics.DrawArc(pen, R(bounds, 11, 13, 7, 5), 215, 285);
+        // Explorer represents a path as text inside a thin address field.
+        graphics.DrawRectangle(pen, Rectangle.Round(R(bounds, 1.5f, 3, 17, 14)));
+        using var accentPen = new Pen(ThemeManager.AccentText, pen.Width)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+        };
+        graphics.DrawLine(accentPen, P(bounds, 4, 6.5f),
+            P(bounds, 6.5f, 13.5f));
+        using var dot = new SolidBrush(ThemeManager.AccentText);
+        foreach (float x in new[] { 9f, 12f, 15f })
+            graphics.FillEllipse(dot, R(bounds, x, 11.7f, 0.9f, 0.9f));
+    }
+
+    private static void DrawOppositePaneTransfer(Graphics graphics, Pen pen,
+        RectangleF bounds, bool copy)
+    {
+        // The document outlines distinguish copy from move, while the arrow
+        // points toward the opposite pane. All coordinates scale from a 20-unit
+        // vector canvas to the menu's current monitor DPI.
+        if (copy)
+        {
+            graphics.DrawRectangle(pen, Rectangle.Round(R(bounds, 2, 4, 8, 11)));
+            graphics.DrawRectangle(pen, Rectangle.Round(R(bounds, 5, 2, 8, 11)));
+            graphics.DrawLine(pen, P(bounds, 11, 16), P(bounds, 18, 16));
+            graphics.DrawLines(pen,
+                [P(bounds, 15, 13), P(bounds, 18, 16), P(bounds, 15, 19)]);
+        }
+        else
+        {
+            graphics.DrawRectangle(pen, Rectangle.Round(R(bounds, 2, 3, 9, 14)));
+            using var accentPen = new Pen(ThemeManager.AccentText, pen.Width)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round,
+                LineJoin = LineJoin.Round,
+            };
+            graphics.DrawLine(accentPen, P(bounds, 7, 10), P(bounds, 18, 10));
+            graphics.DrawLines(accentPen,
+                [P(bounds, 14, 6), P(bounds, 18, 10), P(bounds, 14, 14)]);
+        }
     }
 
     private static void DrawGiveAccess(Graphics graphics, Pen pen, RectangleF bounds)
@@ -394,10 +485,24 @@ internal sealed class NativeMenuIconSet(int dpi) : IDisposable
         ]);
         pinHead.CloseFigure();
 
-        using var fill = new SolidBrush(Color.FromArgb(45, pen.Color));
-        graphics.FillPath(fill, pinHead);
         graphics.DrawPath(pen, pinHead);
         graphics.DrawLine(pen, P(bounds, 10, 11), P(bounds, 10, 18));
+    }
+
+    private static void DrawFavorite(Graphics graphics, Pen pen, RectangleF bounds)
+    {
+        using var star = new GraphicsPath();
+        PointF[] points = Enumerable.Range(0, 10)
+            .Select(index =>
+            {
+                double angle = -Math.PI / 2 + index * Math.PI / 5;
+                float radius = index % 2 == 0 ? 8.5f : 3.8f;
+                return P(bounds, 10 + radius * (float)Math.Cos(angle),
+                    10 + radius * (float)Math.Sin(angle));
+            })
+            .ToArray();
+        star.AddPolygon(points);
+        graphics.DrawPath(pen, star);
     }
 
     private static void DrawCreateShortcut(Graphics graphics, Pen pen,
@@ -411,10 +516,34 @@ internal sealed class NativeMenuIconSet(int dpi) : IDisposable
 
     private static void DrawProperties(Graphics graphics, Pen pen, RectangleF bounds)
     {
-        graphics.DrawArc(pen, R(bounds, 3, 2, 9, 9), 25, 235);
-        graphics.DrawLine(pen, P(bounds, 9, 9), P(bounds, 17, 17));
-        graphics.DrawLine(pen, P(bounds, 15, 18), P(bounds, 18, 15));
-        graphics.DrawLine(pen, P(bounds, 4, 4), P(bounds, 8, 8));
+        using var spanner = new GraphicsPath(FillMode.Alternate);
+        spanner.StartFigure();
+        spanner.AddLines([
+            P(bounds, 17.7f, 2.4f), P(bounds, 14.9f, 5.2f),
+            P(bounds, 15.3f, 6.7f), P(bounds, 16.8f, 7.1f),
+            P(bounds, 18.8f, 5.1f),
+        ]);
+        spanner.AddBezier(P(bounds, 18.8f, 5.1f),
+            P(bounds, 19.2f, 8.3f), P(bounds, 16.4f, 10.8f),
+            P(bounds, 13.2f, 10.0f));
+        spanner.AddLine(P(bounds, 13.2f, 10.0f), P(bounds, 6.8f, 17.3f));
+        spanner.AddBezier(P(bounds, 6.8f, 17.3f),
+            P(bounds, 5.5f, 18.8f), P(bounds, 3.4f, 18.7f),
+            P(bounds, 2.5f, 17.4f));
+        spanner.AddBezier(P(bounds, 2.5f, 17.4f),
+            P(bounds, 1.6f, 16.3f), P(bounds, 2.0f, 14.9f),
+            P(bounds, 3.0f, 14.0f));
+        spanner.AddLine(P(bounds, 3.0f, 14.0f), P(bounds, 9.9f, 7.5f));
+        spanner.AddBezier(P(bounds, 9.9f, 7.5f),
+            P(bounds, 9.3f, 4.5f), P(bounds, 11.8f, 1.7f),
+            P(bounds, 14.7f, 1.6f));
+        spanner.AddBezier(P(bounds, 14.7f, 1.6f),
+            P(bounds, 15.9f, 1.5f), P(bounds, 17.1f, 1.9f),
+            P(bounds, 17.7f, 2.4f));
+        spanner.CloseFigure();
+        spanner.AddEllipse(R(bounds, 3.9f, 15.2f, 2.0f, 2.0f));
+
+        graphics.DrawPath(pen, spanner);
     }
 
     private static void DrawShowMore(Graphics graphics, Pen pen, RectangleF bounds)

@@ -12,11 +12,11 @@ using System.Reflection;
 
 [assembly: System.Reflection.AssemblyCompanyAttribute("MultiExplorer.OperationHost")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
-[assembly: System.Reflection.AssemblyFileVersionAttribute("9762.7685.1.6")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.6.8")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("9768.12371.1.8")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.8.1")]
 [assembly: System.Reflection.AssemblyProductAttribute("MultiExplorer.OperationHost")]
 [assembly: System.Reflection.AssemblyTitleAttribute("MultiExplorer.OperationHost")]
-[assembly: System.Reflection.AssemblyVersionAttribute("1.6.8.0")]
+[assembly: System.Reflection.AssemblyVersionAttribute("1.8.1.0")]
 [assembly: System.Runtime.Versioning.TargetPlatformAttribute("Windows7.0")]
 [assembly: System.Runtime.Versioning.SupportedOSPlatformAttribute("Windows7.0")]
 

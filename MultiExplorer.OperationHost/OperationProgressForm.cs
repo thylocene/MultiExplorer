@@ -1,15 +1,24 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace MultiExplorer;
 
 internal sealed class OperationProgressForm : Form
 {
+    private const int WmQueryEndSession = 0x0011;
+    private const int WmEndSession = 0x0016;
     private const int WindowClientWidth = 560;
     private const int ExpandedRowHeight = 326;
     private const int MaximumVisibleRows = 3;
+    private static readonly IntPtr HwndTopMost = new(-1);
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoActivate = 0x0010;
+    private const uint SwpShowWindow = 0x0040;
+    private const int WsExTopMost = 0x00000008;
 
     private readonly FlowLayoutPanel _rowsPanel;
     private readonly Dictionary<Guid, OperationProgressRow> _rows = [];
@@ -19,6 +28,7 @@ internal sealed class OperationProgressForm : Form
     internal event EventHandler<Guid>? CancellationRequested;
     internal event EventHandler<Guid>? PauseRequested;
     internal event EventHandler<Guid>? ResumeRequested;
+    internal event EventHandler? ShutdownRequested;
 
     internal OperationProgressForm()
     {
@@ -48,6 +58,35 @@ internal sealed class OperationProgressForm : Form
     }
 
     protected override bool ShowWithoutActivation => true;
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            CreateParams parameters = base.CreateParams;
+            parameters.ExStyle |= WsExTopMost;
+            return parameters;
+        }
+    }
+
+    protected override void WndProc(ref Message message)
+    {
+        if (message.Msg == WmQueryEndSession)
+        {
+            ShutdownRequested?.Invoke(this, EventArgs.Empty);
+            message.Result = (IntPtr)1;
+            return;
+        }
+
+        if (message.Msg == WmEndSession && message.WParam != IntPtr.Zero)
+        {
+            ShutdownRequested?.Invoke(this, EventArgs.Empty);
+            message.Result = IntPtr.Zero;
+            return;
+        }
+
+        base.WndProc(ref message);
+    }
 
     internal void UpdateOperations(
         IReadOnlyList<FileOperationState> operations,
@@ -108,7 +147,43 @@ internal sealed class OperationProgressForm : Form
         if (addedOperation)
             _dismissedOperations.Clear();
         if (!Visible && operations.Any(state => !_dismissedOperations.Contains(state.Id)))
-            Show();
+            ShowTopMostWithoutActivation();
+        else if (OperationWindowPromotionPolicy.ShouldReassertProgressWindow(
+                     Visible, HasVisibleOwnedPopup()))
+            ReassertTopMostWithoutActivation();
+    }
+
+    internal void ShowFailure(
+        FileOperationRequest request,
+        FileOperationState state)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(state);
+
+        if (request.WindowPlacement is not null)
+        {
+            _placement = request.WindowPlacement;
+            UpdateWindowSizeAndPosition(reposition: true);
+        }
+
+        bool wasVisible = Visible;
+        if (!wasVisible)
+            ShowTopMostWithoutActivation();
+        try
+        {
+            MessageBox.Show(
+                this,
+                FileOperationFailurePresentation.CreateMessage(state, request),
+                "File operation failed",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error,
+                MessageBoxDefaultButton.Button1);
+        }
+        finally
+        {
+            if (!wasVisible)
+                Hide();
+        }
     }
 
     private void UpdateWindowTitle(IReadOnlyList<FileOperationState> operations)
@@ -124,6 +199,32 @@ internal sealed class OperationProgressForm : Form
         Text = operations.All(static state => state.Status == FileOperationStatus.Paused)
             ? $"Paused - {percentage}% complete"
             : $"{percentage}% complete";
+    }
+
+    private void ShowTopMostWithoutActivation()
+    {
+        Show();
+        ReassertTopMostWithoutActivation();
+    }
+
+    private void ReassertTopMostWithoutActivation()
+    {
+        SetWindowPos(
+            Handle,
+            HwndTopMost,
+            0,
+            0,
+            0,
+            0,
+            SwpNoSize | SwpNoMove | SwpNoActivate | SwpShowWindow);
+    }
+
+    private bool HasVisibleOwnedPopup()
+    {
+        IntPtr popup = GetLastActivePopup(Handle);
+        return popup != IntPtr.Zero
+            && popup != Handle
+            && IsWindowVisible(popup);
     }
 
     private void OnRowCancellationRequested(object? sender, EventArgs e)
@@ -184,6 +285,13 @@ internal sealed class OperationProgressForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        if (e.CloseReason == CloseReason.WindowsShutDown)
+        {
+            ShutdownRequested?.Invoke(this, EventArgs.Empty);
+            base.OnFormClosing(e);
+            return;
+        }
+
         if (e.CloseReason == CloseReason.UserClosing)
         {
             e.Cancel = true;
@@ -194,6 +302,24 @@ internal sealed class OperationProgressForm : Form
 
         base.OnFormClosing(e);
     }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(
+        IntPtr window,
+        IntPtr insertAfter,
+        int x,
+        int y,
+        int width,
+        int height,
+        uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetLastActivePopup(IntPtr owner);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr window);
 }
 
 internal sealed class OperationProgressRow : UserControl
@@ -212,9 +338,8 @@ internal sealed class OperationProgressRow : UserControl
     private readonly Panel _detailsSeparator;
     private readonly OperationDetailsToggle _detailsToggle;
     private readonly ToolTip _toolTip = new();
-    private long _lastMeasurementTick;
-    private long _lastProgressTick;
-    private double _lastMeasurement;
+    private readonly OperationRateAverage _rateAverage = new(
+        TimeSpan.FromSeconds(2));
     private ProgressMeasurement _measurementKind;
     private FileOperationStatus _lastStatus;
     private int _maximumDisplayedPercentage;
@@ -378,7 +503,8 @@ internal sealed class OperationProgressRow : UserControl
         string source = state.SourceDisplayName ?? "selected location";
         string count = state.TotalItems.ToString("N0", CultureInfo.CurrentCulture);
         string itemWord = state.TotalItems == 1 ? "item" : "items";
-        string prefix = $"{action} {count} {itemWord} from ";
+        string qualifier = state.ItemCountIsComplete ? string.Empty : "selected ";
+        string prefix = $"{action} {count} {qualifier}{itemWord} from ";
         string destination = state.DestinationDisplayName ?? string.Empty;
         string suffix = state.Kind is FileOperationKind.Copy or FileOperationKind.Move
             && destination.Length > 0
@@ -401,17 +527,18 @@ internal sealed class OperationProgressRow : UserControl
             && state.Kind is FileOperationKind.Copy or FileOperationKind.Move
                 ? ProgressMeasurement.Bytes
                 : ProgressMeasurement.Items;
-        double measurement = measurementKind == ProgressMeasurement.Bytes
-            ? state.BytesCompleted
-            : state.CompletedItems;
+        double measurement = measurementKind switch
+        {
+            ProgressMeasurement.Bytes => state.BytesCompleted,
+            _ => OperationProgressMath.GetCompletedItemsForRate(state),
+        };
 
         long now = Environment.TickCount64;
         if (state.Status == FileOperationStatus.Paused)
         {
             _wasPaused = true;
-            _lastMeasurementTick = now;
-            _lastProgressTick = now;
-            _lastMeasurement = Math.Max(_lastMeasurement, measurement);
+            _rateAverage.Reset();
+            _measurementKind = measurementKind;
             _performanceGraph.SetPaused(true);
             return;
         }
@@ -419,9 +546,7 @@ internal sealed class OperationProgressRow : UserControl
         if (_wasPaused)
         {
             _wasPaused = false;
-            _lastMeasurementTick = now;
-            _lastProgressTick = now;
-            _lastMeasurement = Math.Max(_lastMeasurement, measurement);
+            _rateAverage.Reset();
             _measurementKind = measurementKind;
             _performanceGraph.SetPaused(false);
             _performanceGraph.SetRate(0);
@@ -430,54 +555,45 @@ internal sealed class OperationProgressRow : UserControl
         }
 
         _performanceGraph.SetPaused(false);
-        if (_lastMeasurementTick == 0 || measurementKind != _measurementKind)
+        if (measurementKind != _measurementKind)
         {
-            _lastMeasurementTick = now;
-            _lastProgressTick = now;
-            _lastMeasurement = measurement;
+            _rateAverage.Reset();
             _measurementKind = measurementKind;
+        }
+
+        double? averageRate = _rateAverage.AddSample(now, measurement);
+        if (averageRate is null)
+        {
             _performanceGraph.SetRate(0);
             _performanceGraph.SetRateText("Speed: Calculating…");
             return;
         }
 
-        measurement = Math.Max(measurement, _lastMeasurement);
-        if (measurement <= _lastMeasurement)
+        _performanceGraph.SetRate(averageRate.Value);
+        _performanceGraph.SetRateText(measurementKind switch
         {
-            if (now - _lastProgressTick >= 750)
-            {
-                _performanceGraph.SetRate(0);
-                _performanceGraph.SetRateText(measurementKind == ProgressMeasurement.Bytes
-                    ? "Speed: 0 B/s"
-                    : "Speed: 0 items/s");
-            }
-            return;
-        }
-
-        long elapsedMilliseconds = Math.Max(1, now - _lastMeasurementTick);
-        double rate = (measurement - _lastMeasurement) * 1000 / elapsedMilliseconds;
-        _performanceGraph.SetRate(rate);
-        _performanceGraph.SetRateText(measurementKind == ProgressMeasurement.Bytes
-            ? $"Speed: {FormatByteRate(rate)}"
-            : $"Speed: {rate:0} items/s");
-        _lastMeasurementTick = now;
-        _lastProgressTick = now;
-        _lastMeasurement = measurement;
+            ProgressMeasurement.Bytes => $"Speed: {FormatByteRate(averageRate.Value)}",
+            _ => $"Speed: {averageRate.Value:0} items/s",
+        });
     }
 
     private void UpdateRemainingDetails(FileOperationState state)
     {
-        int completedItems = state.TotalItems > 0
-            ? Math.Min(state.CompletedItems, state.TotalItems)
-            : state.CompletedItems;
-        int remainingItems = Math.Max(0, state.TotalItems - completedItems);
+        int? remainingItems = OperationProgressMath.GetRemainingItemCount(state);
+        ulong? estimatedRemainingItems =
+            OperationProgressMath.EstimateRemainingPermanentDeleteItems(state);
         ulong remainingBytes = state.TotalBytes > state.BytesCompleted
             ? state.TotalBytes - state.BytesCompleted
             : 0;
 
-        _itemsRemaining.Text = $"Items remaining: "
-            + remainingItems.ToString("N0", CultureInfo.CurrentCulture)
-            + (state.TotalBytes > 0 ? $" ({FormatByteSize(remainingBytes)})" : string.Empty);
+        _itemsRemaining.Text = remainingItems is int count
+            ? $"Items remaining: {count.ToString("N0", CultureInfo.CurrentCulture)}"
+                + (state.TotalBytes > 0 ? $" ({FormatByteSize(remainingBytes)})" : string.Empty)
+            : estimatedRemainingItems is ulong estimate
+                ? $"Items remaining: About {estimate.ToString("N0", CultureInfo.CurrentCulture)}"
+            : state.ProcessedItems > 0
+                ? $"Items remaining: Calculating… ({state.ProcessedItems.ToString("N0", CultureInfo.CurrentCulture)} deleted)"
+            : "Items remaining: Calculating…";
 
         if (state.Status == FileOperationStatus.Paused
             && !string.IsNullOrEmpty(_timeRemaining.Text)
@@ -485,14 +601,19 @@ internal sealed class OperationProgressRow : UserControl
             return;
 
         double rate = _performanceGraph.DisplayedRate;
-        double remainingWork = _measurementKind == ProgressMeasurement.Bytes
-            ? remainingBytes
-            : remainingItems;
-        _timeRemaining.Text = rate <= 0.01 || remainingWork <= 0
-            ? remainingWork <= 0
-                ? "Time remaining: About 0 seconds"
-                : "Time remaining: Calculating…"
-            : $"Time remaining: {FormatRemainingTime(remainingWork / rate)}";
+        double? remainingWork = _measurementKind switch
+        {
+            ProgressMeasurement.Bytes when remainingBytes > 0 => remainingBytes,
+            ProgressMeasurement.Items when remainingItems is > 0 => remainingItems.Value,
+            ProgressMeasurement.Items when estimatedRemainingItems is > 0 =>
+                estimatedRemainingItems.Value,
+            _ => null,
+        };
+        _timeRemaining.Text = state.Status == FileOperationStatus.Completed
+            ? "Time remaining: About 0 seconds"
+            : remainingWork is > 0 && rate > 0.01
+                ? $"Time remaining: {FormatRemainingTime(remainingWork.Value / rate)}"
+                : "Time remaining: Calculating…";
     }
 
     private static string FormatRemainingTime(double seconds)

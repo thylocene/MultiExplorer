@@ -72,6 +72,8 @@ $groups = $files | Group-Object {
 }
 
 $cultureDirectories = [Collections.Generic.List[object]]::new()
+$excludedCultureDirectories = [Collections.Generic.HashSet[string]]::new(
+    [StringComparer]::OrdinalIgnoreCase)
 $unknown = [Collections.Generic.List[object]]::new()
 
 foreach ($group in $groups) {
@@ -87,6 +89,7 @@ foreach ($group in $groups) {
     }).Count -eq 0
 
     $isCultureDirectory = $false
+    $culture = $null
     if ($isTopLevelDirectory -and $containsOnlySatelliteAssemblies) {
         try {
             $culture = [Globalization.CultureInfo]::GetCultureInfo($directory)
@@ -102,6 +105,14 @@ foreach ($group in $groups) {
         continue
     }
 
+    # The self-contained Windows Desktop runtime can copy localized resource
+    # assemblies even with SatelliteResourceLanguages=en. Never harvest them
+    # into the MSI; retain English satellites if a future runtime supplies any.
+    if ($culture.TwoLetterISOLanguageName -ne 'en') {
+        [void]$excludedCultureDirectories.Add($directory)
+        continue
+    }
+
     $directoryId = Get-StableId 'PublishedDirectory' $directory
     $directoryIds[$directory] = $directoryId
     $cultureDirectories.Add([pscustomobject]@{
@@ -113,6 +124,10 @@ foreach ($group in $groups) {
 if ($unknown.Count -gt 0) {
     throw "Publish output contains unhandled subdirectories: $($unknown.Name -join ', ')"
 }
+
+$includedGroups = @($groups | Where-Object {
+    -not $excludedCultureDirectories.Contains([string]$_.Name)
+})
 
 $sb = [Text.StringBuilder]::new()
 [void]$sb.AppendLine('<?xml version="1.0" encoding="utf-8"?>')
@@ -129,7 +144,7 @@ if ($cultureDirectories.Count -gt 0) {
 
 [void]$sb.AppendLine('    <ComponentGroup Id="PublishedRuntimeFiles">')
 
-foreach ($group in $groups | Sort-Object Name) {
+foreach ($group in $includedGroups | Sort-Object Name) {
     $directory = [string]$group.Name
     $componentId = Get-StableId "PublishedComponent" $directory
     $componentGuid = Get-StableGuid $directory
@@ -160,4 +175,5 @@ $outputFull = [IO.Path]::GetFullPath($OutputPath)
 $outputDirectory = [IO.Path]::GetDirectoryName($outputFull)
 [IO.Directory]::CreateDirectory($outputDirectory) | Out-Null
 [IO.File]::WriteAllText($outputFull, $sb.ToString(), [Text.UTF8Encoding]::new($false))
-Write-Host "Generated WiX manifest for $($files.Count) published runtime files: $outputFull"
+$includedFileCount = @($includedGroups | ForEach-Object { $_.Group }).Count
+Write-Host "Generated WiX manifest for $includedFileCount English runtime files: $outputFull"

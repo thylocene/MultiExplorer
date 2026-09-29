@@ -17,9 +17,9 @@ public sealed class ShellContextCommandBarTests
     }
 
     [Theory]
-    [InlineData(96, 380, 62)]
-    [InlineData(144, 570, 93)]
-    [InlineData(192, 760, 124)]
+    [InlineData(96, 340, 54)]
+    [InlineData(144, 510, 81)]
+    [InlineData(192, 680, 108)]
     public void GetPreferredSize_ScalesInDevicePixels(int dpi,
         int expectedWidth, int expectedHeight)
     {
@@ -35,7 +35,7 @@ public sealed class ShellContextCommandBarTests
     [InlineData(329, 4)]
     public void HitTest_MapsEachCellToItsCommand(int x, int expectedValue)
     {
-        var bounds = new Rectangle(10, 20, 380, 74);
+        var bounds = new Rectangle(10, 20, 340, 54);
 
         Assert.Equal((ShellContextCommand)expectedValue,
             ShellContextCommandBar.HitTest(bounds, new Point(x, 30)));
@@ -44,10 +44,10 @@ public sealed class ShellContextCommandBarTests
     [Fact]
     public void HitTest_RejectsPointsOutsideTheCommandRow()
     {
-        var bounds = new Rectangle(10, 20, 380, 74);
+        var bounds = new Rectangle(10, 20, 340, 54);
 
         Assert.Null(ShellContextCommandBar.HitTest(bounds, new Point(9, 30)));
-        Assert.Null(ShellContextCommandBar.HitTest(bounds, new Point(390, 30)));
+        Assert.Null(ShellContextCommandBar.HitTest(bounds, new Point(350, 30)));
     }
 
     [Fact]
@@ -246,6 +246,99 @@ public sealed class ShellContextCommandBarTests
     }
 
     [Fact]
+    public void OppositePaneCommands_AppearInTheFileContextMenu()
+    {
+        IntPtr menu = NativeMethods.CreatePopupMenu();
+        Assert.NotEqual(IntPtr.Zero, menu);
+        try
+        {
+            Assert.True(NativeMethods.AppendMenu(menu,
+                NativeMethods.MF_STRING, 1, "Open"));
+            Assert.True(NativeMethods.AppendMenu(menu,
+                NativeMethods.MF_STRING, 2, "Properties"));
+            Assert.True(PanelView.AddOppositePaneMenuCommands(menu));
+            var label = new System.Text.StringBuilder(80);
+            Assert.True(NativeMethods.GetMenuString(menu, 1, label,
+                label.Capacity, NativeMethods.MF_BYPOSITION) > 0);
+            Assert.Equal("Copy to opposite pane\tAlt+C", label.ToString());
+            label.Clear();
+            Assert.True(NativeMethods.GetMenuString(menu, 2, label,
+                label.Capacity, NativeMethods.MF_BYPOSITION) > 0);
+            Assert.Equal("Move to opposite pane\tAlt+M", label.ToString());
+            label.Clear();
+            Assert.True(NativeMethods.GetMenuString(menu, 0, label,
+                label.Capacity, NativeMethods.MF_BYPOSITION) > 0);
+            Assert.Equal("Open", label.ToString());
+            label.Clear();
+            Assert.True(NativeMethods.GetMenuString(menu, 4, label,
+                label.Capacity, NativeMethods.MF_BYPOSITION) > 0);
+            Assert.Equal("Properties", label.ToString());
+        }
+        finally
+        {
+            NativeMethods.DestroyMenu(menu);
+        }
+    }
+
+    [Fact]
+    public void CommonCommands_FollowExplorerOrderAndKeepTheirSubmenus()
+    {
+        IntPtr menu = NativeMethods.CreatePopupMenu();
+        IntPtr openWith = NativeMethods.CreatePopupMenu();
+        Assert.NotEqual(IntPtr.Zero, menu);
+        Assert.NotEqual(IntPtr.Zero, openWith);
+        try
+        {
+            Assert.True(NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING,
+                1, "&Open"));
+            Assert.True(NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING,
+                2, "P&roperties"));
+            Assert.True(NativeMethods.AppendMenu(menu, NativeMethods.MF_SEPARATOR,
+                0, null));
+            Assert.True(NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING,
+                3, "Add to &Favorites"));
+            Assert.True(NativeMethods.AppendMenu(menu, 0x0010,
+                (nuint)openWith, "Open wit&h")); // MF_POPUP
+            Assert.True(NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING,
+                4, "Copy &as path"));
+            Assert.True(NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING,
+                PanelView.MoveToOtherPaneMenuCommandId,
+                "Move to opposite pane\tAlt+M"));
+            Assert.True(NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING,
+                5, "Extension command"));
+
+            ShellContextMenu.OrderCommonFileCommands(menu);
+
+            string[] expected =
+            [
+                "Open", "Open with", "Add to Favorites", "Copy as path",
+                "Properties", "Move to opposite pane",
+            ];
+            for (int position = 0; position < expected.Length; position++)
+            {
+                var label = new System.Text.StringBuilder(80);
+                Assert.True(NativeMethods.GetMenuString(menu, (uint)position,
+                    label, label.Capacity, NativeMethods.MF_BYPOSITION) > 0);
+                Assert.Equal(expected[position],
+                    ShellContextMenu.NormalizeMenuLabel(label.ToString()));
+            }
+
+            Assert.Equal(openWith, NativeMethods.GetSubMenu(menu, 1));
+            Assert.Equal((uint)4, GetMenuItemID(menu, 3));
+            Assert.Equal((uint)2, GetMenuItemID(menu, 4));
+            Assert.Equal(PanelView.MoveToOtherPaneMenuCommandId,
+                GetMenuItemID(menu, 5));
+        }
+        finally
+        {
+            NativeMethods.DestroyMenu(menu);
+        }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern uint GetMenuItemID(IntPtr menu, int position);
+
+    [Fact]
     public void FavoriteCommand_ReplacesTheClassicShellEntry()
     {
         IntPtr menu = NativeMethods.CreatePopupMenu();
@@ -282,7 +375,7 @@ public sealed class ShellContextCommandBarTests
     }
 
     [Fact]
-    public void StartCommand_ReplacesTheClassicShellEntry()
+    public void StartCommands_AreRemovedFromTheShellMenu()
     {
         IntPtr menu = NativeMethods.CreatePopupMenu();
         Assert.NotEqual(IntPtr.Zero, menu);
@@ -293,9 +386,10 @@ public sealed class ShellContextCommandBarTests
                 NativeMethods.MF_STRING, 1, "Open"));
             Assert.True(NativeMethods.AppendMenu(menu,
                 NativeMethods.MF_STRING, 2, "Pin to &Start"));
+            Assert.True(NativeMethods.AppendMenu(menu,
+                NativeMethods.MF_STRING, 3, "Unpin from Start"));
 
-            Assert.True(PanelView.AddStartMenuCommand(menu,
-                isPinned: true));
+            ShellContextMenu.RemoveStartPinCommands(menu);
 
             var labels = new List<string>();
             for (int position = 0;
@@ -308,8 +402,9 @@ public sealed class ShellContextCommandBarTests
                     labels.Add(label.ToString());
             }
 
-            Assert.Contains("Unpin from Start", labels);
             Assert.DoesNotContain("Pin to &Start", labels);
+            Assert.DoesNotContain("Unpin from Start", labels);
+            Assert.Contains("Open", labels);
         }
         finally
         {
@@ -541,6 +636,67 @@ public sealed class ShellContextCommandBarTests
         Assert.Equal(unchecked((int)0xFFF5F5F5), corrected);
     }
 
+    [Fact]
+    public void DarkMenuDrawRow_ShowsShellBitmapWithZeroAlpha()
+    {
+        var info = new TestBitmapInfo
+        {
+            Header = new TestBitmapInfoHeader
+            {
+                Size = (uint)Marshal.SizeOf<TestBitmapInfoHeader>(),
+                Width = 20,
+                Height = -20,
+                Planes = 1,
+                BitCount = 32,
+            },
+        };
+        IntPtr bitmap = CreateDIBSection(IntPtr.Zero, ref info, 0,
+            out IntPtr bits, IntPtr.Zero, 0);
+        Assert.NotEqual(IntPtr.Zero, bitmap);
+        try
+        {
+            var pixels = new byte[20 * 20 * 4];
+            for (int y = 0; y < 20; y++)
+            for (int x = 0; x < 20; x++)
+            {
+                int index = (y * 20 + x) * 4;
+                bool foreground = x is >= 5 and < 15 && y is >= 5 and < 15;
+                pixels[index] = foreground ? (byte)0 : (byte)255; // blue
+                pixels[index + 1] = foreground ? (byte)255 : (byte)0; // green
+                pixels[index + 2] = foreground ? (byte)0 : (byte)255; // red
+                pixels[index + 3] = 0; // Shell bitmap without alpha
+            }
+            Marshal.Copy(pixels, 0, bits, pixels.Length);
+
+            using var target = new Bitmap(300, 32);
+            using (Graphics graphics = Graphics.FromImage(target))
+            {
+                IntPtr dc = graphics.GetHdc();
+                try
+                {
+                    using var renderer = new DarkShellMenuRenderer(96);
+                    var visual = new DarkShellMenuRenderer.MenuItemVisual(
+                        "Shell command", false, true, false, false, false,
+                        bitmap);
+                    renderer.DrawRow(dc, new Rectangle(0, 0, 300, 32),
+                        0, visual);
+                }
+                finally
+                {
+                    graphics.ReleaseHdc(dc);
+                }
+            }
+
+            Assert.Equal(Color.Lime.ToArgb(), target.GetPixel(20, 16).ToArgb());
+            Assert.Equal(ThemeManager.Surface.ToArgb(),
+                target.GetPixel(10, 6).ToArgb());
+        }
+        finally
+        {
+            DeleteObject(bitmap);
+        }
+    }
+
     [Theory]
     [InlineData(unchecked((int)0xFF282828))]
     [InlineData(unchecked((int)0xFF001464))]
@@ -622,6 +778,29 @@ public sealed class ShellContextCommandBarTests
         internal nuint itemData;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TestBitmapInfoHeader
+    {
+        internal uint Size;
+        internal int Width;
+        internal int Height;
+        internal ushort Planes;
+        internal ushort BitCount;
+        internal uint Compression;
+        internal uint SizeImage;
+        internal int XPelsPerMeter;
+        internal int YPelsPerMeter;
+        internal uint ClrUsed;
+        internal uint ClrImportant;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TestBitmapInfo
+    {
+        internal TestBitmapInfoHeader Header;
+        internal uint Colors;
+    }
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode,
         EntryPoint = "GetMenuItemInfoW")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -635,4 +814,13 @@ public sealed class ShellContextCommandBarTests
     private static extern bool SetMenuItemInfo(IntPtr menu, uint item,
         [MarshalAs(UnmanagedType.Bool)] bool byPosition,
         ref TestMenuItemInfo itemInfo);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteObject(IntPtr handle);
+
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr CreateDIBSection(IntPtr deviceContext,
+        ref TestBitmapInfo bitmapInfo, uint usage, out IntPtr bits,
+        IntPtr section, uint offset);
 }

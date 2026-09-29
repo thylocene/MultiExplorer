@@ -12,6 +12,8 @@
       }
     ],
     "configProperties": {
+      "System.Runtime.TieredCompilation": true,
+      "System.Runtime.TieredPGO": true,
       "CSWINRT_USE_WINDOWS_UI_XAML_PROJECTIONS": false
     }
   }

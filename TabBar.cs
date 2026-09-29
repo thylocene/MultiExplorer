@@ -6,19 +6,32 @@ using System.Windows.Forms;
 
 namespace MultiExplorer;
 
-internal sealed class TabMoveRequestedEventArgs(
-    TabBar source, int sourceIndex, int targetIndex) : EventArgs
+internal sealed class TabDropRequestedEventArgs(
+    TabBar source, int sourceIndex, int targetIndex, bool copy) : EventArgs
 {
     internal TabBar Source { get; } = source;
     internal int SourceIndex { get; } = sourceIndex;
     internal int TargetIndex { get; } = targetIndex;
+    internal bool Copy { get; } = copy;
 }
 
 public sealed class TabBar : UserControl
 {
     private const string TabDragFormat = "MultiExplorer.TabDrag";
-    private static TabBar? s_dragSource;
+    private const int DragKeyStateControl = 0x0008;
+    private static volatile TabBar? s_dragSource;
     private static int s_dragSourceIndex = -1;
+    private static bool s_tabDropHandled;
+    internal static bool IsTabDragInProgress => s_dragSource is not null;
+    private static readonly Lazy<IntPtr> s_copyDragCursor = new(() =>
+    {
+        // OLE's copy-drag cursor is the standard arrow with a plus badge.
+        IntPtr ole32 = NativeMethods.GetModuleHandleW("ole32.dll");
+        IntPtr cursor = ole32 == IntPtr.Zero
+            ? IntPtr.Zero
+            : NativeMethods.LoadCursor(ole32, new IntPtr(6));
+        return cursor == IntPtr.Zero ? Cursors.Arrow.Handle : cursor;
+    });
 
     // Logical (96-DPI) base values — scaled at runtime via LogicalToDeviceUnits.
     private int PadH   => LogicalToDeviceUnits(12);
@@ -39,6 +52,10 @@ public sealed class TabBar : UserControl
     private bool _hovAdd      = false;
     private int _dragCandidate = -1;
     private Point _dragStart;
+    private Point _dragDropPosition;
+    private bool _dragDropCompleted;
+    private bool _dragDropCopyRequested;
+    private TabDragFeedbackWindow? _dragFeedback;
     private int _dropIndex = -1;
 
     private readonly List<(Rectangle Tab, Rectangle Close)> _hits = new();
@@ -47,7 +64,10 @@ public sealed class TabBar : UserControl
     public event EventHandler<int>? TabSelected;
     public event EventHandler<int>? TabCloseRequested;
     public event EventHandler?      AddTabRequested;
-    internal event EventHandler<TabMoveRequestedEventArgs>? TabMoveRequested;
+    internal event EventHandler<TabDropRequestedEventArgs>? TabDropRequested;
+    internal event Action<int, PanelView, bool>? TabDroppedOnPaneRequested;
+    internal event Action<int, Point>? TabDroppedOutsideRequested;
+    internal bool OpenExplorerWhenTabDroppedOutside { get; set; }
 
     public TabBar()
     {
@@ -163,7 +183,7 @@ public sealed class TabBar : UserControl
             // Background fill with rounded top corners
             using (var path = TopRoundedRect(tabR, Radius))
             using (var br   = new SolidBrush(isActive
-                       ? ThemeManager.Window
+                       ? ThemeManager.ActiveTabBackground
                        : isHovered ? ThemeManager.Hover : ThemeManager.Surface))
                 g.FillPath(br, path);
 
@@ -190,7 +210,10 @@ public sealed class TabBar : UserControl
 
             // Vertically centre the label on the close glyph.
             var labelR = new Rectangle(tabR.X + PadH, tabR.Y + 2, textW + 4, tabH - 4);
-            TextRenderer.DrawText(g, _labels[i], _font, labelR, ThemeManager.Text, DrawTff);
+            Color textColor = isActive
+                ? ThemeManager.ActiveTabText
+                : ThemeManager.Text;
+            TextRenderer.DrawText(g, _labels[i], _font, labelR, textColor, DrawTff);
 
             // Close button (active tab always; inactive tab on hover)
             if (isActive || isHovered)
@@ -203,7 +226,12 @@ public sealed class TabBar : UserControl
                 int cx = closeR.X + closeR.Width  / 2;
                 int cy = closeR.Y + closeR.Height / 2;
                 using var cp = new Pen(
-                    cHov ? ThemeManager.Text : ThemeManager.MutedText, 1.5f);
+                    cHov
+                        ? ThemeManager.Text
+                        : isActive
+                            ? ThemeManager.ActiveTabText
+                            : ThemeManager.MutedText,
+                    1.5f);
                 g.DrawLine(cp, cx - 4, cy - 4, cx + 4, cy + 4);
                 g.DrawLine(cp, cx + 4, cy - 4, cx - 4, cy + 4);
             }
@@ -343,6 +371,30 @@ public sealed class TabBar : UserControl
         _dragCandidate = -1;
     }
 
+    protected override void OnQueryContinueDrag(QueryContinueDragEventArgs e)
+    {
+        base.OnQueryContinueDrag(e);
+        Point position = Cursor.Position;
+        UpdateDragFeedback(position);
+        SetDragCursor(position);
+
+        if (e.Action != DragAction.Drop || e.EscapePressed) return;
+        _dragDropCompleted = true;
+        _dragDropCopyRequested = (e.KeyState & DragKeyStateControl) != 0;
+        _dragDropPosition = position;
+    }
+
+    protected override void OnGiveFeedback(GiveFeedbackEventArgs e)
+    {
+        base.OnGiveFeedback(e);
+        Point position = Cursor.Position;
+        UpdateDragFeedback(position);
+        if (!IsOutsideOwner(position) && GetPaneAt(position) is null) return;
+
+        e.UseDefaultCursors = false;
+        SetDragCursor(position);
+    }
+
     protected override void OnDragEnter(DragEventArgs drgevent)
     {
         base.OnDragEnter(drgevent);
@@ -368,15 +420,19 @@ public sealed class TabBar : UserControl
         SetDropIndex(-1);
         if (drgevent.Data?.GetDataPresent(TabDragFormat) != true
             || !TryGetDraggedTab(out TabBar? source, out int sourceIndex)
-            || targetIndex < 0)
+            || (!ReferenceEquals(source, this) && targetIndex < 0))
         {
             drgevent.Effect = DragDropEffects.None;
             return;
         }
 
-        drgevent.Effect = DragDropEffects.Move;
-        TabMoveRequested?.Invoke(this,
-            new TabMoveRequestedEventArgs(source!, sourceIndex, targetIndex));
+        bool samePane = ReferenceEquals(source, this);
+        if (samePane) targetIndex = _labels.Count;
+        bool copy = samePane || (drgevent.KeyState & DragKeyStateControl) != 0;
+        drgevent.Effect = EffectForPaneDrop(samePane, copy);
+        s_tabDropHandled = true;
+        TabDropRequested?.Invoke(this,
+            new TabDropRequestedEventArgs(source!, sourceIndex, targetIndex, copy));
     }
 
     private bool TryStartTabDrag(MouseEventArgs e)
@@ -392,36 +448,155 @@ public sealed class TabBar : UserControl
 
         int sourceIndex = _dragCandidate;
         _dragCandidate = -1;
+        if (sourceIndex >= _labels.Count) return false;
         s_dragSource = this;
         s_dragSourceIndex = sourceIndex;
+        s_tabDropHandled = false;
+        _dragDropCompleted = false;
+        _dragDropCopyRequested = false;
+        Point dropPosition;
+        bool dropCompleted;
+        bool copyRequested;
+        bool tabDropHandled;
+        using var feedback = new TabDragFeedbackWindow(
+            _labels[sourceIndex],
+            sourceIndex < _tooltips.Count ? _tooltips[sourceIndex] : string.Empty);
+        _dragFeedback = feedback;
         try
         {
+            UpdateDragFeedback(Cursor.Position);
             var data = new DataObject();
             data.SetData(TabDragFormat, "tab");
-            DoDragDrop(data, DragDropEffects.Move);
+            DoDragDrop(data, DragDropEffects.Copy | DragDropEffects.Move);
+            dropCompleted = _dragDropCompleted;
+            copyRequested = _dragDropCopyRequested;
+            dropPosition = _dragDropPosition;
+            tabDropHandled = s_tabDropHandled;
         }
         finally
         {
             s_dragSource = null;
             s_dragSourceIndex = -1;
+            s_tabDropHandled = false;
+            _dragDropCompleted = false;
+            _dragDropCopyRequested = false;
+            _dragFeedback = null;
             SetDropIndex(-1);
         }
+
+        PanelView? targetPane = GetPaneAt(dropPosition);
+        if (ShouldHandlePaneDrop(
+            dropCompleted, tabDropHandled, targetPane is not null))
+            TabDroppedOnPaneRequested?.Invoke(sourceIndex, targetPane!, copyRequested);
+        else if (ShouldOpenExplorerAfterDrag(
+            OpenExplorerWhenTabDroppedOutside,
+            dropCompleted,
+            tabDropHandled,
+            FindForm()?.Bounds ?? Rectangle.Empty,
+            dropPosition))
+            TabDroppedOutsideRequested?.Invoke(sourceIndex, dropPosition);
         return true;
+    }
+
+    internal static bool ShouldOpenExplorerAfterDrag(
+        bool enabled,
+        bool dropCompleted,
+        bool tabDropHandled,
+        Rectangle ownerBounds,
+        Point dropPosition) =>
+        enabled
+        && dropCompleted
+        && !tabDropHandled
+        && !ownerBounds.Contains(dropPosition);
+
+    internal static bool ShouldHandlePaneDrop(
+        bool dropCompleted, bool tabDropHandled, bool overPane) =>
+        dropCompleted && !tabDropHandled && overPane;
+
+    internal static DragDropEffects EffectForPaneDrop(bool samePane,
+        bool copyRequested) =>
+        samePane || copyRequested ? DragDropEffects.Copy : DragDropEffects.Move;
+
+    internal static TabDragFeedbackState GetDragFeedbackState(
+        bool isWithinSourcePane,
+        bool isOutsideOwner,
+        bool isOverOtherPane,
+        bool enabled,
+        bool copyRequested) =>
+        isWithinSourcePane
+            ? TabDragFeedbackState.DuplicateInCurrentPane
+            : isOutsideOwner
+                ? enabled
+                    ? TabDragFeedbackState.OpenInFileExplorer
+                    : TabDragFeedbackState.Hidden
+                : isOverOtherPane
+                    ? copyRequested
+                        ? TabDragFeedbackState.CopyToOtherPane
+                        : TabDragFeedbackState.MoveToOtherPane
+                    : TabDragFeedbackState.Hidden;
+
+    private bool IsWithinSourcePane(Point position) =>
+        Parent is PanelView sourcePane
+        && sourcePane.RectangleToScreen(sourcePane.ClientRectangle).Contains(position);
+
+    private bool IsOutsideOwner(Point position) =>
+        FindForm() is { } owner && !owner.Bounds.Contains(position);
+
+    private PanelView? GetPaneAt(Point position)
+    {
+        if (Parent is not PanelView sourcePane
+            || sourcePane.Parent is not { } container)
+            return null;
+
+        return container.Controls.OfType<PanelView>().FirstOrDefault(pane =>
+            pane.Visible
+            && !pane.IsDisposed
+            && !pane.Disposing
+            && pane.RectangleToScreen(pane.ClientRectangle).Contains(position));
+    }
+
+    private void SetDragCursor(Point position)
+    {
+        if (IsOutsideOwner(position))
+            NativeMethods.SetCursor(
+                (OpenExplorerWhenTabDroppedOutside
+                    ? s_copyDragCursor.Value
+                    : Cursors.No.Handle));
+        else if (GetPaneAt(position) is { } pane)
+            NativeMethods.SetCursor(ReferenceEquals(pane, Parent)
+                || ModifierKeys.HasFlag(Keys.Control)
+                ? s_copyDragCursor.Value
+                : Cursors.Arrow.Handle);
+    }
+
+    private void UpdateDragFeedback(Point position)
+    {
+        if (_dragFeedback is null) return;
+        _dragFeedback.ShowFeedback(position, GetDragFeedbackState(
+            IsWithinSourcePane(position),
+            IsOutsideOwner(position),
+            GetPaneAt(position) is { } pane
+                && !ReferenceEquals(pane, Parent),
+            OpenExplorerWhenTabDroppedOutside,
+            ModifierKeys.HasFlag(Keys.Control)));
     }
 
     private void UpdateDragTarget(DragEventArgs e)
     {
         if (e.Data?.GetDataPresent(TabDragFormat) != true
-            || !TryGetDraggedTab(out _, out _))
+            || !TryGetDraggedTab(out TabBar? source, out _))
         {
             e.Effect = DragDropEffects.None;
             SetDropIndex(-1);
             return;
         }
 
-        Point clientPoint = PointToClient(new Point(e.X, e.Y));
-        e.Effect = DragDropEffects.Move;
-        SetDropIndex(InsertionIndexAt(clientPoint.X));
+        bool samePane = ReferenceEquals(source, this);
+        e.Effect = EffectForPaneDrop(samePane,
+            (e.KeyState & DragKeyStateControl) != 0);
+        SetDropIndex(samePane
+            ? -1
+            : InsertionIndexAt(PointToClient(new Point(e.X, e.Y)).X));
     }
 
     private static bool TryGetDraggedTab(out TabBar? source, out int sourceIndex)

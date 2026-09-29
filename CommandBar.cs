@@ -15,15 +15,15 @@ public sealed class CommandBar : ToolStrip
     public enum Cmd
     {
         NewFolder, NewTab,
-        Cut, Copy, CopyPaths, Paste,
+        Cut, Copy, CopyPaths, Paste, CopyToOtherPane, MoveToOtherPane,
         Rename, Delete,
         ViewDetails, ViewList, ViewTiles, ViewIcons, ViewMediumIcons, ViewSmallIcons, ViewContent,
         ToggleDetailsPane, TogglePreviewPane,
         ShowNavPane, ShowCompactView, ShowCheckboxes, ShowFileExtensions, ShowHiddenItems,
         ToggleQuickLook,
-        SelectAll, Properties, FolderOptions, Help, About, ViewLog, SetHotkey,
+        SelectAll, Properties, EditAddressBar, FolderOptions, Settings, Help, About, ViewLog, SetHotkey,
         ToggleStartWithWindows, ToggleMinimizeToTray,
-        GoToParent, Refresh, MirrorToOther,
+        GoToParent, Refresh, MirrorToOther, ComparePanes,
         Exit,
     }
 
@@ -43,6 +43,7 @@ public sealed class CommandBar : ToolStrip
     private const char GlyphView      = (char)0xE8A9;
     private const char GlyphGoUp      = (char)0xE74A;
     private const char GlyphMirror    = (char)0xE8AB;
+    private const char GlyphShow      = (char)0xE890;
 
     // View-mode menu item glyphs
     private const char GlyphViewDetails     = (char)0xE9D5;
@@ -169,12 +170,24 @@ public sealed class CommandBar : ToolStrip
 
         _miDetailsPane = DropCheckItem(view, GlyphDetailsPane, "Details pane",             Cmd.ToggleDetailsPane);
         _miPreviewPane = DropCheckItem(view, GlyphPreviewPane, "Preview pane",             Cmd.TogglePreviewPane);
-        _miQuickLook   = DropCheckItem(view, GlyphQuickLook,
-            "QuickLook integration (Space)", Cmd.ToggleQuickLook);
+        // QuickLook is configured in the unified Settings form. Keep a private
+        // state holder so the existing toggle-state synchronization remains
+        // compatible with commands and diagnostics without exposing a duplicate
+        // View-menu setting.
+        _miQuickLook = new ToolStripMenuItem("QuickLook integration (Space)")
+        {
+            Font = Font,
+            CheckOnClick = false,
+        };
         view.DropDownItems.Add(new ToolStripSeparator());
 
         // Show submenu
-        var show  = new ToolStripMenuItem("Show") { Font = Font };
+        var show  = new ToolStripMenuItem("Show")
+        {
+            Font = Font,
+            Image = MakeGlyph(GlyphShow),
+        };
+        _glyphItems.Add((show, GlyphShow));
         _showMenu = (ToolStripDropDownMenu)show.DropDown;
         _showMenu.ImageScalingSize = new Size(_iconPx, _iconPx);
         _showMenu.ShowCheckMargin  = true;
@@ -186,6 +199,8 @@ public sealed class CommandBar : ToolStrip
         _miFileExtensions = DropCheckItem(show, GlyphFileExt,  "File name extensions", Cmd.ShowFileExtensions);
         _miHiddenItems    = DropCheckItem(show, GlyphHidden,   "Hidden items",         Cmd.ShowHiddenItems);
         view.DropDownItems.Add(show);
+        view.DropDownItems.Add(new ToolStripSeparator());
+        DropItemWithIcon(view, GlyphMirror, "Compare panes...", Cmd.ComparePanes);
 
         Items.Add(view);
 
@@ -515,17 +530,7 @@ public sealed class CommandBar : ToolStrip
             int y = LogicalToDeviceUnits(3);
             Width = LogicalToDeviceUnits(318);
 
-            AddRow("Explorer options", "Ctrl+O", Cmd.FolderOptions, rowHeight, ref y);
-            AddSeparator(separatorHeight, ref y);
-            AddRow("Set appearance", null, null, rowHeight, ref y, isAppearance: true);
-            AddRow("Set hotkey", null, Cmd.SetHotkey, rowHeight, ref y);
-            AddRow("Set Auto-start", null,
-                Cmd.ToggleStartWithWindows, rowHeight, ref y, isChecked: startWithWindows);
-            AddRow("Minimize to System Tray", null,
-                Cmd.ToggleMinimizeToTray, rowHeight, ref y,
-                isChecked: minimizeToTray);
-            AddRow("QuickLook integration (Space)", null,
-                Cmd.ToggleQuickLook, rowHeight, ref y, isChecked: quickLookEnabled);
+            AddRow("Settings", null, Cmd.Settings, rowHeight, ref y);
             AddSeparator(separatorHeight, ref y);
             AddRow("View logs", "Ctrl+L", Cmd.ViewLog, rowHeight, ref y);
             AddSeparator(separatorHeight, ref y);
@@ -652,8 +657,17 @@ public sealed class CommandBar : ToolStrip
 
         private void OnPopupMouseDown(object? sender, MouseEventArgs e)
         {
-            if (e.Button != MouseButtons.Left || _hovered < 0) return;
-            MenuRow row = _rows[_hovered];
+            if (e.Button != MouseButtons.Left) return;
+            int index = _rows.FindIndex(row =>
+                !row.IsSeparator && row.Bounds.Contains(e.Location));
+            ActivateRow(index);
+        }
+
+        private void ActivateRow(int index)
+        {
+            if (index < 0 || index >= _rows.Count) return;
+            MenuRow row = _rows[index];
+            if (row.IsSeparator) return;
             if (row.IsAppearance)
             {
                 _appearanceSubmenuOpen = true;
@@ -662,8 +676,9 @@ public sealed class CommandBar : ToolStrip
             }
             if (row.Command is Cmd command)
             {
-                CommandChosen?.Invoke(this, command);
+                EventHandler<Cmd>? chosen = CommandChosen;
                 ClosePopup();
+                chosen?.Invoke(this, command);
             }
         }
 
@@ -681,7 +696,7 @@ public sealed class CommandBar : ToolStrip
                 return;
             }
             if (e.KeyCode == Keys.Enter && _hovered >= 0)
-                OnPopupMouseDown(this, new MouseEventArgs(MouseButtons.Left, 1, 0, 0, 0));
+                ActivateRow(_hovered);
         }
 
         private void ClosePopup()

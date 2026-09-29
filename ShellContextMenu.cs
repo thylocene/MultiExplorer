@@ -52,6 +52,7 @@ internal static class ShellContextMenu
 
             RemoveUnavailableCanonicalCommands(menu, contextMenu);
             customizeMenu?.Invoke(menu);
+            RemoveStartPinCommands(menu);
             IReadOnlyDictionary<ShellContextCommand, uint> shellCommands =
                 new Dictionary<ShellContextCommand, uint>();
             ShellContextCommandBar? commandBar = null;
@@ -181,6 +182,49 @@ internal static class ShellContextMenu
             .TrimEnd('.', '…');
     }
 
+    /// <summary>Promotes the commands shared with Explorer's compact menu.
+    /// Remaining Shell and extension entries keep their relative order.</summary>
+    internal static void OrderCommonFileCommands(IntPtr menu)
+    {
+        if (menu == IntPtr.Zero)
+            throw new ArgumentException("A menu handle is required.", nameof(menu));
+
+        string[][] commandGroups =
+        [
+            ["Open"],
+            ["Open with"],
+            ["Share with"],
+            ["Run with PowerShell"],
+            ["Add to Favorites", "Remove from Favorites",
+                "Pin to Quick access", "Unpin from Quick access"],
+            ["Compress to"],
+            ["Copy as path"],
+            ["Properties"],
+            ["Copy to opposite pane"],
+            ["Move to opposite pane"],
+        ];
+
+        int target = 0;
+        var label = new StringBuilder(256);
+        foreach (string[] group in commandGroups)
+        {
+            int count = NativeMethods.GetMenuItemCount(menu);
+            for (int source = target; source < count; source++)
+            {
+                label.Clear();
+                if (NativeMethods.GetMenuString(menu, (uint)source, label,
+                        label.Capacity, NativeMethods.MF_BYPOSITION) <= 0
+                    || !group.Contains(NormalizeMenuLabel(label.ToString()),
+                        StringComparer.OrdinalIgnoreCase))
+                    continue;
+
+                if (NativeMethods.MoveMenuItem(menu, (uint)source, (uint)target))
+                    target++;
+                break;
+            }
+        }
+    }
+
     /// <summary>
     /// Displays one Shell-owned submenu without showing the complete context menu.
     /// The command is still executed by the original Shell context-menu object.
@@ -263,6 +307,41 @@ internal static class ShellContextMenu
 
         RemoveHiddenCanonicalCommands(menu, contextMenu,
             IsCanonicalCommandAvailable);
+    }
+
+    internal static void RemoveStartPinCommands(IntPtr menu)
+    {
+        if (menu == IntPtr.Zero)
+            throw new ArgumentException("A menu handle is required.", nameof(menu));
+
+        RemoveStartPinCommandsRecursive(menu);
+        RemoveRedundantSeparators(menu);
+    }
+
+    private static void RemoveStartPinCommandsRecursive(IntPtr menu)
+    {
+        var label = new StringBuilder(128);
+        for (int position = NativeMethods.GetMenuItemCount(menu) - 1;
+             position >= 0;
+             position--)
+        {
+            IntPtr submenu = NativeMethods.GetSubMenu(menu, position);
+            if (submenu != IntPtr.Zero)
+                RemoveStartPinCommandsRecursive(submenu);
+
+            label.Clear();
+            if (NativeMethods.GetMenuString(menu, (uint)position, label,
+                    label.Capacity, NativeMethods.MF_BYPOSITION) <= 0)
+                continue;
+
+            string normalized = NormalizeMenuLabel(label.ToString());
+            if (normalized.Equals("Pin to Start", StringComparison.OrdinalIgnoreCase)
+                || normalized.Equals("Unpin from Start", StringComparison.OrdinalIgnoreCase))
+            {
+                NativeMethods.DeleteMenu(menu, (uint)position,
+                    NativeMethods.MF_BYPOSITION);
+            }
+        }
     }
 
     private static void RemoveHiddenCanonicalCommands(IntPtr menu,

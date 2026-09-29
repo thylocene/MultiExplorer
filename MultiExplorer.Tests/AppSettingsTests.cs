@@ -3,12 +3,12 @@ namespace MultiExplorer.Tests;
 public class AppSettingsTests
 {
     [Fact]
-    public void DefaultHotkey_IsWinCtrlAltM()
+    public void DefaultHotkey_IsWinShiftE()
     {
         var settings = new AppSettings();
-        Assert.Equal(NativeMethods.MOD_WIN | NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT,
+        Assert.Equal(NativeMethods.MOD_WIN | NativeMethods.MOD_SHIFT,
                      settings.ShowWindowModifiers);
-        Assert.Equal(NativeMethods.VK_M, settings.ShowWindowVk);
+        Assert.Equal(NativeMethods.VK_E, settings.ShowWindowVk);
     }
 
     [Fact]
@@ -29,6 +29,12 @@ public class AppSettingsTests
     public void DefaultStartWithWindows_IsFalse()
     {
         Assert.False(new AppSettings().StartWithWindows);
+    }
+
+    [Fact]
+    public void DefaultDeleteConfirmation_IsEnabled()
+    {
+        Assert.True(new AppSettings().ConfirmFileAndFolderDeletions);
     }
 
     [Fact]

@@ -39,13 +39,20 @@ public class StartupManagerTests
         Assert.Equal(expected, Program.IsStartupLaunch([argument]));
     }
 
-    [Fact]
-    public void DebugBuild_RunsItsOwnExecutableInsteadOfInstalledIdentityPayload()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void IdentityRelaunch_RespectsExplicitOptOut(bool optOut)
     {
+        string[] args = optOut ? ["--no-identity-relaunch"] : [];
 #if DEBUG
-        Assert.False(Program.ShouldRelaunchWithIdentity([]));
+        Assert.False(Program.ShouldRelaunchWithIdentity(args));
+        Assert.Equal("MultiExplorer.SingleInstance.Debug.v1",
+            Program.SingleInstanceMutexName);
 #else
-        Assert.True(Program.ShouldRelaunchWithIdentity([]));
+        Assert.Equal(!optOut, Program.ShouldRelaunchWithIdentity(args));
+        Assert.Equal("MultiExplorer.SingleInstance.v1",
+            Program.SingleInstanceMutexName);
 #endif
     }
 

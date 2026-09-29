@@ -42,6 +42,30 @@ public sealed class ShellFileDropTargetTests
     }
 
     [Fact]
+    public void ChooseEffect_DefaultsToMoveFromNetworkPath()
+    {
+        uint effect = ShellFileDropTarget.ChooseEffect(
+            NativeMethods.DROPEFFECT_COPY | NativeMethods.DROPEFFECT_MOVE,
+            0,
+            [@"\\server\share\source.txt"],
+            Destination);
+
+        Assert.Equal(NativeMethods.DROPEFFECT_MOVE, effect);
+    }
+
+    [Fact]
+    public void ChooseEffect_ControlCopiesFromNetworkPath()
+    {
+        uint effect = ShellFileDropTarget.ChooseEffect(
+            NativeMethods.DROPEFFECT_COPY | NativeMethods.DROPEFFECT_MOVE,
+            NativeMethods.MK_CONTROL,
+            [@"\\server\share\source.txt"],
+            Destination);
+
+        Assert.Equal(NativeMethods.DROPEFFECT_COPY, effect);
+    }
+
+    [Fact]
     public void ChooseEffect_RejectsRightButtonDrag()
     {
         uint effect = ShellFileDropTarget.ChooseEffect(

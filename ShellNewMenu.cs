@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Security;
 using System.Text;
 using Microsoft.Win32;
@@ -63,25 +64,37 @@ internal static class ShellNewMenu
 
     internal static bool TryExecute(int commandId,
         IReadOnlyDictionary<int, ShellNewItem> commands, string targetFolder)
+        => TryExecute(commandId, commands, targetFolder, out _);
+
+    internal static bool TryExecute(int commandId,
+        IReadOnlyDictionary<int, ShellNewItem> commands, string targetFolder,
+        out string? createdPath)
     {
         ArgumentNullException.ThrowIfNull(commands);
         ArgumentException.ThrowIfNullOrWhiteSpace(targetFolder);
+        createdPath = null;
         if (!commands.TryGetValue(commandId, out ShellNewItem? item)) return false;
 
-        return TryExecute(item, targetFolder);
+        return TryExecute(item, targetFolder, out createdPath);
     }
 
     internal static bool TryExecute(ShellNewItem item, string targetFolder)
+        => TryExecute(item, targetFolder, out _);
+
+    internal static bool TryExecute(ShellNewItem item, string targetFolder,
+        out string? createdPath)
     {
         ArgumentNullException.ThrowIfNull(item);
         ArgumentException.ThrowIfNullOrWhiteSpace(targetFolder);
+        createdPath = null;
 
         try
         {
             switch (item.Kind)
             {
                 case ShellNewKind.Folder:
-                    Directory.CreateDirectory(GetUniquePath(targetFolder, "New folder", string.Empty));
+                    createdPath = GetUniquePath(targetFolder, "New folder", string.Empty);
+                    Directory.CreateDirectory(createdPath);
                     break;
                 case ShellNewKind.Shortcut:
                     Process.Start(new ProcessStartInfo
@@ -92,34 +105,53 @@ internal static class ShellNewMenu
                     });
                     break;
                 case ShellNewKind.EmptyFile:
-                    File.WriteAllBytes(GetUniquePath(targetFolder,
-                        $"New {item.DisplayName}", item.Extension), []);
+                    createdPath = GetUniquePath(targetFolder,
+                        $"New {item.DisplayName}", item.Extension);
+                    File.WriteAllBytes(createdPath, []);
                     break;
                 case ShellNewKind.DataFile:
-                    File.WriteAllBytes(GetUniquePath(targetFolder,
-                        $"New {item.DisplayName}", item.Extension), item.Data ?? []);
+                    createdPath = GetUniquePath(targetFolder,
+                        $"New {item.DisplayName}", item.Extension);
+                    File.WriteAllBytes(createdPath, item.Data ?? []);
                     break;
                 case ShellNewKind.TemplateFile when item.TemplatePath is { } templatePath:
-                    File.Copy(templatePath, GetUniquePath(targetFolder,
-                        $"New {item.DisplayName}", item.Extension));
+                    createdPath = GetUniquePath(targetFolder,
+                        $"New {item.DisplayName}", item.Extension);
+                    File.Copy(templatePath, createdPath);
                     break;
                 case ShellNewKind.ApplicationCommand when item.Command is { } command:
-                    StartApplicationNewDocument(command, GetUniquePath(targetFolder,
-                        $"New {item.DisplayName}", item.Extension));
+                    createdPath = GetUniquePath(targetFolder,
+                        $"New {item.DisplayName}", item.Extension);
+                    StartApplicationNewDocument(command, createdPath);
                     break;
                 default:
                     return false;
             }
 
+            if (createdPath is not null
+                && item.Kind is not ShellNewKind.ApplicationCommand)
+                NotifyCreatedItem(createdPath, item.Kind == ShellNewKind.Folder);
             return true;
         }
         catch (Exception ex)
         {
+            createdPath = null;
             AppLog.Warn(ex, nameof(ShellNewMenu),
                 $"Could not create a new {item.DisplayName}.");
             return true;
         }
     }
+
+    internal static void NotifyCreatedItem(string path, bool isDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        SHChangeNotify(isDirectory ? 0x00000008u : 0x00000002u,
+            0x0005u /* SHCNF_PATHW */, path, IntPtr.Zero);
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern void SHChangeNotify(uint eventId, uint flags,
+        [MarshalAs(UnmanagedType.LPWStr)] string path, IntPtr secondPath);
 
     /// <summary>
     /// Gets the compact, everyday document set used by Explorer's modern

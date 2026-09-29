@@ -58,6 +58,31 @@ public sealed class OperationWindowPlacementTests
         Assert.Equal(0, y);
     }
 
+    [Theory]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    public void PromotionPolicy_RetriesUntilWindowIsTrackedAndTopMost(
+        bool wasPromoted, bool isTopMost, bool expected)
+    {
+        Assert.Equal(expected, OperationWindowPromotionPolicy.RequiresPromotion(
+            wasPromoted, isTopMost));
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    public void PromotionPolicy_ReassertsVisibleProgressWindowWithoutCoveringPopup(
+        bool visible, bool hasVisibleOwnedPopup, bool expected)
+    {
+        Assert.Equal(expected,
+            OperationWindowPromotionPolicy.ShouldReassertProgressWindow(
+                visible, hasVisibleOwnedPopup));
+    }
+
     private static OperationWindowPlacement CreatePlacement() => new()
     {
         AnchorLeft = 2200,

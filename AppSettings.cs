@@ -88,6 +88,15 @@ public sealed class AppSettings
     /// <summary>When true MultiExplorer is registered to start when this user signs in.</summary>
     public bool StartWithWindows { get; set; } = false;
 
+    /// <summary>When true, file and folder deletions require confirmation.</summary>
+    public bool ConfirmFileAndFolderDeletions { get; set; } = true;
+
+    /// <summary>When true, dropping a tab outside MultiExplorer opens its folder in Windows File Explorer.</summary>
+    public bool OpenExplorerWhenTabDroppedOutside { get; set; } = false;
+
+    /// <summary>When sorting by Name, interleave files and folders alphabetically.</summary>
+    public bool SortFoldersWithFilesByName { get; set; } = false;
+
     // ── QuickLook integration ─────────────────────────────────────────────────
 
     /// <summary>When true, pressing Space sends the selected item to QuickLook for preview.</summary>
@@ -101,8 +110,9 @@ public sealed class AppSettings
     // ── Global window-toggle hotkey ───────────────────────────────────────────
 
     /// <summary>MOD_WIN/MOD_CONTROL/MOD_ALT/MOD_SHIFT flags for the window-toggle hotkey (without MOD_NOREPEAT).</summary>
-    public int ShowWindowModifiers { get; set; } = 0x000B; // MOD_WIN | MOD_CONTROL | MOD_ALT
+    public int ShowWindowModifiers { get; set; } =
+        NativeMethods.MOD_WIN | NativeMethods.MOD_SHIFT;
 
     /// <summary>Virtual-key code for the window-toggle hotkey.</summary>
-    public int ShowWindowVk { get; set; } = 0x4D; // 'M'
+    public int ShowWindowVk { get; set; } = NativeMethods.VK_E;
 }

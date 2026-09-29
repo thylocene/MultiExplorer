@@ -147,6 +147,23 @@ public static class NativeMethods
         public uint pid;
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct CM_COLUMNINFO
+    {
+        public uint cbSize;
+        public uint dwMask;
+        public uint dwState;
+        public uint uWidth;
+        public uint uDefaultWidth;
+        public uint uIdealWidth;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)]
+        public string wszName;
+    }
+
+    public const uint CM_ENUM_VISIBLE = 0x2;
+    public const uint CM_MASK_WIDTH = 0x1;
+    public const uint CM_MASK_NAME = 0x8;
+
     /// <summary>
     /// Native PROPVARIANT layout. The property system owns any payload returned
     /// by IPropertyStore; callers must pass it to PropVariantClear when finished.
@@ -389,6 +406,22 @@ public static class NativeMethods
         [PreserveSig] int InvokeVerbOnSelection([MarshalAs(UnmanagedType.LPStr)] string pszVerb);
         [PreserveSig] int SetViewModeAndIconSize(uint uViewMode, int iImageSize);
         [PreserveSig] int GetViewModeAndIconSize(out uint puViewMode, out int piImageSize);
+    }
+
+    [ComImport]
+    [Guid("D8EC27BB-3F3B-4042-B10A-4ACFD924D453")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IColumnManager
+    {
+        [PreserveSig] int SetColumnInfo(ref PROPERTYKEY key, ref CM_COLUMNINFO info);
+        [PreserveSig] int GetColumnInfo(ref PROPERTYKEY key, ref CM_COLUMNINFO info);
+        [PreserveSig] int GetColumnCount(uint flags, out uint count);
+        [PreserveSig] int GetColumns(uint flags,
+            [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 2)]
+            PROPERTYKEY[] keys, uint count);
+        [PreserveSig] int SetColumns(
+            [In, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)]
+            PROPERTYKEY[] keys, uint count);
     }
 
     // ── IPersistFolder2 — called by us to get the current folder PIDL ─────────
@@ -722,6 +755,11 @@ public static class NativeMethods
     [DllImport("user32.dll", EntryPoint = "SendMessageW")]
     public static extern IntPtr SendMessageTv(IntPtr hWnd, uint Msg, IntPtr wParam, ref TVITEM lParam);
 
+    [DllImport("user32.dll")]
+    public static extern int GetScrollPos(IntPtr hWnd, int nBar);
+
+    public const int SB_HORZ = 0;
+
     // ── IOleCommandTarget — standard OLE commands on shell views ────────────────
     //
     // OLECMDID_CUT=5, OLECMDID_COPY=6, OLECMDID_PASTE=7, OLECMDID_PROPERTIES=10,
@@ -784,6 +822,7 @@ public static class NativeMethods
     public static extern int SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, ref LVHITTESTINFO lParam);
 
     public const uint LVM_HITTEST = 0x1012; // LVM_FIRST (0x1000) + 18
+    public const uint LVM_SCROLL = 0x1014; // LVM_FIRST (0x1000) + 20
     public const uint LVM_GETEDITCONTROL = 0x1018; // LVM_FIRST (0x1000) + 24
     public const uint LVM_GETHEADER = 0x101F; // LVM_FIRST (0x1000) + 31
     public const uint EM_SETSEL = 0x00B1;
@@ -840,6 +879,11 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
+
+    /// <summary>Converts a window client point to physical screen coordinates.</summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
 
     /// <summary>Returns the client-area rectangle of hWnd (top/left are always 0).</summary>
     [DllImport("user32.dll")]
@@ -1049,6 +1093,75 @@ public static class NativeMethods
         [MarshalAs(UnmanagedType.Bool)] bool byPosition,
         ref MENUITEMINFO menuItemInfo);
 
+    /// <summary>Moves a native menu entry while retaining its Shell command ID,
+    /// submenu, state, checkmarks, bitmap, and extension data.</summary>
+    public static bool MoveMenuItem(IntPtr menu, uint source, uint destination)
+    {
+        if (menu == IntPtr.Zero)
+            throw new ArgumentException("A menu handle is required.", nameof(menu));
+        if (source == destination) return true;
+
+        const uint itemMask = 0x0001 | 0x0002 | 0x0004 | 0x0008
+            | 0x0020 | 0x0080 | 0x0100;
+        var item = new MENUITEMINFO
+        {
+            cbSize = (uint)Marshal.SizeOf<MENUITEMINFO>(),
+            fMask = itemMask,
+        };
+        if (!GetMenuItemInfo(menu, source, true, ref item)) return false;
+        if ((item.fType & 0x0100) != 0) return false; // Shell-owned owner drawing
+
+        var label = new StringBuilder(512);
+        GetMenuString(menu, source, label, label.Capacity, MF_BYPOSITION);
+        IntPtr labelPointer = IntPtr.Zero;
+        try
+        {
+            if ((item.fType & MF_SEPARATOR) == 0)
+            {
+                labelPointer = Marshal.StringToCoTaskMemUni(label.ToString());
+                item.fMask |= 0x0040; // MIIM_STRING
+                item.dwTypeData = labelPointer;
+                item.cch = (uint)label.Length;
+            }
+
+            // RemoveMenu detaches submenus; DeleteMenu would destroy them.
+            if (!RemoveMenu(menu, source, MF_BYPOSITION)) return false;
+            uint adjustedDestination = source < destination
+                ? destination - 1
+                : destination;
+            if (InsertMenuItem(menu, adjustedDestination, true, ref item))
+                return true;
+
+            if (!InsertMenuItem(menu, source, true, ref item))
+                throw new InvalidOperationException(
+                    "Could not restore a Shell context-menu item after moving it.");
+            return false;
+        }
+        finally
+        {
+            if (labelPointer != IntPtr.Zero)
+                Marshal.FreeCoTaskMem(labelPointer);
+        }
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode,
+        EntryPoint = "GetMenuItemInfoW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMenuItemInfo(IntPtr menu, uint item,
+        [MarshalAs(UnmanagedType.Bool)] bool byPosition,
+        ref MENUITEMINFO menuItemInfo);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode,
+        EntryPoint = "InsertMenuItemW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool InsertMenuItem(IntPtr menu, uint item,
+        [MarshalAs(UnmanagedType.Bool)] bool byPosition,
+        ref MENUITEMINFO menuItemInfo);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RemoveMenu(IntPtr menu, uint position, uint flags);
+
     /// <summary>Displays a context menu and returns the selected command ID
     /// when TPM_RETURNCMD is set (0 = cancelled).</summary>
     [DllImport("user32.dll")]
@@ -1104,6 +1217,15 @@ public static class NativeMethods
         uint filter,
         ref Guid riid,
         out IntPtr propertyDescriptionList);
+
+    [DllImport("propsys.dll")]
+    public static extern int PSGetNameFromPropertyKey(
+        ref PROPERTYKEY key, out IntPtr canonicalName);
+
+    [DllImport("propsys.dll", CharSet = CharSet.Unicode)]
+    public static extern int PSGetPropertyKeyFromName(
+        [MarshalAs(UnmanagedType.LPWStr)] string canonicalName,
+        out PROPERTYKEY key);
 
     /// <summary>Formats a Shell property value using its registered display formatter.</summary>
     [DllImport("propsys.dll")]
@@ -1169,6 +1291,27 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr SetCursor(IntPtr hCursor);
+
+    [DllImport("user32.dll", EntryPoint = "LoadCursorW")]
+    public static extern IntPtr LoadCursor(IntPtr hInstance, IntPtr lpCursorName);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsZoomed(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    public const int SW_MAXIMIZE = 3;
+    public const int SW_SHOW = 5;
+    public const int SW_RESTORE = 9;
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -1261,6 +1404,7 @@ public static class NativeMethods
     public const int MOD_SHIFT    = 0x0004;
     public const int MOD_WIN      = 0x0008;
     public const int MOD_NOREPEAT = 0x4000;  // prevents repeated firing while key is held
+    public const int VK_E         = 0x45;
     public const int VK_M         = 0x4D;
 
     // ── IShellItemArray — returned by IFolderView2::GetSelection ─────────────────

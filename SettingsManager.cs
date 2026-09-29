@@ -31,7 +31,8 @@ public static class SettingsManager
             if (File.Exists(SettingsPath))
             {
                 string json = File.ReadAllText(SettingsPath);
-                return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+                return UpgradeLegacyDefaultHotkey(
+                    JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings());
             }
         }
         catch (Exception ex)
@@ -41,6 +42,21 @@ public static class SettingsManager
         }
 
         return new AppSettings();
+    }
+
+    internal static AppSettings UpgradeLegacyDefaultHotkey(AppSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        if (settings.ShowWindowModifiers == (NativeMethods.MOD_WIN
+                | NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT)
+            && settings.ShowWindowVk == NativeMethods.VK_M)
+        {
+            settings.ShowWindowModifiers = NativeMethods.MOD_WIN | NativeMethods.MOD_SHIFT;
+            settings.ShowWindowVk = NativeMethods.VK_E;
+        }
+
+        return settings;
     }
 
     /// <summary>

@@ -103,6 +103,7 @@
         <li><a href="#view">Views and panes</a></li>
         <li><a href="#filter">Find items</a></li>
         <li><a href="#more">More menu</a></li>
+        <li><a href="#settings-file">Settings file</a></li>
         <li><a href="#shortcuts">Keyboard shortcuts</a></li>
         <li><a href="#background">Background operations</a></li>
       </ul>
@@ -119,7 +120,8 @@
       <p>MultiExplorer has two independent file panes. Use them to browse different locations, then copy or move items between them. Drag the centre splitter to resize the panes, or use its arrows to temporarily collapse one pane.</p>
 
       <h3>Tabs</h3>
-      <p>Each pane has its own tabs. Click <strong>+</strong> to open another tab, click a tab to switch to it, and click <strong>×</strong> to close it. Drag a tab within its tab bar to reorder it, or onto the other pane's tab bar to move that explorer tab between panes. A pane always keeps at least one tab.</p>
+      <p>Each pane has its own tabs. Click <strong>+</strong> to open another tab, click a tab to switch to it, and click <strong>×</strong> to close it. Drop a dragged tab anywhere in its own pane to duplicate it at the end, like pressing <kbd>Ctrl</kbd>+<kbd>T</kbd>; the floating preview says "Duplicate in current pane". Drop it anywhere on the other pane to move it there; the floating preview says "Move tab to other pane". Hold <kbd>Ctrl</kbd> while dragging a tab to the other pane to copy it instead; the source tab stays in place and the preview says "Copy tab to other pane". Moving the only tab out of a pane opens a new tab at <code>C:\</code> in the source pane.</p>
+      <p>In Settings, you can enable opening a tab in Windows File Explorer by dropping it outside MultiExplorer. File Explorer opens on the screen where you release it, then the MultiExplorer tab closes. The last tab in a pane cannot be dropped on the desktop, so that drag shows only the blocked cursor and no floating preview; it can still be duplicated within its pane or moved or copied into the other pane.</p>
 
       <h3>Address bar</h3>
       <p>Click a breadcrumb segment to go to that folder. Click a chevron between segments to choose an immediate subfolder. Press <kbd>F4</kbd> or click empty space in the address bar to type a path directly. Press <kbd>Enter</kbd> to navigate or <kbd>Esc</kbd> to cancel.</p>
@@ -133,8 +135,13 @@
         <li><strong>New folder:</strong> click <strong>New folder</strong> or press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd>. The new folder is selected and ready to rename.</li>
         <li><strong>Copy or move:</strong> use cut/copy and paste, or drag files into the other pane. A same-drive drag normally moves files; holding <kbd>Ctrl</kbd> copies and holding <kbd>Shift</kbd> moves.</li>
         <li><strong>Copy as path (Ctrl+Shift+C):</strong> place the selected file and folder paths on the clipboard, one per line.</li>
+        <li><strong>Create shortcut:</strong> right-click one file or folder and choose <strong>Create shortcut...</strong>. Choose a Windows shortcut (.lnk), a file hard link, or a symlink, then place it in the current folder, its parent, the Desktop, or the other browser pane. Hard links require the same volume; symlinks may require Windows Developer Mode or permission.</li>
         <li><strong>Delete:</strong> press <kbd>Del</kbd> to send items to the Recycle Bin, or <kbd>Shift</kbd> + <kbd>Del</kbd> for a permanent delete.</li>
       </ul>
+      <h3>Compare the two panes</h3>
+      <p>Open <strong>View → Compare panes...</strong> to scan the active left and right folders, including subfolders. The results show missing items, newer files, size differences, and file/folder conflicts. The <strong>Suggested action</strong> column shows the recommended copy direction: if the left file is more than two seconds newer, <strong>Copy left → right</strong>; if the right file is more than two seconds newer, <strong>Copy right → left</strong>. This also applies to files with different sizes. Different-size files with similar modified times suggest <strong>Skip</strong> because the scan cannot tell which contents you want to keep.</p>
+      <p>The <strong>Chosen action</strong> column starts with the suggested action for each difference, so newer files are already set to copy toward the older side. Items without a clear copy direction start at <strong>Skip</strong>. You can change any chosen action, click <strong>Restore suggestions</strong> to use the recommendations again, or click <strong>Skip all</strong> to clear the choices. Only chosen actions are run, after you review them.</p>
+      <p>Click <strong>Review actions...</strong> to see every selected source and destination before starting background operations. A changed folder requires a new comparison. The scan compares size and modified time, not file contents; links are listed but cannot be synchronized. Network locations are scanned only when you open this command, and deleting from a network share may be permanent.</p>
     </section>
 
     <section id="view">
@@ -145,6 +152,7 @@
         <li><strong>Preview pane:</strong> uses the Windows preview handler registered for the selected file type, when available. Drag the vertical divider at the preview pane's left edge to resize it. The left and right explorer panes remember their preview widths independently.</li>
         <li><strong>Status bar:</strong> shows file and folder totals on the left and the number and combined size of selected files and folders on the right. Selected-folder contents contribute to the size but not the top-level selection count. Sizes use decimal storage units, where 1 KB is 1,000 bytes. Selection details are not calculated for network locations.</li>
         <li><strong>Show submenu:</strong> controls the navigation pane, compact view, item check boxes, filename extensions, and hidden items for the active tab only.</li>
+        <li><strong>Quick access:</strong> opening a pinned folder in the navigation pane shows it in the active MultiExplorer tab.</li>
         <li><strong>QuickLook preview:</strong> if QuickLook is installed and enabled, press <kbd>Space</kbd> on a selected file to preview it.</li>
       </ul>
       <p class="tip"><strong>QuickLook is a separate third-party application.</strong> It is not included with, or developed as part of, MultiExplorer. Learn more or download it from the <a href="https://github.com/ql-win/quicklook" target="_blank" rel="noopener noreferrer">QuickLook GitHub page</a>.</p>
@@ -154,9 +162,12 @@
 
     <section id="filter">
       <h2>Find items in the current folder</h2>
-      <p>With a file list active, just start typing. MultiExplorer opens a <strong>Contains</strong> filter for the current folder and shows matching folders first, then matching files.</p>
+      <p>With a file list active, just start typing. MultiExplorer opens a <strong>Contains</strong> filter for the current folder and shows matching folders first, then matching files. The filtered list keeps the columns and their order from the active file view, including network tabs; scroll horizontally to see columns beyond the pane width.</p>
+      <p>To copy or move selected files and folders to the other pane's current folder, press <kbd>Alt</kbd> + <kbd>C</kbd> or <kbd>Alt</kbd> + <kbd>M</kbd>. Both actions are also available in the selected items' right-click menu.</p>
       <ul>
         <li>Press <kbd>Enter</kbd> or double-click a result to open it.</li>
+        <li>Select a result and press <kbd>F2</kbd> to rename the file or folder in the filtered list.</li>
+        <li>Click a column header to sort the results; click it again to reverse the order. Folders stay above files.</li>
         <li>Press <kbd>Backspace</kbd> to remove the last filter character.</li>
         <li>Press <kbd>Esc</kbd> or click <strong>×</strong> to clear the filter.</li>
         <li>Right-click a result for its standard Windows context menu.</li>
@@ -167,15 +178,19 @@
       <h2>The … ▾ menu</h2>
       <p>Click <strong>… ▾</strong> at the far right of either toolbar for application-wide commands:</p>
       <ul>
-        <li><strong>Explorer options:</strong> open Windows Folder Options.</li>
-        <li><strong>Set appearance:</strong> switch between the light and dark application themes.</li>
-        <li><strong>Set hotkey:</strong> choose the global shortcut that toggles MultiExplorer between its window and the system tray.</li>
-        <li><strong>Set Auto-start:</strong> run the app when you sign in.</li>
-        <li><strong>Minimize to System Tray:</strong> when ticked, closing the main window keeps MultiExplorer running in the notification area. Clear it to exit when the window is closed.</li>
+        <li><strong>Settings:</strong> configure Explorer options, deletion confirmation, tab drops to Windows File Explorer, appearance, the global hotkey, Auto-start, System Tray behaviour, and QuickLook integration.</li>
         <li><strong>View logs:</strong> open the application log if it exists.</li>
         <li><strong>Help:</strong> open this page.</li>
         <li><strong>About MultiExplorer:</strong> show version and licence information.</li>
       </ul>
+    </section>
+
+    <section id="settings-file">
+      <h2>Settings file</h2>
+      <p>MultiExplorer stores your preferences, window layout, and saved tab paths in <code>%APPDATA%\MultiExplorer\settings.json</code>. You can paste <code>%APPDATA%\MultiExplorer</code> into the File Explorer address bar to open its folder.</p>
+      <p>If <code>settings.json</code> does not exist, MultiExplorer starts with default settings. It creates the file when it next saves settings, including when you exit normally.</p>
+      <p>If the file contains invalid JSON or cannot be read, MultiExplorer also starts with default settings and records the load failure in its log. Loading does not change the file, but a later successful settings save replaces it with the settings used in that session. To recover old values, make a copy of a damaged file before it is overwritten. Then close MultiExplorer, repair the JSON or restore a backup, and reopen the program.</p>
+      <p class="tip">Close MultiExplorer before editing <code>settings.json</code>, and keep a backup copy. Changes made while the program is running may be overwritten by a later save.</p>
     </section>
 
     <section id="shortcuts">
@@ -183,7 +198,7 @@
       <table>
         <thead><tr><th>Shortcut</th><th>Action</th></tr></thead>
         <tbody>
-          <tr><td><kbd>Win</kbd> + <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>M</kbd></td><td>Toggle MultiExplorer between its window and the system tray (default global hotkey; configurable under <strong>Set hotkey</strong>)</td></tr>
+          <tr><td><kbd>Win</kbd> + <kbd>Shift</kbd> + <kbd>E</kbd></td><td>Toggle MultiExplorer between its window and the system tray (default global hotkey; configurable in <strong>Settings</strong>)</td></tr>
           <tr><td><kbd>F1</kbd></td><td>Open MultiExplorer Help</td></tr>
           <tr><td><kbd>F5</kbd></td><td>Refresh the current folder in the active pane</td></tr>
           <tr><td><kbd>Ctrl</kbd> + <kbd>O</kbd></td><td>Open Windows Explorer options</td></tr>
@@ -195,6 +210,8 @@
           <tr><td><kbd>Ctrl</kbd> + <kbd>X</kbd></td><td>Cut the selected items</td></tr>
           <tr><td><kbd>Ctrl</kbd> + <kbd>C</kbd></td><td>Copy the selected items</td></tr>
           <tr><td><kbd>Ctrl</kbd> + <kbd>V</kbd></td><td>Paste items into the current folder</td></tr>
+          <tr><td><kbd>Alt</kbd> + <kbd>C</kbd></td><td>Copy selected files and folders to the opposite pane</td></tr>
+          <tr><td><kbd>Alt</kbd> + <kbd>M</kbd></td><td>Move selected files and folders to the opposite pane</td></tr>
           <tr><td><kbd>Ctrl</kbd> + <kbd>A</kbd></td><td>Select all items</td></tr>
           <tr><td><kbd>Enter</kbd></td><td>Open the selected item or filter result; in the address editor, navigate to the entered path</td></tr>
           <tr><td><kbd>F2</kbd></td><td>Rename the selected item</td></tr>
@@ -203,11 +220,11 @@
           <tr><td><kbd>Alt</kbd> + <kbd>Enter</kbd></td><td>Show selected-item properties</td></tr>
           <tr><td><kbd>Backspace</kbd></td><td>Go to the parent folder; while filtering, remove the last filter character</td></tr>
           <tr><td><kbd>F4</kbd></td><td>Edit the address bar</td></tr>
-          <tr><td><kbd>Alt</kbd> + <kbd>Down</kbd></td><td>Show address history while editing the address bar</td></tr>
           <tr><td><kbd>Esc</kbd></td><td>Cancel address editing or clear the current filter</td></tr>
           <tr><td><kbd>Space</kbd></td><td>QuickLook preview, when enabled</td></tr>
           <tr><td><kbd>Ctrl</kbd> + <kbd>Space</kbd></td><td>Close filtering and preview the selected result with QuickLook</td></tr>
           <tr><td><kbd>Ctrl</kbd> while dragging</td><td>Copy the dragged items</td></tr>
+          <tr><td><kbd>Ctrl</kbd> while dragging a tab to the other pane</td><td>Copy the tab to the other pane</td></tr>
           <tr><td><kbd>Shift</kbd> while dragging</td><td>Move the dragged items</td></tr>
         </tbody>
       </table>

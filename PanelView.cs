@@ -21,6 +21,17 @@ internal enum PaneDividerEdge
     Right,
 }
 
+internal sealed class OpenInFileExplorerRequestedEventArgs(
+    ExplorerHost sourceTab, string path, Point dropPosition) : EventArgs
+{
+    internal ExplorerHost SourceTab { get; } = sourceTab;
+    internal string Path { get; } = path;
+    internal Point DropPosition { get; } = dropPosition;
+}
+
+internal sealed record OppositePaneTransferRequest(
+    FileOperationKind Kind, IReadOnlyList<string> Paths);
+
 /// <summary>
 /// One panel of the dual-pane window.  Contains a tab bar, path bar, command bar,
 /// and one ExplorerHost per open tab.  Only the active tab's host is visible.
@@ -31,7 +42,9 @@ public sealed class PanelView : UserControl
     internal const string HelpFileName = "MultiExplorer.Help.html";
     private const string HelpResourceName = "MultiExplorer.EmbeddedHelp.html";
     internal const uint QuickAccessMenuCommandId = 0xE101;
-    internal const uint StartMenuCommandId = 0xE102;
+    internal const uint CreateShortcutMenuCommandId = 0xE102;
+    internal const uint CopyToOtherPaneMenuCommandId = 0xE103;
+    internal const uint MoveToOtherPaneMenuCommandId = 0xE104;
 
     private static readonly SemaphoreSlim HelpFileGate = new(1, 1);
 
@@ -76,12 +89,30 @@ public sealed class PanelView : UserControl
     private int _preferredPreviewPaneWidth = AppSettings.DefaultPreviewPaneWidth;
     private int _previewDragStartWidth;
     private readonly ManagedDetailsListView _managedDetailsListView;
+    private readonly Panel _networkUnavailableOverlay;
+    private readonly Label _networkUnavailableMessage;
+    private ExplorerHost? _networkRetryHost;
     private readonly System.Windows.Forms.Timer _managedDetailsRefreshTimer;
     private bool _managedDetailsOverlaySuppressed;
     private string _managedDetailsPath = string.Empty;
+    private IReadOnlyList<ManagedDetailsListView.ColumnDefinition>
+        _localManagedColumns = [];
+    private bool _usingNetworkManagedColumns;
+    private int _networkManagedColumnsGeneration;
+    private bool _initialBrowserNavigationReady;
+    private bool _initialBrowserReadyRaised;
 
     /// <summary>Raised when the user clicks the Mirror button; payload is the current folder path.</summary>
     public event EventHandler<string>? MirrorToOtherRequested;
+
+    /// <summary>Raised when the user asks to compare the active left and right tabs.</summary>
+    internal event EventHandler? ComparePanesRequested;
+
+    /// <summary>Raised for a single file or folder chosen from its context menu.</summary>
+    internal event EventHandler<string>? CreateShortcutRequested;
+
+    internal event EventHandler<OppositePaneTransferRequest>?
+        TransferToOtherPaneRequested;
 
     /// <summary>Raised when the user toggles the QuickLook integration on or off.</summary>
     public event EventHandler? QuickLookToggled;
@@ -95,6 +126,9 @@ public sealed class PanelView : UserControl
     /// <summary>Raised when the user chooses "Set window hotkey…" from the command bar.</summary>
     public event EventHandler? SetHotkeyRequested;
 
+    /// <summary>Raised when the user opens the unified Settings form.</summary>
+    public event EventHandler? SettingsRequested;
+
     /// <summary>Raised when the user asks to toggle launch at Windows sign-in.</summary>
     public event EventHandler? StartWithWindowsToggled;
 
@@ -107,14 +141,32 @@ public sealed class PanelView : UserControl
     /// <summary>Raised when the initially active tab has completed its first navigation.</summary>
     internal event EventHandler? InitialBrowserReady;
 
+    /// <summary>
+    /// Raised once the initial native browser and its first navigation-tree
+    /// restoration are ready. The managed Details list may still be preparing.
+    /// </summary>
+    internal event EventHandler? InitialNavigationReady;
+
     // ── Filter bar ────────────────────────────────────────────────────────────
     private readonly Panel    _filterBar;
     private readonly Label    _filterPrefix;
     private readonly TextBox  _filterTextBox;
     private readonly RoundedButton _clearBtn;
     private readonly ListView _filterListView;
+    private readonly ImageList _filterIcons = new() { ColorDepth = ColorDepth.Depth32Bit };
+    private readonly Dictionary<string, int> _filterIconIndexes =
+        new(StringComparer.OrdinalIgnoreCase);
+    private TextBox? _filterRenameEditor;
+    private string? _filterRenamePath;
+    private bool _filterRenameIsDirectory;
     private int _hoveredFilterItemIndex = -1;
     private IReadOnlyList<FilterItemData> _filterItems = [];
+    private int _filterSortColumn;
+    private bool _filterSortAscending = true;
+    private bool _sortFoldersWithFilesByName;
+    private IReadOnlyList<ManagedDetailsListView.ColumnDefinition> _filterColumns = [];
+    private bool _filterUsesNativeColumns;
+    private bool _nativeFilterColumnsLoaded;
     private readonly VirtualListItemCache _filterVirtualItemCache = new();
     private string _filterText = "";
     private readonly System.Windows.Forms.Timer _filterDebounce;
@@ -136,6 +188,8 @@ public sealed class PanelView : UserControl
 
     /// <summary>Raised when input enters this explorer instance.</summary>
     internal event EventHandler? FocusReceived;
+    internal event EventHandler<OpenInFileExplorerRequestedEventArgs>?
+        OpenInFileExplorerRequested;
 
     /// <summary>
     /// Raised when browser or managed-list activity should temporarily accelerate
@@ -146,7 +200,7 @@ public sealed class PanelView : UserControl
     public PanelView()
     {
         Padding = GetFocusBorderPadding();
-        BackColor = ThemeManager.MutedText;
+        BackColor = ThemeManager.Border;
         _tabBar     = new TabBar     { Dock = DockStyle.Top };
         _pathBar    = new PathBar    { Dock = DockStyle.Top };
         _commandBar = new CommandBar { Dock = DockStyle.Top };
@@ -240,24 +294,27 @@ public sealed class PanelView : UserControl
             Sorting       = SortOrder.None,
             Visible       = false,
             BorderStyle   = BorderStyle.None,
+            SmallImageList = _filterIcons,
         };
-        _filterListView.Columns.Add("Name",         280);
-        _filterListView.Columns.Add("Type",          70);
-        _filterListView.Columns.Add("Size",           80);
-        _filterListView.Columns.Add("Date modified", 130);
+        UpdateFilterIconSize();
         _filterListView.DoubleClick += OnFilterListDoubleClick;
         _filterListView.KeyPress    += OnFilterListKeyPress;
         _filterListView.KeyDown     += OnFilterListKeyDown;
         _filterListView.MouseDown   += OnFilterListMouseDown;
+        _filterListView.Enter += (_, _) => FocusReceived?.Invoke(this, EventArgs.Empty);
         _filterListView.MouseMove   += OnFilterListMouseMove;
         _filterListView.MouseLeave  += OnFilterListMouseLeave;
         _filterListView.ItemSelectionChanged += OnFilterListItemSelectionChanged;
         _filterListView.RetrieveVirtualItem += OnRetrieveFilterItem;
         _filterListView.DrawColumnHeader += OnFilterListDrawColumnHeader;
+        _filterListView.ColumnClick += OnFilterListColumnClick;
         _filterListView.DrawItem         += OnFilterListDrawItem;
         _filterListView.DrawSubItem      += OnFilterListDrawSubItem;
+        _filterListView.ColumnWidthChanged += (_, _) => CancelFilterRename();
+        _filterListView.MouseWheel += (_, _) => CancelFilterRename();
 
         _managedDetailsListView = new ManagedDetailsListView { Visible = false };
+        _localManagedColumns = _managedDetailsListView.VisibleColumnDefinitions;
         _managedDetailsListView.ItemActivatedPath += OnManagedDetailsItemActivated;
         _managedDetailsListView.ContextMenuRequested += OnManagedDetailsContextMenuRequested;
         _managedDetailsListView.BackgroundContextMenuRequested +=
@@ -267,7 +324,16 @@ public sealed class PanelView : UserControl
         _managedDetailsListView.FilterCharInput += OnFilterCharInput;
         _managedDetailsListView.CommandRequested += (_, command) => ExecuteCommand(command);
         _managedDetailsListView.Enter += (_, _) => FocusReceived?.Invoke(this, EventArgs.Empty);
+        _managedDetailsListView.MouseDown += (_, _) =>
+            FocusReceived?.Invoke(this, EventArgs.Empty);
         _managedDetailsListView.ItemSelectionChanged += OnManagedDetailsItemSelectionChanged;
+        _managedDetailsListView.DirectoryLoadCompleted +=
+            OnManagedDetailsDirectoryLoadCompleted;
+        _managedDetailsListView.VisibleColumnsChanged +=
+            OnManagedDetailsVisibleColumnsChanged;
+        _managedDetailsListView.ColumnWidthChanged += (_, _) =>
+            SyncFilterColumnWidths();
+        SyncFilterColumns();
         _managedDetailsRefreshTimer = new System.Windows.Forms.Timer { Interval = 350 };
         _managedDetailsRefreshTimer.Tick += (_, _) =>
         {
@@ -299,6 +365,32 @@ public sealed class PanelView : UserControl
         _previewSplitter.DragMoved += OnPreviewResizeMoved;
         _previewSplitter.DragCompleted += OnPreviewResizeCompleted;
         _hostContainer = new Panel        { Dock = DockStyle.Fill, BackColor = ThemeManager.Window };
+        _networkUnavailableOverlay = new Panel
+        {
+            Name = "networkUnavailableOverlay",
+            Dock = DockStyle.Fill,
+            Visible = false,
+            TabStop = true,
+            BackColor = ThemeManager.Window,
+        };
+        _networkUnavailableMessage = new Label
+        {
+            Name = "networkUnavailableMessage",
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter,
+            AutoEllipsis = true,
+            Padding = new Padding(16),
+            ForeColor = ThemeManager.Text,
+        };
+        _networkUnavailableOverlay.Controls.Add(_networkUnavailableMessage);
+        _networkUnavailableOverlay.Click += (_, _) => _networkUnavailableOverlay.Focus();
+        _networkUnavailableMessage.Click += (_, _) => _networkUnavailableOverlay.Focus();
+        _networkUnavailableOverlay.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.F5 || e.Modifiers != Keys.None) return;
+            RefreshCurrentFolder();
+            e.SuppressKeyPress = true;
+        };
         _explorerCommandBand = new ExplorerCommandBand { Visible = false };
         _explorerCommandBand.CommandIssued += (_, command) => ExecuteCommand(command);
         _explorerCommandBand.OpenRequested += (_, _) => OpenActiveSelection();
@@ -316,6 +408,7 @@ public sealed class PanelView : UserControl
         _filterListView.Dock = DockStyle.Fill;
         _hostContainer.Controls.Add(_filterListView);
         _hostContainer.Controls.Add(_explorerCommandBand);
+        _hostContainer.Controls.Add(_networkUnavailableOverlay);
 
         _hostContainer.Resize += (_, _) =>
         {
@@ -327,7 +420,23 @@ public sealed class PanelView : UserControl
         _tabBar.TabSelected       += (_, i) => ActivateTab(i);
         _tabBar.TabCloseRequested += (_, i) => CloseTab(i);
         _tabBar.AddTabRequested   += (_, _) => AddTab(CurrentPath());
-        _tabBar.TabMoveRequested  += OnTabMoveRequested;
+        _tabBar.TabDropRequested  += OnTabDropRequested;
+        _tabBar.TabDroppedOnPaneRequested += (index, targetPane, copy) =>
+        {
+            if (index >= 0 && index < _hosts.Count
+                && !targetPane.IsDisposed && !targetPane.Disposing)
+                HandleTabDrop(targetPane, index, targetPane._hosts.Count, copy);
+        };
+        _tabBar.TabDroppedOutsideRequested += (index, dropPosition) =>
+        {
+            if (index >= 0 && index < _hosts.Count)
+            {
+                ExplorerHost sourceTab = _hosts[index];
+                OpenInFileExplorerRequested?.Invoke(this,
+                    new OpenInFileExplorerRequestedEventArgs(
+                        sourceTab, sourceTab.GetCurrentPath(), dropPosition));
+            }
+        };
 
         _pathBar.Navigate += (_, path) =>
         {
@@ -343,12 +452,14 @@ public sealed class PanelView : UserControl
 
     public void ApplyTheme()
     {
-        BackColor = _hasFocusIndicator ? ThemeManager.Accent : ThemeManager.MutedText;
+        BackColor = _hasFocusIndicator ? ThemeManager.Accent : ThemeManager.Border;
         ForeColor = ThemeManager.Text;
         _tabBar.ApplyTheme();
         _pathBar.ApplyTheme();
         _content.BackColor = ThemeManager.Window;
         _hostContainer.BackColor = ThemeManager.Window;
+        _networkUnavailableOverlay.BackColor = ThemeManager.Window;
+        _networkUnavailableMessage.ForeColor = ThemeManager.Text;
         _detailsPanel.ApplyTheme();
         _previewRegion.BackColor = ThemeManager.Surface;
         _previewPanel.ApplyTheme();
@@ -362,6 +473,11 @@ public sealed class PanelView : UserControl
         _clearBtn.ForeColor = ThemeManager.Text;
         _filterListView.BackColor = ThemeManager.Window;
         _filterListView.ForeColor = ThemeManager.Text;
+        if (_filterRenameEditor is { } renameEditor)
+        {
+            renameEditor.BackColor = ThemeManager.Window;
+            renameEditor.ForeColor = ThemeManager.Text;
+        }
         _filterListView.Invalidate();
         _managedDetailsListView.ApplyTheme();
         _explorerCommandBand.ApplyTheme();
@@ -395,7 +511,7 @@ public sealed class PanelView : UserControl
         if (_hasFocusIndicator == hasFocus) return;
 
         _hasFocusIndicator = hasFocus;
-        BackColor = hasFocus ? ThemeManager.Accent : ThemeManager.MutedText;
+        BackColor = hasFocus ? ThemeManager.Accent : ThemeManager.Border;
         _managedDetailsListView.SetInputFocus(hasFocus);
         _filterListView.Invalidate();
         Invalidate();
@@ -418,6 +534,8 @@ public sealed class PanelView : UserControl
             _filterCancellation?.Cancel();
             _filterCancellation?.Dispose();
             _filterDebounce.Dispose();
+            CancelFilterRename();
+            _filterIcons.Dispose();
             _managedDetailsRefreshTimer.Dispose();
         }
         base.Dispose(disposing);
@@ -457,6 +575,21 @@ public sealed class PanelView : UserControl
     public string CurrentPath()
         => ActiveHost?.GetCurrentPath() ?? @"C:\";
 
+    internal string? AvailableFileOperationDestination
+    {
+        get
+        {
+            if (ActiveHost is not { } host
+                || host.NetworkStatus is NetworkPathStatus.Checking
+                    or NetworkPathStatus.Unavailable)
+                return null;
+
+            string path = host.GetCurrentPath();
+            return ExplorerHost.IsNetworkPath(path) || Directory.Exists(path)
+                ? path : null;
+        }
+    }
+
     /// <summary>Navigates the active tab to the given path (called by MainForm for Mirror).</summary>
     public void NavigateTo(string path)
     {
@@ -467,6 +600,27 @@ public sealed class PanelView : UserControl
 
     public List<string> GetAllPaths()
         => _hosts.Select(h => h.GetCurrentPath()).ToList();
+
+    internal ExplorerHost GetTabHost(int index) => _hosts[index];
+
+    internal void SetOpenExplorerWhenTabDroppedOutside(bool enabled) =>
+        _tabBar.OpenExplorerWhenTabDroppedOutside = enabled;
+
+    internal void SetSortFoldersWithFilesByName(bool enabled)
+    {
+        if (_sortFoldersWithFilesByName == enabled) return;
+        _sortFoldersWithFilesByName = enabled;
+        _managedDetailsListView.SetSortFoldersWithFilesByName(enabled);
+        if (_filterListView.Visible)
+            ResortFilterItemsPreservingSelection();
+        if (ActiveHost is { } host
+            && ExplorerHost.IsNetworkPath(host.GetCurrentPath()))
+        {
+            _managedDetailsPath = string.Empty;
+            PositionManagedDetailsView();
+            RefreshManagedDetailsView(force: true);
+        }
+    }
 
     public void SetPathHistory(IEnumerable<string>? paths) => _pathBar.SetHistory(paths);
 
@@ -543,23 +697,33 @@ public sealed class PanelView : UserControl
 
     internal void RefreshCurrentFolder()
     {
-        if (ActiveHost is { } activeHost)
-            DirectorySnapshotCache.Invalidate(activeHost.GetCurrentPath());
-        ActiveHost?.RefreshShellView();
-        ActiveHost?.ScheduleItemCountRefresh();
+        if (ActiveHost is not { } activeHost) return;
+
+        if (activeHost.NetworkStatus == NetworkPathStatus.Unavailable)
+            _networkRetryHost = activeHost;
+        DirectorySnapshotCache.Invalidate(activeHost.GetCurrentPath());
+        activeHost.RefreshShellView();
+        if (ReferenceEquals(_networkRetryHost, activeHost)
+            && activeHost.NetworkStatus == NetworkPathStatus.Checking)
+            _networkUnavailableOverlay.Refresh();
+        activeHost.ScheduleItemCountRefresh();
         RefreshManagedDetailsView(force: true);
 
         if (_filterListView.Visible && !string.IsNullOrEmpty(_filterText))
             RestartFilterDebounce();
     }
 
-    internal void RestoreActiveNavigationPane()
+    internal async Task RestoreActiveNavigationPaneAsync(
+        CancellationToken cancellationToken = default)
     {
         if (ActiveHost is not { } host) return;
 
         string path = host.GetCurrentPathForPolling();
-        if (!string.IsNullOrWhiteSpace(path))
-            host.RestoreNavigationPane(path);
+        if (!string.IsNullOrWhiteSpace(path)
+            && host.NetworkStatus is not (NetworkPathStatus.Checking
+                or NetworkPathStatus.Unavailable))
+            await host.RestoreNavigationPaneForStartupAsync(
+                path, cancellationToken);
     }
 
     /// <summary>Called from MainForm.OnShown after the panel has its final layout dimensions.</summary>
@@ -580,7 +744,9 @@ public sealed class PanelView : UserControl
     {
         if (_active < 0) return;
         ExplorerHost host = _hosts[_active];
-        host.RequestSelectionSnapshotRefresh();
+        if (host.NetworkStatus is not (NetworkPathStatus.Checking
+            or NetworkPathStatus.Unavailable))
+            host.RequestSelectionSnapshotRefresh();
         string p = host.GetCurrentPathForPolling();
         _pathBar.SetPath(p);
         _tabBar.UpdateLabel(_active, FolderLabel(p), p);
@@ -592,8 +758,12 @@ public sealed class PanelView : UserControl
             _lastActivePath = p;
             _itemCounts.Remove(host);
             UpdateItemCountStatus(host, null);
-            host.EnsureColumnHeaders();
-            host.SyncNavigationPane(p);
+            if (host.NetworkStatus is not (NetworkPathStatus.Checking
+                or NetworkPathStatus.Unavailable))
+            {
+                host.EnsureColumnHeaders();
+                host.SyncNavigationPane(p);
+            }
             host.NotifyItemCountPathChanged();
         }
 
@@ -601,6 +771,7 @@ public sealed class PanelView : UserControl
         PositionManagedDetailsView();
         RefreshManagedDetailsView();
         host.RefreshItemCountStatus();
+        host.CheckNetworkAvailabilityIfDue();
     }
 
     private void RefreshSelectionDependentUi(ExplorerHost host)
@@ -644,6 +815,24 @@ public sealed class PanelView : UserControl
         object? sender, ListViewItemSelectionChangedEventArgs e) =>
         QueueManagedSelectionUiRefresh();
 
+    private void OnManagedDetailsDirectoryLoadCompleted(
+        object? sender, string path)
+    {
+        if (ActiveHost is { } currentHost
+            && string.Equals(path, currentHost.GetCurrentPathForPolling(),
+                StringComparison.OrdinalIgnoreCase))
+            PositionManagedDetailsView();
+
+        if (!_initialBrowserNavigationReady
+            || _initialBrowserReadyRaised
+            || ActiveHost is not { } host
+            || !string.Equals(path, host.GetCurrentPathForPolling(),
+                StringComparison.OrdinalIgnoreCase))
+            return;
+
+        TryRaiseInitialBrowserReady(host);
+    }
+
     // ── Tab management ────────────────────────────────────────────────────────
 
     private void AddTab(string path)
@@ -673,16 +862,21 @@ public sealed class PanelView : UserControl
         host.ShellMouseDown += OnHostShellMouseDown;
         host.ShellFocused += OnHostShellFocused;
         host.NavigationContextMenuRequested += OnHostNavigationContextMenuRequested;
+        host.FileContextMenuRequested += OnHostFileContextMenuRequested;
         host.QuickLookUnavailable += OnHostQuickLookUnavailable;
         host.ItemCountChanged += OnHostItemCountChanged;
         host.FolderViewStateChanged += OnHostFolderViewStateChanged;
         host.NavigationChanged += OnHostNavigationChanged;
+        host.NetworkPathStatusChanged += OnHostNetworkPathStatusChanged;
+        host.NavigationPaneVisibilityChanged += OnHostNavigationPaneVisibilityChanged;
         host.SelectionChanged += OnHostSelectionChanged;
         host.InitialNavigationCompleted += OnHostInitialNavigationCompleted;
     }
 
     private void DetachHostEvents(ExplorerHost host)
     {
+        if (ReferenceEquals(host, _networkRetryHost))
+            _networkRetryHost = null;
         host.SetItemCountMonitoringActive(false);
         host.FilterCharInput -= OnFilterCharInput;
         host.FilterBackspaceTyped -= OnFilterBackspaceTyped;
@@ -691,10 +885,13 @@ public sealed class PanelView : UserControl
         host.ShellMouseDown -= OnHostShellMouseDown;
         host.ShellFocused -= OnHostShellFocused;
         host.NavigationContextMenuRequested -= OnHostNavigationContextMenuRequested;
+        host.FileContextMenuRequested -= OnHostFileContextMenuRequested;
         host.QuickLookUnavailable -= OnHostQuickLookUnavailable;
         host.ItemCountChanged -= OnHostItemCountChanged;
         host.FolderViewStateChanged -= OnHostFolderViewStateChanged;
         host.NavigationChanged -= OnHostNavigationChanged;
+        host.NetworkPathStatusChanged -= OnHostNetworkPathStatusChanged;
+        host.NavigationPaneVisibilityChanged -= OnHostNavigationPaneVisibilityChanged;
         host.SelectionChanged -= OnHostSelectionChanged;
         _itemCounts.Remove(host);
         host.InitialNavigationCompleted -= OnHostInitialNavigationCompleted;
@@ -724,6 +921,32 @@ public sealed class PanelView : UserControl
         PollPath();
     }
 
+    private void OnHostNetworkPathStatusChanged(object? sender, EventArgs e)
+    {
+        if (sender is not ExplorerHost host) return;
+        if (ReferenceEquals(host, _networkRetryHost)
+            && host.NetworkStatus != NetworkPathStatus.Checking)
+            _networkRetryHost = null;
+        if (ReferenceEquals(host, ActiveHost))
+        {
+            UpdateNetworkUnavailableOverlay(host);
+            if (host.NetworkStatus == NetworkPathStatus.Available)
+                RefreshManagedDetailsView(force: true);
+            else
+            {
+                _managedDetailsPath = string.Empty;
+                _managedDetailsListView.CancelDirectoryLoad();
+            }
+            PositionManagedDetailsView();
+        }
+    }
+
+    private void OnHostNavigationPaneVisibilityChanged(object? sender, EventArgs e)
+    {
+        if (ReferenceEquals(sender, ActiveHost))
+            UpdateCommandBarToggles();
+    }
+
     private void OnHostSelectionChanged(object? sender, EventArgs e)
     {
         if (sender is not ExplorerHost host || !ReferenceEquals(host, ActiveHost))
@@ -744,6 +967,18 @@ public sealed class PanelView : UserControl
         ShowShellContextMenu([e.Path], host,
             host.PointToClient(e.ScreenLocation), allowInlineRename: false,
             renameAction: host.BeginNavigationRename);
+    }
+
+    private void OnHostFileContextMenuRequested(
+        object? sender, FileContextMenuEventArgs e)
+    {
+        if (sender is not ExplorerHost host
+            || !ReferenceEquals(host, ActiveHost))
+            return;
+
+        ShowShellContextMenu(e.Paths, host,
+            host.PointToClient(e.ScreenLocation), allowInlineRename: false,
+            renameAction: host.Rename);
     }
 
     private void OnHostQuickLookUnavailable(object? sender, QuickLookFailure failure) =>
@@ -771,7 +1006,7 @@ public sealed class PanelView : UserControl
             RefreshManagedDetailsView(force: true);
     }
 
-    private void OnHostInitialNavigationCompleted(object? sender, EventArgs e)
+    private async void OnHostInitialNavigationCompleted(object? sender, EventArgs e)
     {
         if (!ReferenceEquals(sender, ActiveHost)
             || sender is not ExplorerHost host)
@@ -781,15 +1016,40 @@ public sealed class PanelView : UserControl
         // created its namespace tree. Restore again at the browser-ready boundary
         // so the saved folder's complete ancestor chain is expanded and selected.
         string path = host.GetCurrentPathForPolling();
-        if (!string.IsNullOrWhiteSpace(path))
+        if (!string.IsNullOrWhiteSpace(path)
+            && host.NetworkStatus is not (NetworkPathStatus.Checking
+                or NetworkPathStatus.Unavailable))
         {
             // Mark the browser-ready path as observed before queuing retries so
             // the normal poller cannot cancel the startup restoration.
             _lastActivePath = path;
             host.EnsureColumnHeaders();
-            host.RestoreNavigationPane(path);
+            await host.RestoreNavigationPaneForStartupAsync(path);
         }
 
+        if (IsDisposed || Disposing || !ReferenceEquals(host, ActiveHost))
+            return;
+
+        _initialBrowserNavigationReady = true;
+        InitialNavigationReady?.Invoke(this, EventArgs.Empty);
+        TryRaiseInitialBrowserReady(host);
+    }
+
+    private void TryRaiseInitialBrowserReady(ExplorerHost host)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+        if (_initialBrowserReadyRaised || !_initialBrowserNavigationReady)
+            return;
+
+        string path = host.GetCurrentPathForPolling();
+        bool waitsForManagedDetails = !_managedDetailsOverlaySuppressed
+            && !ExplorerHost.IsNetworkPath(path)
+            && Directory.Exists(path);
+        if (waitsForManagedDetails
+            && !_managedDetailsListView.HasCompletedLoad(path))
+            return;
+
+        _initialBrowserReadyRaised = true;
         InitialBrowserReady?.Invoke(this, EventArgs.Empty);
     }
 
@@ -803,6 +1063,11 @@ public sealed class PanelView : UserControl
         DetachHostEvents(host);
         host.Dispose();
 
+        ActivateAfterTabRemoved(index);
+    }
+
+    private void ActivateAfterTabRemoved(int index)
+    {
         int newActive = _active;
         if (_active == index)
             newActive = Math.Min(index, _hosts.Count - 1);
@@ -813,91 +1078,74 @@ public sealed class PanelView : UserControl
         ActivateTab(newActive);
     }
 
-    private void OnTabMoveRequested(object? sender, TabMoveRequestedEventArgs e)
+    internal void CloseTabAfterExplorerOpened(ExplorerHost sourceTab)
     {
-        if (e.Source.Parent is not PanelView sourcePanel) return;
-        sourcePanel.MoveTabTo(this, e.SourceIndex, e.TargetIndex);
+        ArgumentNullException.ThrowIfNull(sourceTab);
+        if (IsDisposed || Disposing || _hosts.Count <= 1) return;
+
+        // The user may select or duplicate tabs while File Explorer starts.
+        int index = _hosts.IndexOf(sourceTab);
+        if (index >= 0)
+            CloseTab(index);
     }
 
-    private void MoveTabTo(PanelView target, int sourceIndex, int targetInsertionIndex)
+    private void OnTabDropRequested(object? sender, TabDropRequestedEventArgs e)
     {
+        if (e.Source.Parent is not PanelView sourcePanel) return;
+        sourcePanel.HandleTabDrop(this, e.SourceIndex, e.TargetIndex, e.Copy);
+    }
+
+    internal void HandleTabDrop(PanelView target, int sourceIndex,
+        int targetInsertionIndex, bool copy = false)
+    {
+        ArgumentNullException.ThrowIfNull(target);
         if (sourceIndex < 0 || sourceIndex >= _hosts.Count
             || target.IsDisposed || target.Disposing)
             return;
 
-        if (ReferenceEquals(this, target))
+        bool samePane = ReferenceEquals(this, target);
+        int insertionIndex = TabInsertionIndex(
+            samePane, target._hosts.Count, targetInsertionIndex);
+        if (samePane || copy)
         {
-            MoveTabWithinPanel(sourceIndex, targetInsertionIndex);
+            target.AddTabAt(_hosts[sourceIndex].GetCurrentPath(), insertionIndex);
             return;
         }
 
-        ClearFilter();
-        ExplorerHost host = _hosts[sourceIndex];
-        bool movedActiveTab = sourceIndex == _active;
-        host.Visible = false;
-        DetachHostEvents(host);
-        _hostContainer.Controls.Remove(host);
-        _hosts.RemoveAt(sourceIndex);
-
-        if (_hosts.Count == 0)
-        {
-            _active = -1;
+        // A pane always keeps one tab. Moving its last tab leaves it at the
+        // normal starting location.
+        if (_hosts.Count == 1)
             AddHostInternal(@"C:\");
-            ActivateTab(0);
-        }
-        else if (movedActiveTab)
-        {
-            int replacement = Math.Min(sourceIndex, _hosts.Count - 1);
-            _active = -1;
-            ActivateTab(replacement);
-        }
-        else
-        {
-            if (_active > sourceIndex) _active--;
-            RefreshTabBar();
-        }
 
-        target.AcceptTransferredTab(host, targetInsertionIndex);
-    }
-
-    private void MoveTabWithinPanel(int sourceIndex, int insertionIndex)
-    {
-        int targetIndex = ReorderTargetIndex(_hosts.Count, sourceIndex, insertionIndex);
-        if (targetIndex == sourceIndex) return;
-
-        ExplorerHost activeHost = _hosts[_active];
-        ExplorerHost movedHost = _hosts[sourceIndex];
+        ExplorerHost host = _hosts[sourceIndex];
         _hosts.RemoveAt(sourceIndex);
-        _hosts.Insert(targetIndex, movedHost);
-        _active = _hosts.IndexOf(activeHost);
-        RefreshTabBar();
+        _hostContainer.Controls.Remove(host);
+        DetachHostEvents(host);
+        ActivateAfterTabRemoved(sourceIndex);
+
+        target.ClearFilter();
+        target.AttachHostEvents(host);
+        target._hostContainer.Controls.Add(host);
+        target._hosts.Insert(insertionIndex, host);
+        if (target._active >= insertionIndex) target._active++;
+        target.ActivateTab(insertionIndex);
+        target.FocusActiveFileView();
     }
 
-    internal static int ReorderTargetIndex(int tabCount, int sourceIndex, int insertionIndex)
-    {
-        if (tabCount <= 0) return 0;
-        int targetIndex = Math.Clamp(insertionIndex, 0, tabCount);
-        if (targetIndex > sourceIndex) targetIndex--;
-        return Math.Clamp(targetIndex, 0, tabCount - 1);
-    }
+    internal static int TabInsertionIndex(
+        bool samePane, int targetCount, int insertionIndex) =>
+        samePane ? targetCount : Math.Clamp(insertionIndex, 0, targetCount);
 
-    private void AcceptTransferredTab(ExplorerHost host, int insertionIndex)
+    private void AddTabAt(string path, int insertionIndex)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ClearFilter();
-        if (_active >= 0 && _active < _hosts.Count)
-            _hosts[_active].Visible = false;
-
+        AddHostInternal(path);
+        ExplorerHost addedHost = _hosts[^1];
+        _hosts.RemoveAt(_hosts.Count - 1);
         int targetIndex = Math.Clamp(insertionIndex, 0, _hosts.Count);
-        AttachHostEvents(host);
-        host.SetBounds(0, 0,
-            Math.Max(1, _hostContainer.ClientSize.Width),
-            Math.Max(1, _hostContainer.ClientSize.Height));
-        host.Visible = false;
-        _hostContainer.Controls.Add(host);
-        _hosts.Insert(targetIndex, host);
-        host.ApplyTheme();
-
-        _active = -1;
+        _hosts.Insert(targetIndex, addedHost);
+        if (_active >= targetIndex) _active++;
         ActivateTab(targetIndex);
     }
 
@@ -929,6 +1177,8 @@ public sealed class PanelView : UserControl
         host.LaunchExplorer();
         host.SetItemCountMonitoringActive(true);
 
+        UpdateNetworkUnavailableOverlay(host);
+
         _pathBar.SetPath(host.GetCurrentPath());
         RefreshTabBar();
         ApplyManagedDetailsDisplaySettings();
@@ -936,6 +1186,33 @@ public sealed class PanelView : UserControl
         PositionManagedDetailsView();
         RefreshManagedDetailsView(force: true);
         UpdateCommandBarToggles();
+    }
+
+    private void UpdateNetworkUnavailableOverlay(ExplorerHost host)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+        if (!ReferenceEquals(host, ActiveHost)) return;
+
+        NetworkPathStatus status = host.NetworkStatus;
+        bool show = status is NetworkPathStatus.Checking
+            or NetworkPathStatus.Unavailable;
+        _networkUnavailableOverlay.Visible = show;
+        if (!show) return;
+
+        if (_filterBar.Visible)
+            ClearFilter();
+
+        _networkUnavailableMessage.Text = status switch
+        {
+            NetworkPathStatus.Checking when ReferenceEquals(host, _networkRetryHost)
+                => $"Retrying network location…\n{host.GetCurrentPath()}",
+            NetworkPathStatus.Checking => "Checking network location…",
+            _ => $"Network location unavailable.\n{host.GetCurrentPath()}\n\nPress F5 to try again.",
+        };
+        _managedDetailsListView.Visible = false;
+        _filterListView.Visible = false;
+        _explorerCommandBand.Visible = false;
+        _networkUnavailableOverlay.BringToFront();
     }
 
     private void RefreshTabBar()
@@ -1110,6 +1387,8 @@ public sealed class PanelView : UserControl
         if (_filterListView.Visible
             || host is null
             || !host.Visible
+            || host.NetworkStatus is NetworkPathStatus.Checking
+                or NetworkPathStatus.Unavailable
             || !host.TryGetFileViewBounds(out Rectangle fileViewBounds)
             || fileViewBounds.Top <= 0)
         {
@@ -1132,10 +1411,17 @@ public sealed class PanelView : UserControl
     private void PositionManagedDetailsView()
     {
         ExplorerHost? host = ActiveHost;
+        string path = host?.GetCurrentPath() ?? string.Empty;
+        bool isNetworkPath = ExplorerHost.IsNetworkPath(path);
         if (_managedDetailsOverlaySuppressed
             || _filterListView.Visible
             || host is null
-            || !Directory.Exists(host.GetCurrentPath())
+            || (isNetworkPath
+                ? !_sortFoldersWithFilesByName
+                    || host.NetworkStatus != NetworkPathStatus.Available
+                    || !_managedDetailsListView.HasCompletedLoad(path)
+                : !Directory.Exists(path)
+                    || !_managedDetailsListView.HasCompletedLoad(path))
             || !host.TryGetFileViewBounds(out Rectangle nativeBounds))
         {
             _managedDetailsListView.Visible = false;
@@ -1154,7 +1440,17 @@ public sealed class PanelView : UserControl
         if (ActiveHost is not { } host) return;
 
         string path = host.GetCurrentPath();
-        if (!Directory.Exists(path))
+        bool isNetworkPath = ExplorerHost.IsNetworkPath(path);
+        if (isNetworkPath && (!_sortFoldersWithFilesByName
+            || host.NetworkStatus != NetworkPathStatus.Available
+            || _managedDetailsOverlaySuppressed))
+        {
+            _managedDetailsPath = string.Empty;
+            _managedDetailsListView.Visible = false;
+            _managedDetailsListView.CancelDirectoryLoad();
+            return;
+        }
+        if (!isNetworkPath && !Directory.Exists(path))
         {
             _managedDetailsPath = string.Empty;
             return;
@@ -1164,6 +1460,71 @@ public sealed class PanelView : UserControl
             return;
 
         _managedDetailsPath = path;
+        if (isNetworkPath)
+        {
+            _ = ShowNetworkManagedDetailsAsync(host, path);
+            return;
+        }
+
+        ++_networkManagedColumnsGeneration;
+        if (_usingNetworkManagedColumns)
+        {
+            _usingNetworkManagedColumns = false;
+            _managedDetailsListView.SetVisibleColumns(_localManagedColumns);
+        }
+        _managedDetailsListView.ShowDirectory(path, host.HiddenItemsVisible);
+    }
+
+    private async Task ShowNetworkManagedDetailsAsync(
+        ExplorerHost host, string path)
+    {
+        int generation = ++_networkManagedColumnsGeneration;
+        IReadOnlyList<ExplorerShellColumn> nativeColumns;
+        try
+        {
+            nativeColumns = await host.GetVisibleShellColumnsAsync();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Debug(ex, nameof(ShowNetworkManagedDetailsAsync));
+            nativeColumns = [];
+        }
+
+        NativeMethods.SORTCOLUMN? nativeSort = null;
+        if (nativeColumns.Count > 0)
+        {
+            try { nativeSort = await host.GetCurrentShellSortColumnAsync(); }
+            catch (Exception ex)
+            {
+                AppLog.Debug(ex, nameof(ShowNetworkManagedDetailsAsync));
+            }
+        }
+
+        if (generation != _networkManagedColumnsGeneration
+            || IsDisposed
+            || !ReferenceEquals(host, ActiveHost)
+            || !_sortFoldersWithFilesByName
+            || host.NetworkStatus != NetworkPathStatus.Available
+            || !string.Equals(path, host.GetCurrentPath(),
+                StringComparison.OrdinalIgnoreCase))
+            return;
+
+        if (nativeColumns.Count > 0)
+        {
+            IReadOnlyList<ManagedDetailsListView.ColumnDefinition> columns =
+                MapNativeFilterColumns(nativeColumns, host.DeviceDpi);
+            _usingNetworkManagedColumns = true;
+            _managedDetailsListView.SetVisibleColumns(columns);
+            if (nativeSort is { } sort)
+            {
+                int sortIndex = Enumerable.Range(0, nativeColumns.Count)
+                    .FirstOrDefault(index =>
+                        nativeColumns[index].Key.Equals(sort.propkey), -1);
+                if (sortIndex >= 0)
+                    _managedDetailsListView.SetSortState(
+                        columns[sortIndex].Id, sort.direction >= 0);
+            }
+        }
         _managedDetailsListView.ShowDirectory(path, host.HiddenItemsVisible);
     }
 
@@ -1175,6 +1536,12 @@ public sealed class PanelView : UserControl
 
     private void FocusActiveFileView()
     {
+        if (ActiveHost?.NetworkStatus is NetworkPathStatus.Checking
+            or NetworkPathStatus.Unavailable)
+        {
+            _networkUnavailableOverlay.Focus();
+            return;
+        }
         if (IsManagedDetailsViewActive)
             _managedDetailsListView.Focus();
         else
@@ -1213,16 +1580,14 @@ public sealed class PanelView : UserControl
         _filterPrefix.Padding = new Padding(LogicalToDeviceUnits(6), 0, 0, 0);
         _clearBtn.Width       = LogicalToDeviceUnits(28);
 
-        _filterListView.Columns[0].Width = LogicalToDeviceUnits(280);
-        _filterListView.Columns[1].Width = LogicalToDeviceUnits(70);
-        _filterListView.Columns[2].Width = LogicalToDeviceUnits(80);
-        _filterListView.Columns[3].Width = LogicalToDeviceUnits(130);
+        SyncFilterColumnWidths();
     }
 
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
         ScaleFilterControls();
+        UpdateFilterIconSize();
         _explorerCommandBand.ApplyDpi(DeviceDpi);
     }
 
@@ -1230,8 +1595,21 @@ public sealed class PanelView : UserControl
     {
         base.OnDpiChangedAfterParent(e);
         ScaleFilterControls();
+        UpdateFilterIconSize();
         _explorerCommandBand.ApplyDpi(DeviceDpi);
         PositionExplorerCommandBand();
+    }
+
+    private void UpdateFilterIconSize()
+    {
+        int size = LogicalToDeviceUnits(20);
+        if (_filterIcons.ImageSize == new Size(size, size)) return;
+
+        _filterIcons.Images.Clear();
+        _filterIconIndexes.Clear();
+        _filterVirtualItemCache.Clear();
+        _filterIcons.ImageSize = new Size(size, size);
+        _filterListView.Invalidate();
     }
 
     // ── Filter bar ────────────────────────────────────────────────────────────
@@ -1277,7 +1655,12 @@ public sealed class PanelView : UserControl
 
     private void OnFilterTextBoxKeyDown(object? sender, KeyEventArgs e)
     {
-        if (IsFilterQuickLookShortcut(e.KeyCode, e.Modifiers))
+        if (e.KeyCode == Keys.F2 && e.Modifiers == Keys.None)
+        {
+            BeginFilterRename();
+            e.SuppressKeyPress = true;
+        }
+        else if (IsFilterQuickLookShortcut(e.KeyCode, e.Modifiers))
         {
             ExitFilterAndOpenQuickLook();
             e.Handled = true;
@@ -1301,7 +1684,12 @@ public sealed class PanelView : UserControl
 
     private void OnFilterListKeyDown(object? sender, KeyEventArgs e)
     {
-        if (IsFilterQuickLookShortcut(e.KeyCode, e.Modifiers))
+        if (e.KeyCode == Keys.F2 && e.Modifiers == Keys.None)
+        {
+            BeginFilterRename();
+            e.SuppressKeyPress = true;
+        }
+        else if (IsFilterQuickLookShortcut(e.KeyCode, e.Modifiers))
         {
             ExitFilterAndOpenQuickLook();
             e.Handled = true;
@@ -1351,6 +1739,7 @@ public sealed class PanelView : UserControl
 
     private void OnFilterListMouseDown(object? sender, MouseEventArgs e)
     {
+        FocusReceived?.Invoke(this, EventArgs.Empty);
         if (e.Button != MouseButtons.Right) return;
         var hit = _filterListView.HitTest(e.Location);
         if (hit.Item == null) return;
@@ -1359,7 +1748,7 @@ public sealed class PanelView : UserControl
         string? path = GetFilterPathAt(hit.Item.Index);
         if (path == null) return;
         ShowShellContextMenu([path], _filterListView, e.Location,
-            allowInlineRename: false);
+            allowInlineRename: false, renameAction: BeginFilterRename);
     }
 
     private void OnFilterListMouseMove(object? sender, MouseEventArgs e) =>
@@ -1386,9 +1775,71 @@ public sealed class PanelView : UserControl
         e.Graphics.FillRectangle(brush, e.Bounds);
         e.Graphics.DrawLine(pen, e.Bounds.Left, e.Bounds.Bottom - 1,
             e.Bounds.Right, e.Bounds.Bottom - 1);
+        var textBounds = Rectangle.Inflate(e.Bounds, -LogicalToDeviceUnits(6), 0);
+        if (e.ColumnIndex == _filterSortColumn)
+        {
+            int glyphWidth = LogicalToDeviceUnits(8);
+            int glyphHeight = LogicalToDeviceUnits(5);
+            int centerX = e.Bounds.Right - LogicalToDeviceUnits(8) - glyphWidth / 2;
+            int centerY = e.Bounds.Top + e.Bounds.Height / 2;
+            Point[] points = _filterSortAscending
+                ?
+                [
+                    new(centerX, centerY - glyphHeight / 2),
+                    new(centerX - glyphWidth / 2, centerY + glyphHeight / 2),
+                    new(centerX + glyphWidth / 2, centerY + glyphHeight / 2),
+                ]
+                :
+                [
+                    new(centerX - glyphWidth / 2, centerY - glyphHeight / 2),
+                    new(centerX + glyphWidth / 2, centerY - glyphHeight / 2),
+                    new(centerX, centerY + glyphHeight / 2),
+                ];
+            using var glyphBrush = new SolidBrush(ThemeManager.MutedText);
+            e.Graphics.FillPolygon(glyphBrush, points);
+            textBounds.Width = Math.Max(1,
+                textBounds.Width - glyphWidth - LogicalToDeviceUnits(6));
+        }
+
         TextRenderer.DrawText(e.Graphics, e.Header?.Text ?? string.Empty, _filterListView.Font,
-            Rectangle.Inflate(e.Bounds, -LogicalToDeviceUnits(6), 0), ThemeManager.Text,
+            textBounds, ThemeManager.Text,
             GetFilterListTextFlags(e.Header?.TextAlign ?? HorizontalAlignment.Left));
+    }
+
+    private void OnFilterListColumnClick(object? sender, ColumnClickEventArgs e)
+    {
+        if (e.Column < 0 || e.Column >= _filterListView.Columns.Count)
+            return;
+
+        _filterSortAscending = e.Column == _filterSortColumn
+            ? !_filterSortAscending
+            : true;
+        _filterSortColumn = e.Column;
+        ResortFilterItemsPreservingSelection();
+    }
+
+    private void ResortFilterItemsPreservingSelection()
+    {
+
+        var selectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (int index in _filterListView.SelectedIndices)
+        {
+            if (GetFilterPathAt(index) is { } path)
+                selectedPaths.Add(path);
+        }
+        string? focusedPath = GetFilterPathAt(_filterListView.FocusedItem?.Index ?? -1);
+
+        SetFilterItems(_filterItems);
+
+        for (int index = 0; index < _filterItems.Count; index++)
+        {
+            string path = _filterItems[index].FullPath;
+            if (selectedPaths.Contains(path))
+                _filterListView.Items[index].Selected = true;
+            if (string.Equals(path, focusedPath, StringComparison.OrdinalIgnoreCase))
+                _filterListView.Items[index].Focused = true;
+        }
+        _filterListView.Invalidate(true);
     }
 
     private void OnFilterListDrawItem(object? sender, DrawListViewItemEventArgs e)
@@ -1412,8 +1863,23 @@ public sealed class PanelView : UserControl
             : ThemeManager.Text;
         using var brush = new SolidBrush(background);
         e.Graphics.FillRectangle(brush, e.Bounds);
+        Rectangle textBounds = Rectangle.Inflate(e.Bounds,
+            -LogicalToDeviceUnits(6), 0);
+        if (e.ColumnIndex == 0 && item.ImageIndex >= 0
+            && item.ImageIndex < _filterIcons.Images.Count)
+        {
+            int iconX = textBounds.Left;
+            int iconY = e.Bounds.Top
+                + Math.Max(0, (e.Bounds.Height - _filterIcons.ImageSize.Height) / 2);
+            _filterIcons.Draw(e.Graphics, iconX, iconY, item.ImageIndex);
+            int textX = iconX + _filterIcons.ImageSize.Width
+                + LogicalToDeviceUnits(4);
+            textBounds = new Rectangle(textX, e.Bounds.Top,
+                Math.Max(1, e.Bounds.Right - LogicalToDeviceUnits(6) - textX),
+                e.Bounds.Height);
+        }
         TextRenderer.DrawText(e.Graphics, e.SubItem?.Text ?? string.Empty, _filterListView.Font,
-            Rectangle.Inflate(e.Bounds, -LogicalToDeviceUnits(6), 0), text,
+            textBounds, text,
             GetFilterListTextFlags(e.Header?.TextAlign ?? HorizontalAlignment.Left));
 
         if (e.ColumnIndex == _filterListView.Columns.Count - 1
@@ -1445,6 +1911,156 @@ public sealed class PanelView : UserControl
             return GetFilterPathAt(_filterListView.SelectedIndices[0]);
 
         return GetFilterPathAt(_filterListView.FocusedItem?.Index ?? -1);
+    }
+
+    private void BeginFilterRename()
+    {
+        if (!_filterListView.Visible || _filterRenameEditor is not null) return;
+
+        int focusedIndex = _filterListView.FocusedItem?.Index ?? -1;
+        int index = focusedIndex >= 0
+            && _filterListView.Items[focusedIndex].Selected
+                ? focusedIndex
+                : _filterListView.SelectedIndices.Count > 0
+                    ? _filterListView.SelectedIndices[0]
+                    : -1;
+        if (index < 0 || index >= _filterItems.Count) return;
+
+        FilterItemData item = _filterItems[index];
+        _filterListView.Items[index].EnsureVisible();
+        Rectangle row = _filterListView.GetItemRect(index,
+            ItemBoundsPortion.Entire);
+        int inset = LogicalToDeviceUnits(6);
+        int left = row.Left + inset + _filterIcons.ImageSize.Width
+            + LogicalToDeviceUnits(4);
+        int width = Math.Max(LogicalToDeviceUnits(48),
+            _filterListView.Columns[0].Width - (left - row.Left) - inset);
+        var editor = new TextBox
+        {
+            Text = item.Name,
+            Font = _filterListView.Font,
+            BackColor = ThemeManager.Window,
+            ForeColor = ThemeManager.Text,
+            BorderStyle = BorderStyle.FixedSingle,
+            Bounds = new Rectangle(left,
+                row.Top + Math.Max(0,
+                    (row.Height - _filterListView.Font.Height - inset) / 2),
+                width, Math.Max(_filterListView.Font.Height + inset, row.Height)),
+        };
+        _filterRenameEditor = editor;
+        _filterRenamePath = item.FullPath;
+        _filterRenameIsDirectory = item.IsDirectory;
+        editor.KeyDown += OnFilterRenameEditorKeyDown;
+        editor.LostFocus += OnFilterRenameEditorLostFocus;
+        _filterListView.Controls.Add(editor);
+        editor.BringToFront();
+        editor.Focus();
+        editor.Select(0, ManagedDetailsListView.GetInitialRenameSelectionLength(
+            item.Name, item.IsDirectory, fileExtensionsVisible: true));
+    }
+
+    private async void OnFilterRenameEditorKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyCode is not (Keys.Enter or Keys.Escape)) return;
+        e.SuppressKeyPress = true;
+        await FinishFilterRenameAsync(commit: e.KeyCode == Keys.Enter,
+            restoreFocus: true);
+    }
+
+    private async void OnFilterRenameEditorLostFocus(object? sender, EventArgs e) =>
+        await FinishFilterRenameAsync(commit: true, restoreFocus: false);
+
+    private void CancelFilterRename()
+    {
+        if (_filterRenameEditor is not { } editor) return;
+        editor.KeyDown -= OnFilterRenameEditorKeyDown;
+        editor.LostFocus -= OnFilterRenameEditorLostFocus;
+        _filterRenameEditor = null;
+        _filterRenamePath = null;
+        _filterRenameIsDirectory = false;
+        editor.Dispose();
+    }
+
+    private async Task FinishFilterRenameAsync(bool commit, bool restoreFocus)
+    {
+        if (_filterRenameEditor is not { } editor
+            || _filterRenamePath is not { } sourcePath) return;
+
+        string editedName = editor.Text;
+        bool isDirectory = _filterRenameIsDirectory;
+        CancelFilterRename();
+        if (restoreFocus && _filterListView.Visible)
+            _filterListView.Focus();
+        if (!commit) return;
+
+        await RenameFilteredItemAsync(sourcePath, editedName, isDirectory);
+    }
+
+    private async Task RenameFilteredItemAsync(
+        string sourcePath, string editedName, bool isDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+        ArgumentNullException.ThrowIfNull(editedName);
+        try
+        {
+            if (string.IsNullOrWhiteSpace(editedName)
+                || editedName is "." or ".."
+                || editedName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+                throw new ArgumentException("Enter a valid file or folder name.",
+                    nameof(editedName));
+
+            string? folder = Path.GetDirectoryName(sourcePath);
+            if (string.IsNullOrWhiteSpace(folder)) return;
+            string destination = Path.Combine(folder, editedName);
+            if (string.Equals(sourcePath, destination, StringComparison.Ordinal))
+                return;
+
+            await Task.Run(() =>
+            {
+                if (isDirectory)
+                    Directory.Move(sourcePath, destination);
+                else
+                    File.Move(sourcePath, destination);
+            });
+
+            DirectorySnapshotCache.Invalidate(folder);
+            if (IsDisposed || Disposing || !_filterListView.Visible
+                || !string.Equals(ActiveHost?.GetCurrentPath(), folder,
+                    StringComparison.OrdinalIgnoreCase))
+                return;
+
+            string currentFilter = _filterText;
+            await PopulateFilterListAsync(currentFilter);
+            if (IsDisposed || Disposing || !_filterListView.Visible
+                || !string.Equals(ActiveHost?.GetCurrentPath(), folder,
+                    StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(_filterText, currentFilter,
+                    StringComparison.Ordinal))
+                return;
+
+            int selectedIndex = -1;
+            for (int index = 0; index < _filterItems.Count; index++)
+            {
+                if (!string.Equals(_filterItems[index].FullPath,
+                        destination, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                selectedIndex = index;
+                break;
+            }
+            if (selectedIndex >= 0)
+            {
+                ListViewItem selected = _filterListView.Items[selectedIndex];
+                selected.Selected = true;
+                selected.Focused = true;
+            }
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException
+            or UnauthorizedAccessException or NotSupportedException
+            or System.Security.SecurityException)
+        {
+            AppLog.Warn(ex, nameof(RenameFilteredItemAsync),
+                $"Could not rename \"{Path.GetFileName(sourcePath)}\".");
+        }
     }
 
     private string? GetSelectedPathForPreview()
@@ -1506,15 +2122,6 @@ public sealed class PanelView : UserControl
             string? pinnablePath = quickAccessFolder ?? favoriteFile;
             bool isPinned = pinnablePath is not null
                 && QuickAccessService.IsPinned(pinnablePath);
-            string? startPinnablePath = selectedPaths.Length == 1
-                && (File.Exists(selectedPaths[0])
-                    || Directory.Exists(selectedPaths[0]))
-                    ? selectedPaths[0]
-                    : null;
-            bool startPinAvailable = startPinnablePath is not null
-                && StartPinService.IsAvailable();
-            bool isStartPinned = startPinAvailable
-                && StartPinService.IsPinned(startPinnablePath!);
             // Use the complete Windows Shell menu for both files and folders.
             // Keep the application-owned action strip, but leave every command
             // supplied by Windows and installed applications available below it.
@@ -1526,9 +2133,11 @@ public sealed class PanelView : UserControl
                         AddQuickAccessMenuCommand(menu, isPinned);
                     else if (favoriteFile is not null)
                         AddFavoriteMenuCommand(menu, isPinned);
-                    if (startPinAvailable)
-                        AddStartMenuCommand(menu, isStartPinned);
+                    if (selectedPaths.Length == 1)
+                        AddCreateShortcutMenuCommand(menu);
+                    AddOppositePaneMenuCommands(menu);
                     EnsureCopyAsPathShortcutLabels(menu);
+                    ShellContextMenu.OrderCommonFileCommands(menu);
                     PopulateFolderMenuIcons(menu, shellMenuIcons);
                 },
                 executeCustomCommand: commandId =>
@@ -1537,18 +2146,24 @@ public sealed class PanelView : UserControl
                     {
                         QuickAccessMenuCommandId when pinnablePath is not null =>
                             SetQuickAccessPinned(pinnablePath, !isPinned),
-                        StartMenuCommandId when startPinnablePath is not null =>
-                            BeginSetStartPinned(startPinnablePath,
-                                !isStartPinned, ownerWindow),
+                        CreateShortcutMenuCommandId when selectedPaths.Length == 1 =>
+                            RequestCreateShortcut(selectedPaths[0]),
+                        CopyToOtherPaneMenuCommandId =>
+                            RequestTransferToOtherPane(
+                                FileOperationKind.Copy, selectedPaths),
+                        MoveToOtherPaneMenuCommandId =>
+                            RequestTransferToOtherPane(
+                                FileOperationKind.Move, selectedPaths),
                         _ => false,
                     };
                 },
                 executeCanonicalCommand: canonicalVerb =>
-                    ShellContextMenu.CanUseLiveSelectionContext(
-                        selectedPaths.Length, canonicalVerb)
-                    && activeHost is not null
-                    && activeHost.TryInvokeSelectedShellCommand(
-                        selectedPaths[0], canonicalVerb, screen),
+                    TryOpenShellItemInCurrentPane(canonicalVerb, selectedPaths)
+                    || (ShellContextMenu.CanUseLiveSelectionContext(
+                            selectedPaths.Length, canonicalVerb)
+                        && activeHost is not null
+                        && activeHost.TryInvokeSelectedShellCommand(
+                            selectedPaths[0], canonicalVerb, screen)),
                 executeCommandBarCommand: command => ExecuteFileContextCommand(
                     command, selectedPaths, allowInlineRename, renameAction),
                 isCommandBarCommandEnabled: command =>
@@ -1558,6 +2173,47 @@ public sealed class PanelView : UserControl
                 dpi: control.DeviceDpi,
                 queryFlags: NativeMethods.CMF_EXPLORE);
         });
+    }
+
+    internal static bool AddOppositePaneMenuCommands(IntPtr menu)
+    {
+        if (menu == IntPtr.Zero)
+            throw new ArgumentException("A menu handle is required.", nameof(menu));
+
+        // Keep these actions next to Open, where they remain visible even when
+        // Windows and shell extensions supply a long context menu.
+        uint insertAt = NativeMethods.GetMenuItemCount(menu) > 0 ? 1u : 0u;
+        return NativeMethods.InsertMenu(menu, insertAt,
+                   NativeMethods.MF_BYPOSITION | NativeMethods.MF_STRING,
+                   CopyToOtherPaneMenuCommandId, "Copy to opposite pane\tAlt+C")
+            && NativeMethods.InsertMenu(menu, insertAt + 1,
+                   NativeMethods.MF_BYPOSITION | NativeMethods.MF_STRING,
+                   MoveToOtherPaneMenuCommandId, "Move to opposite pane\tAlt+M")
+            && NativeMethods.InsertMenu(menu, insertAt + 2,
+                   NativeMethods.MF_BYPOSITION | NativeMethods.MF_SEPARATOR,
+                   0, string.Empty);
+    }
+
+    private bool TryOpenShellItemInCurrentPane(string canonicalVerb,
+        IReadOnlyList<string> paths)
+    {
+        if (paths.Count != 1
+            || !canonicalVerb.Equals("open", StringComparison.OrdinalIgnoreCase)
+            || !Directory.Exists(paths[0]))
+            return false;
+
+        ActiveHost?.NavigateTo(paths[0]);
+        return true;
+    }
+
+    private bool RequestTransferToOtherPane(FileOperationKind kind,
+        IReadOnlyList<string> paths)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        if (paths.Count == 0) return false;
+        TransferToOtherPaneRequested?.Invoke(this,
+            new OppositePaneTransferRequest(kind, paths.ToArray()));
+        return true;
     }
 
     internal static bool AddQuickAccessMenuCommand(IntPtr menu, bool isPinned)
@@ -1572,11 +2228,60 @@ public sealed class PanelView : UserControl
             QuickAccessService.GetFavoriteCommandLabel(isPinned),
             ["Add to Favorites", "Remove from Favorites"]);
 
-    internal static bool AddStartMenuCommand(IntPtr menu, bool isPinned)
-        => AddPinnedItemMenuCommand(menu,
-            StartMenuCommandId,
-            StartPinService.GetCommandLabel(isPinned),
-            ["Pin to Start", "Unpin from Start"]);
+    internal static bool AddCreateShortcutMenuCommand(IntPtr menu)
+    {
+        if (menu == IntPtr.Zero)
+            throw new ArgumentException("A menu handle is required.", nameof(menu));
+
+        int count = NativeMethods.GetMenuItemCount(menu);
+        int insertPosition = count;
+        var label = new StringBuilder(128);
+        for (int position = count - 1; position >= 0; position--)
+        {
+            label.Clear();
+            if (NativeMethods.GetMenuString(menu, (uint)position, label,
+                    label.Capacity, NativeMethods.MF_BYPOSITION) <= 0)
+                continue;
+            if (ShellContextMenu.NormalizeMenuLabel(label.ToString()).Equals(
+                    "Create shortcut", StringComparison.OrdinalIgnoreCase))
+            {
+                NativeMethods.DeleteMenu(menu, (uint)position,
+                    NativeMethods.MF_BYPOSITION);
+                insertPosition = position;
+            }
+        }
+
+        if (insertPosition == count)
+        {
+            for (int position = 0;
+                 position < NativeMethods.GetMenuItemCount(menu);
+                 position++)
+            {
+                label.Clear();
+                if (NativeMethods.GetMenuString(menu, (uint)position, label,
+                        label.Capacity, NativeMethods.MF_BYPOSITION) > 0
+                    && ShellContextMenu.NormalizeMenuLabel(label.ToString()).Equals(
+                        "Open", StringComparison.OrdinalIgnoreCase))
+                {
+                    insertPosition = position + 1;
+                    break;
+                }
+            }
+        }
+
+        return NativeMethods.InsertMenu(menu, (uint)insertPosition,
+                   NativeMethods.MF_BYPOSITION | NativeMethods.MF_STRING,
+                   CreateShortcutMenuCommandId, "Create shortcut...")
+               || NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING,
+                   CreateShortcutMenuCommandId, "Create shortcut...");
+    }
+
+    private bool RequestCreateShortcut(string targetPath)
+    {
+        BeginInvoke((MethodInvoker)(() =>
+            CreateShortcutRequested?.Invoke(this, targetPath)));
+        return true;
+    }
 
     private static bool AddPinnedItemMenuCommand(IntPtr menu,
         uint commandId, string commandLabel,
@@ -1624,25 +2329,6 @@ public sealed class PanelView : UserControl
         return true;
     }
 
-    private static bool BeginSetStartPinned(
-        string path, bool pin, IntPtr ownerWindow)
-    {
-        _ = SetStartPinnedAsync(path, pin, ownerWindow);
-        return true;
-    }
-
-    private static async Task SetStartPinnedAsync(
-        string path, bool pin, IntPtr ownerWindow)
-    {
-        bool changed = await StartPinService.TrySetPinnedAsync(
-            path, pin, ownerWindow);
-        if (!changed && pin)
-        {
-            AppLog.Debug(nameof(SetStartPinnedAsync),
-                "The Start pin request was cancelled.");
-        }
-    }
-
     private void ShowShellSendToMenu(Control anchor,
         IReadOnlyList<string> paths)
     {
@@ -1670,7 +2356,7 @@ public sealed class PanelView : UserControl
         ArgumentNullException.ThrowIfNull(action);
 
         string[] selectedPaths = paths
-            .Where(static path => File.Exists(path) || Directory.Exists(path))
+            .Where(static path => !string.IsNullOrWhiteSpace(path))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         if (selectedPaths.Length == 0) return;
@@ -1765,7 +2451,7 @@ public sealed class PanelView : UserControl
         }
     }
 
-    private static void PopulateFolderMenuIcons(IntPtr menu,
+    internal static void PopulateFolderMenuIcons(IntPtr menu,
         NativeMenuIconSet icons)
     {
         ArgumentNullException.ThrowIfNull(icons);
@@ -1849,8 +2535,10 @@ public sealed class PanelView : UserControl
             "unpin from start" => CompactMenuGlyph.PinStart,
             "pin to quick access" => CompactMenuGlyph.PinStart,
             "unpin from quick access" => CompactMenuGlyph.PinStart,
-            "add to favorites" => CompactMenuGlyph.PinStart,
-            "remove from favorites" => CompactMenuGlyph.PinStart,
+            "add to favorites" => CompactMenuGlyph.Favorite,
+            "remove from favorites" => CompactMenuGlyph.Favorite,
+            "copy to opposite pane" => CompactMenuGlyph.CopyToOtherPane,
+            "move to opposite pane" => CompactMenuGlyph.MoveToOtherPane,
             "copy as path" => CompactMenuGlyph.CopyPath,
             "create shortcut" => CompactMenuGlyph.CreateShortcut,
             "properties" => CompactMenuGlyph.Properties,
@@ -1865,6 +2553,8 @@ public sealed class PanelView : UserControl
             or "unpin from quick access"
             or "add to favorites"
             or "remove from favorites"
+            or "copy to opposite pane"
+            or "move to opposite pane"
             or "copy as path"
             or "create shortcut"
             or "properties";
@@ -2001,8 +2691,14 @@ public sealed class PanelView : UserControl
                 new Dictionary<int, ShellNewMenu.ShellNewItem>();
             ShellContextMenu.Show(contextMenu, control.Handle, screen,
                 customizeMenu: menu => shellNewCommands = ShellNewMenu.Populate(menu),
-                executeCustomCommand: commandId => ShellNewMenu.TryExecute(commandId,
-                    shellNewCommands, folderPath));
+                executeCustomCommand: commandId =>
+                {
+                    bool handled = ShellNewMenu.TryExecute(commandId,
+                        shellNewCommands, folderPath, out string? createdPath);
+                    if (createdPath is not null)
+                        _managedDetailsListView.BeginRenameCreatedItem(createdPath);
+                    return handled;
+                });
         }
         catch (Exception ex)
         {
@@ -2195,8 +2891,9 @@ public sealed class PanelView : UserControl
                 }
                 else
                 {
-                    ShellNewMenu.TryExecute(newItem, CurrentPath());
-                    ScheduleManagedDetailsRefresh();
+                    if (ShellNewMenu.TryExecute(newItem, CurrentPath(),
+                            out string? createdPath) && createdPath is not null)
+                        _managedDetailsListView.BeginRenameCreatedItem(createdPath);
                 }
             });
             item.Image = CreateShellMenuIcon(newItem.Extension,
@@ -2543,11 +3240,7 @@ public sealed class PanelView : UserControl
                 _managedDetailsListView.SelectAllItems();
                 return true;
             case CommandBar.Cmd.Properties:
-                if (_managedDetailsListView.SelectedPath is { } path)
-                {
-                    host?.SelectItemPath(path);
-                    host?.ShowProperties();
-                }
+                ShowSelectedProperties(host);
                 return true;
             default:
                 return false;
@@ -2607,6 +3300,7 @@ public sealed class PanelView : UserControl
 
     private void ClearFilter()
     {
+        CancelFilterRename();
         _filterDebounce.Stop();
         _filterCancellation?.Cancel();
         _filterText = "";
@@ -2618,6 +3312,8 @@ public sealed class PanelView : UserControl
         _filterBar.Visible      = false;
         _filterListView.Visible = false;
         SetFilterItems([]);
+        _filterUsesNativeColumns = false;
+        _nativeFilterColumnsLoaded = false;
         if (ActiveHost != null) ActiveHost.IsFiltering = false;
         PositionExplorerCommandBand();
         PositionManagedDetailsView();
@@ -2626,11 +3322,96 @@ public sealed class PanelView : UserControl
 
     private void ShowFilterOverlay()
     {
+        if (!_filterListView.Visible)
+        {
+            _filterUsesNativeColumns = !_managedDetailsListView.Visible;
+            _nativeFilterColumnsLoaded = false;
+        }
+        int horizontalOrigin = !_filterUsesNativeColumns
+            && _managedDetailsListView.Visible
+            ? GetListHorizontalOrigin(_managedDetailsListView)
+            : 0;
+        if (!_filterUsesNativeColumns)
+            SyncFilterColumns();
         if (!_filterBar.Visible)
             _filterBar.Visible = true;  // WinForms resizes _hostContainer; Resize fires ResizeAllHosts.
         _filterListView.BringToFront(); // above ExplorerHosts inside _hostContainer
         _filterListView.Visible = true;
         _managedDetailsListView.Visible = false;
+        if (horizontalOrigin > 0 && _filterListView.IsHandleCreated)
+            NativeMethods.SendMessageI(_filterListView.Handle,
+                NativeMethods.LVM_SCROLL, new IntPtr(horizontalOrigin), IntPtr.Zero);
+    }
+
+    private static int GetListHorizontalOrigin(ListView list)
+    {
+        if (!list.IsHandleCreated) return 0;
+        return Math.Max(0, NativeMethods.GetScrollPos(list.Handle,
+            NativeMethods.SB_HORZ));
+    }
+
+    private async void OnManagedDetailsVisibleColumnsChanged(object? sender,
+        EventArgs e)
+    {
+        if (ActiveHost is { } host
+            && !ExplorerHost.IsNetworkPath(host.GetCurrentPath()))
+            _localManagedColumns = _managedDetailsListView.VisibleColumnDefinitions;
+        if (_filterUsesNativeColumns && _filterListView.Visible) return;
+        SyncFilterColumns();
+        if (_filterListView.Visible && !string.IsNullOrEmpty(_filterText))
+            await PopulateFilterListAsync(_filterText);
+    }
+
+    private void SyncFilterColumns()
+    {
+        ApplyFilterColumns(_managedDetailsListView.VisibleColumnDefinitions);
+    }
+
+    private void ApplyFilterColumns(
+        IReadOnlyList<ManagedDetailsListView.ColumnDefinition> columns,
+        bool cancelPendingFilter = true)
+    {
+        ArgumentNullException.ThrowIfNull(columns);
+        bool sameColumns = _filterColumns.Count == columns.Count
+            && !_filterColumns.Where((column, index) =>
+                column.Id != columns[index].Id).Any();
+        if (sameColumns)
+        {
+            _filterColumns = columns;
+            SyncFilterColumnWidths();
+            return;
+        }
+
+        string sortColumnId = _filterSortColumn < _filterColumns.Count
+            ? _filterColumns[_filterSortColumn].Id
+            : "Name";
+        if (cancelPendingFilter)
+            _filterCancellation?.Cancel();
+        SetFilterItems([]);
+        _filterColumns = columns;
+        _filterListView.Columns.Clear();
+        foreach (ManagedDetailsListView.ColumnDefinition column in columns)
+            _filterListView.Columns.Add(column.Text,
+                LogicalToDeviceUnits(column.PreferredWidth), column.Alignment);
+        SyncFilterColumnWidths();
+        _filterSortColumn = Enumerable.Range(0, columns.Count)
+            .FirstOrDefault(index => columns[index].Id == sortColumnId, -1);
+        if (_filterSortColumn >= 0) return;
+        _filterSortColumn = 0;
+        _filterSortAscending = true;
+    }
+
+    private void SyncFilterColumnWidths()
+    {
+        for (int index = 0; index < _filterColumns.Count; index++)
+        {
+            int width = !_filterUsesNativeColumns
+                && _managedDetailsListView.Columns.Count == _filterColumns.Count
+                    ? _managedDetailsListView.Columns[index].Width
+                    : LogicalToDeviceUnits(_filterColumns[index].PreferredWidth);
+            if (width > 0 && _filterListView.Columns[index].Width != width)
+                _filterListView.Columns[index].Width = width;
+        }
     }
 
     private void RestartFilterDebounce()
@@ -2653,11 +3434,36 @@ public sealed class PanelView : UserControl
         List<FilterItemData> items;
         try
         {
+            if (_filterUsesNativeColumns && !_nativeFilterColumnsLoaded)
+            {
+                IReadOnlyList<ExplorerShellColumn> nativeColumns =
+                    await host.GetVisibleShellColumnsAsync(cancellation.Token);
+                if (cancellation.IsCancellationRequested || IsDisposed
+                    || host != ActiveHost
+                    || !string.Equals(filterText, _filterText,
+                        StringComparison.Ordinal))
+                    return;
+
+                if (nativeColumns.Count > 0)
+                    ApplyFilterColumns(MapNativeFilterColumns(
+                        nativeColumns, host.DeviceDpi), cancelPendingFilter: false);
+                else
+                    AppLog.Warn(null, nameof(PopulateFilterListAsync),
+                        "The native file view did not provide its visible columns.");
+                _nativeFilterColumnsLoaded = true;
+            }
+
+            IReadOnlyList<ManagedDetailsListView.ColumnDefinition> columns =
+                _filterColumns;
             DirectorySnapshot snapshot = await DirectorySnapshotCache.GetAsync(
                 folder, cancellation.Token);
             items = await Task.Run(
-                () => BuildFilterItems(snapshot, filterText, cancellation.Token),
+                () => BuildFilterItems(snapshot, filterText, columns,
+                    cancellation.Token),
                 cancellation.Token);
+
+            if (!ReferenceEquals(columns, _filterColumns))
+                return;
         }
         catch (OperationCanceledException)
         {
@@ -2685,25 +3491,109 @@ public sealed class PanelView : UserControl
         SetFilterItems(items);
     }
 
+    private static IReadOnlyList<ManagedDetailsListView.ColumnDefinition>
+        MapNativeFilterColumns(IReadOnlyList<ExplorerShellColumn> nativeColumns,
+            int deviceDpi)
+    {
+        ArgumentNullException.ThrowIfNull(nativeColumns);
+        int dpi = Math.Max(96, deviceDpi);
+        return nativeColumns.Select(column =>
+        {
+            string id = column.CanonicalName switch
+            {
+                "System.ItemNameDisplay" or "System.FileName" => "Name",
+                "System.DateModified" => "DateModified",
+                "System.ItemTypeText" or "System.ItemType" => "Type",
+                "System.Size" => "Size",
+                "System.DateCreated" => "DateCreated",
+                "System.FileAttributes" => "Attributes",
+                "System.FileExtension" => "Extension",
+                "System.ItemPathDisplay" => "FullPath",
+                _ => string.IsNullOrWhiteSpace(column.CanonicalName)
+                    ? $"{column.Key.fmtid:N}:{column.Key.pid}"
+                    : column.CanonicalName,
+            };
+            int logicalWidth = Math.Max(48,
+                (int)Math.Round(Math.Max(1, column.Width) * 96.0 / dpi));
+            return new ManagedDetailsListView.ColumnDefinition(
+                id, column.DisplayName, logicalWidth, logicalWidth,
+                id == "Size" ? HorizontalAlignment.Right
+                    : HorizontalAlignment.Left,
+                id is "Name" or "DateModified" or "Type" or "Size"
+                    or "DateCreated" or "Attributes" or "Extension"
+                    or "FullPath" ? null : column.Key);
+        }).ToArray();
+    }
+
     private void SetFilterItems(IReadOnlyList<FilterItemData> items)
     {
         ArgumentNullException.ThrowIfNull(items);
+        CancelFilterRename();
+        IReadOnlyList<FilterItemData> sortedItems = SortFilterItems(items);
 
         _filterListView.BeginUpdate();
         try
         {
             _hoveredFilterItemIndex = -1;
-            _filterListView.VirtualListSize = 0;
-            _filterItems = items;
+            // Clear native selection and focus while their old virtual indexes
+            // still exist. Shrinking the list first can make a queued WinForms
+            // notification request an item beyond the new VirtualListSize.
+            _filterListView.SelectedIndices.Clear();
+            if (_filterListView.FocusedItem is { } focusedItem)
+                focusedItem.Focused = false;
+            _filterItems = sortedItems;
             _filterVirtualItemCache.Clear();
-            _filterListView.VirtualListSize = items.Count;
+            _filterListView.VirtualListSize = sortedItems.Count;
         }
         finally
         {
             _filterListView.EndUpdate();
         }
-
+        _filterListView.Invalidate();
     }
+
+    private IReadOnlyList<FilterItemData> SortFilterItems(
+        IReadOnlyList<FilterItemData> items)
+    {
+        if (items.Count <= 1 || _filterColumns.Count == 0)
+            return items;
+
+        string columnId = _filterColumns[_filterSortColumn].Id;
+        int columnIndex = _filterSortColumn;
+        var previousOrder = new Dictionary<string, int>(
+            StringComparer.OrdinalIgnoreCase);
+        if (columnId != "Name")
+        {
+            for (int index = 0; index < _filterItems.Count; index++)
+                previousOrder.TryAdd(_filterItems[index].FullPath, index);
+        }
+        var comparer = Comparer<FilterItemData>.Create((left, right) =>
+        {
+            int comparison = columnId switch
+            {
+                "Name" => CompareText(left.Name, right.Name),
+                "Type" => CompareText(left.Type, right.Type),
+                "Size" => left.Length.CompareTo(right.Length),
+                "DateModified" => left.LastWriteTime.CompareTo(right.LastWriteTime),
+                "DateCreated" => left.CreationTime.CompareTo(right.CreationTime),
+                "Attributes" => left.Attributes.CompareTo(right.Attributes),
+                "Extension" => CompareText(left.Extension, right.Extension),
+                "FullPath" => CompareText(left.FullPath, right.FullPath),
+                _ => CompareText(left.DisplayValues[columnIndex],
+                    right.DisplayValues[columnIndex]),
+            };
+            return _filterSortAscending ? comparison : -Math.Sign(comparison);
+        });
+        bool groupFoldersFirst = columnId != "Name"
+            || !_sortFoldersWithFilesByName;
+        return items.OrderBy(item => groupFoldersFirst && !item.IsDirectory ? 1 : 0)
+            .ThenBy(static item => item, comparer)
+            .ThenBy(item => previousOrder.GetValueOrDefault(
+                item.FullPath, int.MaxValue)).ToArray();
+    }
+
+    private static int CompareText(string left, string right) =>
+        string.Compare(left, right, StringComparison.OrdinalIgnoreCase);
 
     private void OnRetrieveFilterItem(object? sender, RetrieveVirtualItemEventArgs e)
     {
@@ -2716,11 +3606,63 @@ public sealed class PanelView : UserControl
         e.Item = _filterVirtualItemCache.GetOrCreate(e.ItemIndex, () =>
         {
             FilterItemData item = _filterItems[e.ItemIndex];
-            return new ListViewItem([item.Name, item.Type, item.Size, item.Modified])
+            return new ListViewItem(item.DisplayValues)
             {
                 Tag = item.FullPath,
+                ImageIndex = GetFilterIconIndex(item),
             };
         });
+    }
+
+    private int GetFilterIconIndex(FilterItemData item)
+    {
+        string extension = Path.GetExtension(item.Name);
+        string key = item.IsDirectory ? "<folder>"
+            : string.IsNullOrEmpty(extension) ? "<file>" : extension;
+        if (_filterIconIndexes.TryGetValue(key, out int existing))
+            return existing;
+
+        var info = new NativeMethods.SHFILEINFOW();
+        uint attributes = item.IsDirectory
+            ? NativeMethods.FILE_ATTRIBUTE_DIRECTORY
+            : NativeMethods.FILE_ATTRIBUTE_NORMAL;
+        int iconIndex;
+        if (NativeMethods.SHGetFileInfoW(item.Name, attributes, ref info,
+                (uint)Marshal.SizeOf<NativeMethods.SHFILEINFOW>(),
+                NativeMethods.SHGFI_ICON | NativeMethods.SHGFI_SMALLICON
+                | NativeMethods.SHGFI_USEFILEATTRIBUTES) == IntPtr.Zero
+            || info.hIcon == IntPtr.Zero)
+        {
+            using Bitmap fallback = SystemIcons.Application.ToBitmap();
+            _filterIcons.Images.Add(fallback);
+            iconIndex = _filterIcons.Images.Count - 1;
+        }
+        else
+        {
+            try
+            {
+                using Icon icon = Icon.FromHandle(info.hIcon);
+                using Bitmap bitmap = icon.ToBitmap();
+                _filterIcons.Images.Add(bitmap);
+                iconIndex = _filterIcons.Images.Count - 1;
+            }
+            catch (Exception ex) when (ex is ArgumentException
+                or ExternalException)
+            {
+                AppLog.Debug(ex, nameof(GetFilterIconIndex),
+                    $"Could not load the icon for \"{item.Name}\".");
+                using Bitmap fallback = SystemIcons.Application.ToBitmap();
+                _filterIcons.Images.Add(fallback);
+                iconIndex = _filterIcons.Images.Count - 1;
+            }
+            finally
+            {
+                NativeMethods.DestroyIcon(info.hIcon);
+            }
+        }
+
+        _filterIconIndexes[key] = iconIndex;
+        return iconIndex;
     }
 
     private string? GetFilterPathAt(int index) => index >= 0 && index < _filterItems.Count
@@ -2730,42 +3672,42 @@ public sealed class PanelView : UserControl
     private static List<FilterItemData> BuildFilterItems(
         DirectorySnapshot snapshot,
         string filterText,
+        IReadOnlyList<ManagedDetailsListView.ColumnDefinition> columns,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(columns);
         var items = new List<FilterItemData>();
         var comparison = StringComparison.OrdinalIgnoreCase;
 
         foreach (DirectorySnapshotItem child in snapshot.Items
-                     .Where(static item => item.IsDirectory)
                      .Where(item => item.Name.Contains(filterText, comparison))
-                     .OrderBy(static item => item.Name, StringComparer.OrdinalIgnoreCase))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            items.Add(new FilterItemData(
-                child.Name, "Folder", "", child.LastWriteTime.ToString("g"), child.FullPath));
-        }
-
-        foreach (DirectorySnapshotItem child in snapshot.Items
-                     .Where(static item => !item.IsDirectory)
-                     .Where(item => item.Name.Contains(filterText, comparison))
-                     .OrderBy(static item => item.Name, StringComparer.OrdinalIgnoreCase))
+                     .OrderBy(static item => item.IsDirectory ? 0 : 1)
+                     .ThenBy(static item => item.Name,
+                         StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
             string extension = child.Extension.TrimStart('.').ToUpperInvariant();
             items.Add(new FilterItemData(
-                child.Name,
-                extension.Length > 0 ? $"{extension} file" : "File",
-                FormatFileSize(child.Length),
-                child.LastWriteTime.ToString("g"),
-                child.FullPath));
+                child.Name, child.IsDirectory ? "Folder"
+                    : extension.Length > 0 ? $"{extension} file" : "File",
+                child.FullPath,
+                child.IsDirectory,
+                child.Length,
+                child.LastWriteTime,
+                child.CreationTime,
+                child.Attributes,
+                child.Extension,
+                ManagedDetailsListView.GetFilterDisplayValues(child, columns)));
         }
 
         return items;
     }
 
     private readonly record struct FilterItemData(
-        string Name, string Type, string Size, string Modified, string FullPath);
+        string Name, string Type, string FullPath, bool IsDirectory,
+        long Length, DateTime LastWriteTime, DateTime CreationTime,
+        FileAttributes Attributes, string Extension, string[] DisplayValues);
 
     private sealed class FilterListView : ListView
     {
@@ -2774,14 +3716,6 @@ public sealed class PanelView : UserControl
             DoubleBuffered = true;
             OwnerDraw = true;
         }
-    }
-
-    private static string FormatFileSize(long bytes)
-    {
-        if (bytes < 1024)            return $"{bytes} B";
-        if (bytes < 1024 * 1024)     return $"{bytes / 1024.0:F1} KB";
-        if (bytes < 1024L*1024*1024) return $"{bytes / (1024.0*1024):F1} MB";
-        return $"{bytes / (1024.0*1024*1024):F2} GB";
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -2833,9 +3767,55 @@ public sealed class PanelView : UserControl
 
     internal void ExecuteCommand(CommandBar.Cmd cmd) => OnCommandIssued(this, cmd);
 
+    private void ShowSelectedProperties(ExplorerHost? host)
+    {
+        if (_filterListView.Visible)
+        {
+            if (GetSelectedFilterPath() is { } path)
+                ShowPathProperties([path]);
+            return;
+        }
+
+        if (IsManagedDetailsViewActive)
+        {
+            ShowPathProperties(_managedDetailsListView.SelectedPaths);
+            return;
+        }
+
+        host?.ShowProperties();
+    }
+
+    private void ShowPathProperties(IReadOnlyList<string> paths)
+    {
+        UseShellItemContextMenu(paths, this, (contextMenu, _) =>
+        {
+            IntPtr ownerWindow = FindForm()?.Handle ?? Handle;
+            if (!ShellContextMenu.TryInvokeNamedShellCommand(
+                    contextMenu, ownerWindow, prepareExtensionVerbs: true,
+                    verbs: ["properties"]))
+                AppLog.Warn(null, nameof(ShowPathProperties),
+                    "Windows did not open Properties for the selected item(s).");
+        });
+    }
+
     private void OnCommandIssued(object? sender, CommandBar.Cmd cmd)
     {
         var host = ActiveHost;
+        if (cmd is CommandBar.Cmd.CopyToOtherPane
+            or CommandBar.Cmd.MoveToOtherPane)
+        {
+            if (host is not null)
+                RequestTransferToOtherPane(
+                    cmd == CommandBar.Cmd.CopyToOtherPane
+                        ? FileOperationKind.Copy : FileOperationKind.Move,
+                    GetSelectedPaths(host));
+            return;
+        }
+        if (cmd == CommandBar.Cmd.Rename && _filterListView.Visible)
+        {
+            BeginFilterRename();
+            return;
+        }
         if (TryExecuteManagedDetailsCommand(cmd, host)) return;
 
         switch (cmd)
@@ -2850,8 +3830,10 @@ public sealed class PanelView : UserControl
             case CommandBar.Cmd.Rename:         host?.Rename();           break;
             case CommandBar.Cmd.Delete:         host?.Delete();           break;
             case CommandBar.Cmd.SelectAll:      host?.SelectAll();        break;
-            case CommandBar.Cmd.Properties:     host?.ShowProperties();   break;
+            case CommandBar.Cmd.Properties:     ShowSelectedProperties(host); break;
+            case CommandBar.Cmd.EditAddressBar: _pathBar.EditAddress();   break;
             case CommandBar.Cmd.FolderOptions:  OpenFolderOptions();      break;
+            case CommandBar.Cmd.Settings:       SettingsRequested?.Invoke(this, EventArgs.Empty); break;
             case CommandBar.Cmd.Help:           _ = OpenHelpPageAsync();  break;
             case CommandBar.Cmd.About:          ShowAbout();              break;
             case CommandBar.Cmd.ViewLog:        AppLog.OpenLogFile();                        break;
@@ -2866,6 +3848,9 @@ public sealed class PanelView : UserControl
             case CommandBar.Cmd.Refresh:        RefreshCurrentFolder();                           break;
             case CommandBar.Cmd.MirrorToOther:
                 MirrorToOtherRequested?.Invoke(this, CurrentPath());
+                break;
+            case CommandBar.Cmd.ComparePanes:
+                ComparePanesRequested?.Invoke(this, EventArgs.Empty);
                 break;
 
             // View modes
@@ -2949,14 +3934,7 @@ public sealed class PanelView : UserControl
     }
 
     private static void OpenFolderOptions()
-    {
-        try { Process.Start("rundll32.exe", "shell32.dll,Options_RunDLL 0"); }
-        catch (Exception ex)
-        {
-            AppLog.Warn(ex, nameof(OpenFolderOptions),
-                "Could not open Windows Folder Options.");
-        }
-    }
+        => ExplorerOptions.Open();
 
     private async Task OpenHelpPageAsync(CancellationToken cancellationToken = default)
     {

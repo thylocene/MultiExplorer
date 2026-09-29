@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "d9W8X82OJnw=",
+  "dgSpecHash": "kFaK15HRBa0=",
   "success": true,
   "projectFilePath": "C:\\Projects\\MultiExplorer\\MultiExplorer.OperationHost\\MultiExplorer.OperationHost.csproj",
   "expectedPackageFiles": [
@@ -9,15 +9,5 @@
     "C:\\Users\\piscda\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.31\\microsoft.aspnetcore.app.runtime.win-x64.8.0.31.nupkg.sha512",
     "C:\\Users\\piscda\\.nuget\\packages\\microsoft.netcore.app.crossgen2.win-x64\\8.0.31\\microsoft.netcore.app.crossgen2.win-x64.8.0.31.nupkg.sha512"
   ],
-  "logs": [
-    {
-      "code": "NU1900",
-      "level": "Warning",
-      "message": "Error occurred while getting package vulnerability data: Unable to load the service index for source https://api.nuget.org/v3/index.json.",
-      "projectPath": "C:\\Projects\\MultiExplorer\\MultiExplorer.OperationHost\\MultiExplorer.OperationHost.csproj",
-      "warningLevel": 1,
-      "filePath": "C:\\Projects\\MultiExplorer\\MultiExplorer.OperationHost\\MultiExplorer.OperationHost.csproj",
-      "targetGraphs": []
-    }
-  ]
+  "logs": []
 }

@@ -1,9 +1,207 @@
-MultiExplorer 1.6.5
-Release date: 20 September 2026
+MultiExplorer 1.7.9
+Release date: 28 September 2026
 
 Highlights
 ----------
 
+- Copy or move selected files and folders to the opposite pane with Alt+C or
+  Alt+M, or use the file context menu.
+- Pinned Quick Access folders open in the active MultiExplorer pane.
+- Fixed network file views after showing or hiding the navigation pane and
+  after switching between light and dark mode.
+- File context menu icons use consistent, neutral colors in both themes.
+- New folders and documents open the inline rename editor. The original name
+  no longer appears beneath the editor while typing.
+- The installer includes English resources only.
+
+
+MultiExplorer 1.7.8
+Release date: 27 September 2026
+
+Highlights
+----------
+
+- Type to filter files and folders, then press F2 to rename a selected result.
+- Filtered results show file and folder icons and support sorting by column header.
+- Filtered results retain every visible Details column, including custom columns
+  such as Date created and Authors, in the same order as the active file view.
+  This also applies to network tabs that use the Windows file view.
+- Clearing a filter no longer causes an out-of-range list-view exception.
+
+
+MultiExplorer 1.7.7
+Release date: 26 September 2026
+
+Highlights
+----------
+
+- Unavailable network tabs keep their paths without hanging startup. Press F5 to
+  retry; a message remains visible while the retry is running.
+- Hold Ctrl while dragging a tab to the other pane to copy it instead of moving
+  it. The drag preview shows which action will occur.
+- Help now explains where settings.json is stored and how missing or damaged
+  settings files are handled.
+
+
+MultiExplorer 1.7.6
+Release date: 25 September 2026
+
+Highlights
+----------
+
+- Dragging a tab to the other pane now moves the existing tab, preserving its
+  navigation and view state. Dragging within the same pane still duplicates it.
+- Moving the only tab in a pane leaves a new C:\ tab there. Dragging a tab to the
+  desktop retains its previous behavior.
+- Fixed a thread-safety issue when starting file deletion with the Delete key.
+
+
+MultiExplorer 1.7.5
+Release date: 25 September 2026
+
+Highlights
+----------
+
+- Added pane comparison with a review step for selected copy and delete actions.
+  The comparison and review dialogs scale with display DPI and use rounded buttons.
+- Added icons to the Show and Compare panes menu items.
+- Added Create shortcut to single-item file and folder context menus. It can
+  create a .lnk shortcut, file hard link, or symlink in the current folder,
+  parent folder, Desktop, or other browser pane.
+
+
+MultiExplorer 1.7.4
+Release date: 25 September 2026
+
+Highlights
+----------
+
+- Prevented repeated debug messages when a UNC folder is not represented in the
+  Windows navigation tree, and skipped redundant restoration when it is selected.
+
+
+MultiExplorer 1.7.3
+Release date: 25 September 2026
+
+Highlights
+----------
+
+- Drag a tab outside MultiExplorer to open its folder in Windows File Explorer
+  even when it is the pane's only tab; the last tab remains in MultiExplorer.
+- Restored Details-view values that could disappear beneath a file drag image.
+- Network-path file drags now move by default; hold Ctrl to copy. Drags between
+  different local drives still copy by default.
+- Improved file-operation worker state-file access and startup diagnostics for
+  machines where copy, move, or delete operations were denied.
+
+
+MultiExplorer 1.7.2
+Release date: 25 September 2026
+
+Highlights
+----------
+
+- Made path-bar chevrons easier to see while keeping their final size balanced
+  with the folder text, and added padding to their hover highlight.
+- Prevented a native crash when dragging a tab within its pane by keeping
+  Explorer shell focus activation on its owning thread.
+- Kept status-bar warnings visible for 30 seconds. Errors remain until dismissed
+  and can no longer be replaced by a later warning or cleared by a theme refresh.
+
+
+MultiExplorer 1.7.1
+Release date: 25 September 2026
+
+Highlights
+----------
+- Drag a tab anywhere within its current pane to duplicate it, just like Ctrl+T,
+  or into the other pane to duplicate it there.
+- Optionally drop a tab outside MultiExplorer to open its folder in Windows File
+  Explorer on the target screen. The source tab closes unless it is the pane's
+  last tab, in which case the outside drop is blocked.
+- Added floating drag previews describing the available action, including
+  "Duplicate in current pane", and standard copy-drag cursor feedback.
+
+
+MultiExplorer 1.7.0
+Release date: 24 September 2026
+
+Highlights
+----------
+- Prevented expired or stale destructive file-operation requests from running
+  later, with race-safe acknowledgement when the operation host starts.
+- Restored standard cross-volume drag behaviour so an unmodified drag copies by
+  default while explicit keyboard modifiers continue to be honoured.
+- Removed the problematic Pin to Start and Unpin from Start entries from file and
+  folder context menus.
+- Kept the non-modal file-operation window and native Shell prompts persistently
+  topmost without stealing focus from the active application.
+- Reasserted the file-operation window's topmost position after later z-order
+  changes while keeping owned Shell prompts in front of it.
+- Reported Shell cleanup and native visual-integration failures through app.log
+  and the status bar instead of silently swallowing them.
+- Removed unnecessary package-identity diagnostics that could produce misleading
+  Start-tile availability messages in app.log.
+- Added a light lime background to the active tab while retaining its blue accent
+  bar, and reduced the startup loading indicator to a thin line.
+- Avoided unnecessary recursive measurement before delete operations and
+  same-volume moves while retaining exact progress data for copy operations.
+- Reduced navigation-pane latency by avoiding file-selection queries during tree
+  input, suppressing duplicate fallback navigation, and deferring tree upkeep.
+
+
+MultiExplorer 1.6.9
+Release date: 24 September 2026
+
+Highlights
+----------
+
+- Added a consolidated, DPI-aware Settings dialog for Explorer options,
+  appearance, the global hotkey, automatic startup, minimize-to-tray behaviour,
+  QuickLook integration, and file/folder deletion confirmation.
+- Added optional confirmation before files and folders are moved to the Recycle
+  Bin or deleted permanently.
+- Made Compact the default file and folder view, with Name ascending as the
+  default sort order.
+- File rename now initially selects only the base name and leaves the extension
+  unselected.
+- Smoothed the file-operation performance graph and made its speed-label
+  background transparent.
+- File-operation rates now use a two-second rolling average for steadier copy,
+  move, and deletion feedback.
+- Kept overwrite and conflict prompts in front of the operation window.
+- Improved network operation failures so the underlying error is shown instead
+  of an operation silently failing.
+- Improved setup feedback with accurate progress stages and more reliable
+  shutdown of MultiExplorer and its background operation host during upgrades.
+- Added a Release notes button to the setup Welcome page.
+- Added a DPI-aware startup loading window that keeps the main window hidden
+  until both panes are ready, and optimized Shell initialization to reduce the
+  loading time without exposing incomplete navigation or file views.
+
+
+MultiExplorer 1.6.8
+Release date: 23 September 2026
+
+Highlights
+----------
+
+- Consolidated concurrent copy, move and delete jobs into one non-modal,
+  always-on-top operation window with independently stacked operations.
+- Rebuilt file-operation progress rows to closely match File Explorer, including
+  completion-shaded performance graphs, current speed, remaining time and size,
+  current item, title-bar percentage, and expandable details.
+- Added DPI-aware vector pause, resume and cancel controls for each operation,
+  with smooth graph animation and distinct paused-state presentation.
+- Copy and move progress now reports recursive file-and-folder totals and estimated
+  transfer speed; delete progress reports whole items per second.
+- Added per-operation pause and resume support and made displayed progress monotonic
+  when Windows revises its underlying work estimate.
+- Permanent deletion with Shift+Delete no longer shows a redundant confirmation.
+- File-operation windows now open on the same monitor as MultiExplorer and retain
+  correct per-monitor DPI scaling.
+- Added hybrid filesystem refresh handling so changes made outside MultiExplorer
+  appear promptly while a periodic fallback recovers missed notifications.
 - Added separate file and folder totals to the status bar for each pane's active tab.
 - Local item totals now update from filesystem notifications, with debouncing and a
   single-flight worker to keep large folders responsive during bursts of changes.
@@ -79,13 +277,35 @@ Highlights
   rename, while Ctrl+N and Ctrl+T open a new tab.
 - Setup now detects foreground and tray-hidden MultiExplorer instances before the
   progress phase and offers to close the running instance before continuing.
+- Setup no longer rolls back the application when optional package-identity
+  registration is unsupported or blocked by AppX policy on the target PC.
+- Setup now deploys the packaged-app logo assets and Windows resource index
+  beside the executable, where sparse packages resolve them, preventing the
+  taskbar from falling back to a grey box.
+- The main window now declares its own stable taskbar identity, preventing pinned
+  folder shortcuts from replacing the MultiExplorer taskbar name and icon.
+- Fixed Small icons view on current Windows versions by using the supported icon
+  view with a 16-pixel image size.
+- Added Ctrl+Shift+C for Copy as path and display the shortcut in application-owned
+  and Windows Shell popup menus.
+- Expanded Help's Keyboard shortcuts section into a complete reference for
+  application, file, address-bar, filtering, QuickLook, and drag shortcuts.
+- Preview panes can now be resized by dragging their vertical divider, with an
+  independently remembered width for each explorer pane.
+- The preview divider now uses a narrow, DPI-aware grip and remains visible after
+  resizing, including when a native Windows preview handler is active.
+- Added a checked Minimize to System Tray option immediately after Set Auto-start
+  in the More menu, synchronized with the existing tray-menu preference.
+- Rebuilt same-version installers now advance the internal identity-package
+  version so Windows refreshes changed taskbar and Start visual assets.
 - Release builds now stamp application binaries with a monotonic build file version,
   ensuring rebuilt installers carrying the same displayed version replace old code.
 
 Installation notes
 ------------------
-
 - Application settings and saved panel state are preserved during upgrades.
 - MultiExplorer is a per-user installation and includes its required .NET runtime.
+- Enhanced Pin to Start integration requires Windows build 19041 or later and an
+  available AppX deployment service; the core application installs without it.
 - The start-with-Windows option is disabled by default and can be changed at any time
   from either pane's More (...) menu.

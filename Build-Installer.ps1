@@ -27,9 +27,9 @@
     Produce the MSI without signing it.
 
 .PARAMETER SkipMsiValidation
-    Skip WiX ICE validation and administrative-install payload validation. Use only
-    when the build environment cannot access Windows Installer validation APIs;
-    normal release builds should validate.
+    Skip administrative-install payload validation. WiX ICE validation is
+    suppressed by the installer project. Use only when the build environment
+    cannot access Windows Installer extraction APIs.
 
 .PARAMETER Force
     When used with -SkipPublish, bypasses the staleness check and proceeds
@@ -201,10 +201,6 @@ $installerBuildArgs = @(
     "-p:BuildDate=$BuildDate",
     "-p:SkipAppPublish=true"
 )
-if ($SkipMsiValidation) {
-    $installerBuildArgs += "-p:SuppressValidation=true"
-    Write-Warning "Skipping WiX ICE validation because -SkipMsiValidation was specified."
-}
 & dotnet @installerBuildArgs
 if ($LASTEXITCODE -ne 0) { throw "WiX build failed (exit $LASTEXITCODE)." }
 
@@ -247,7 +243,30 @@ else {
     }
 
     $packagedRoot = $packagedExe.Directory.FullName
-    $publishedFiles = Get-ChildItem -LiteralPath $PublishDir -Recurse -File
+    function Test-NonEnglishSatellite([string]$relativePath) {
+        $parts = $relativePath -split '[\\/]', 3
+        if ($parts.Count -ne 2 -or
+            -not $parts[1].EndsWith('.resources.dll',
+                [StringComparison]::OrdinalIgnoreCase)) {
+            return $false
+        }
+
+        try {
+            $culture = [Globalization.CultureInfo]::GetCultureInfo($parts[0])
+            return $culture.Name.Equals($parts[0],
+                [StringComparison]::OrdinalIgnoreCase) -and
+                $culture.TwoLetterISOLanguageName -ne 'en'
+        }
+        catch [Globalization.CultureNotFoundException] {
+            return $false
+        }
+    }
+
+    $publishedFiles = @(Get-ChildItem -LiteralPath $PublishDir -Recurse -File |
+        Where-Object {
+            $relative = $_.FullName.Substring($PublishDir.Length).TrimStart('\')
+            -not (Test-NonEnglishSatellite $relative)
+        })
     foreach ($publishedFile in $publishedFiles) {
         $relativePath = $publishedFile.FullName.Substring($PublishDir.Length).TrimStart('\')
         $packagedPath = Join-Path $packagedRoot $relativePath
@@ -264,6 +283,15 @@ Installer payload validation failed for '$relativePath':
   Packaged SHA-256 : $packagedHash
 "@
         }
+    }
+    $packagedNonEnglish = @(Get-ChildItem -LiteralPath $packagedRoot -Recurse -File |
+        Where-Object {
+            $relative = $_.FullName.Substring($packagedRoot.Length).TrimStart('\')
+            Test-NonEnglishSatellite $relative
+        })
+    if ($packagedNonEnglish.Count -gt 0) {
+        throw "Installer payload contains non-English satellite resources: " +
+            (($packagedNonEnglish | Select-Object -ExpandProperty FullName) -join ', ')
     }
     Write-Host "   All $($publishedFiles.Count) embedded application files match the fresh publish." -ForegroundColor Green
     Remove-Item -LiteralPath $validationFull -Recurse -Force

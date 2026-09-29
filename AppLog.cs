@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Threading;
 
 namespace MultiExplorer;
 
@@ -59,6 +60,7 @@ public static class AppLog
     // thread, so the read-trim-append sequence below must be atomic to avoid
     // concurrent writers truncating or interleaving each other's output.
     private static readonly object _fileLock = new();
+    private static LogEntry? _latestUserMessage;
 
     /// <summary>
     /// Raised for Warn/Error entries only.
@@ -68,6 +70,9 @@ public static class AppLog
     public static event Action<LogEntry>? MessageLogged;
 
     public static string LogFilePath => _logPath;
+
+    internal static LogEntry? TakeLatestUserMessage() =>
+        Interlocked.Exchange(ref _latestUserMessage, null);
 
     // ── Logging API ───────────────────────────────────────────────────────────
 
@@ -93,7 +98,12 @@ public static class AppLog
         try
         {
             if (File.Exists(_logPath))
-                Process.Start(new ProcessStartInfo(_logPath) { UseShellExecute = true });
+            {
+                using Process? viewer = Process.Start(new ProcessStartInfo(_logPath)
+                {
+                    UseShellExecute = true,
+                });
+            }
         }
         catch (Exception ex)
         {
@@ -137,6 +147,9 @@ public static class AppLog
 
         // Notify UI subscribers for Warn and above
         if (severity >= LogSeverity.Warn)
+        {
+            Volatile.Write(ref _latestUserMessage, entry);
             MessageLogged?.Invoke(entry);
+        }
     }
 }

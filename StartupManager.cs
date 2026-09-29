@@ -86,17 +86,23 @@ internal static class StartupManager
         await RegistrationGate.WaitAsync(cancellationToken);
         try
         {
-            if (enabled)
+            // schtasks.exe starts synchronously before its first async wait.
+            // Run registration work off the form thread, after acquiring the
+            // gate so a later setting change cannot be overtaken by startup.
+            await Task.Run(async () =>
             {
-                await CreateScheduledTaskAsync(
-                    Application.ExecutablePath, cancellationToken);
-                DeleteLegacyRunRegistration(throwOnFailure: false);
-            }
-            else
-            {
-                await DeleteScheduledTaskAsync(cancellationToken);
-                DeleteLegacyRunRegistration(throwOnFailure: true);
-            }
+                if (enabled)
+                {
+                    await CreateScheduledTaskAsync(
+                        Application.ExecutablePath, cancellationToken);
+                    DeleteLegacyRunRegistration(throwOnFailure: false);
+                }
+                else
+                {
+                    await DeleteScheduledTaskAsync(cancellationToken);
+                    DeleteLegacyRunRegistration(throwOnFailure: true);
+                }
+            }, cancellationToken);
 
             return (true, null);
         }

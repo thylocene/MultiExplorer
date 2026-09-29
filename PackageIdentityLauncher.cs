@@ -74,8 +74,6 @@ internal static class PackageIdentityLauncher
         {
             // The identity is optional for portable and developer builds. If it
             // is not registered, continue as a normal unpackaged application.
-            AppLog.Debug(ex, nameof(TryRelaunchWithIdentity),
-                "The MultiExplorer package identity is not registered.");
             return false;
         }
         finally

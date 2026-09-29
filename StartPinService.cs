@@ -11,33 +11,14 @@ namespace MultiExplorer;
 /// </summary>
 internal static class StartPinService
 {
-    private const string CapabilityProbeTileId = "MultiExplorerCapabilityProbe";
     private const string TileIdPrefix = "MultiExplorer-";
     private static readonly Uri Square150Logo = new(
         "ms-appx:///Assets/Square150x150Logo.png");
     private static readonly Uri Square44Logo = new(
         "ms-appx:///Assets/Square44x44Logo.png");
     private static readonly TimeSpan PinStateCacheDuration = TimeSpan.FromMinutes(1);
-    private static readonly Lazy<bool> Availability = new(ProbeAvailability);
     private static readonly ConcurrentDictionary<string, CachedPinState> PinStateCache =
         new(StringComparer.OrdinalIgnoreCase);
-
-    internal static bool IsAvailable() => Availability.Value;
-
-    private static bool ProbeAvailability()
-    {
-        try
-        {
-            _ = SecondaryTile.Exists(CapabilityProbeTileId);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            AppLog.Debug(ex, nameof(IsAvailable),
-                "Start tiles require MultiExplorer's package identity.");
-            return false;
-        }
-    }
 
     internal static bool IsPinned(string path)
     {
@@ -76,50 +57,6 @@ internal static class StartPinService
 
     internal static string GetCommandLabel(bool isPinned) =>
         isPinned ? "Unpin from Start" : "Pin to Start";
-
-    internal static async Task RefreshPinnedTileLogosAsync()
-    {
-        if (!IsAvailable()) return;
-
-        try
-        {
-            IReadOnlyList<SecondaryTile> tiles =
-                await SecondaryTile.FindAllAsync();
-            foreach (SecondaryTile tile in tiles.Where(static tile =>
-                         tile.TileId.StartsWith(TileIdPrefix,
-                             StringComparison.Ordinal)))
-            {
-                string? path = DecodeActivationPath(
-                    tile.Arguments.Split(' ',
-                        StringSplitOptions.RemoveEmptyEntries));
-                if (path is not null && Directory.Exists(path))
-                {
-                    bool nativePinned =
-                        NativeFolderStartPinService.IsPinned(path)
-                        || await NativeFolderStartPinService
-                            .TrySetPinnedAsync(path, true);
-                    if (nativePinned)
-                    {
-                        await Task.Run(() =>
-                            StartMenuPinningInterop.TryUnpin(tile.TileId));
-                    }
-                    continue;
-                }
-
-                StartTileIcons? icons = path is null
-                    ? null
-                    : await StartTileIconService.PrepareAsync(path,
-                        tile.TileId);
-                ApplyLogos(tile, icons);
-                await tile.UpdateAsync();
-            }
-        }
-        catch (Exception ex)
-        {
-            AppLog.Debug(ex, nameof(RefreshPinnedTileLogosAsync),
-                "Could not refresh an existing Start tile icon.");
-        }
-    }
 
     internal static async Task<bool> TrySetPinnedAsync(
         string path, bool pin, IntPtr ownerWindow)

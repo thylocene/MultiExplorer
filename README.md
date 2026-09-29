@@ -23,9 +23,49 @@ Each pane supports multiple tabs. Tabs can be:
 - **Added**: click the **+** button at the end of the tab bar.
 - **Closed**: click the **×** on any tab (a pane always keeps at least one tab open).
 - **Switched**: click any tab label.
-- **Reordered or moved**: drag a tab within its tab bar to reorder it, or drag it onto the other pane's tab bar to transfer that explorer tab between panes.
+- **Duplicated within a pane**: drop a dragged tab anywhere in its own pane to duplicate that folder tab at the end, just as Ctrl+T does. The floating preview says "Duplicate in current pane".
+- **Moved into the other pane**: drop a tab anywhere on the other pane to move it there. The floating preview says "Move tab to other pane". If it was the source pane's only tab, that pane opens a new tab at `C:\`.
+- **Opened in Windows File Explorer**: enable the option in MultiExplorer Settings, then drag a tab outside the MultiExplorer window and release it. The floating preview appears outside MultiExplorer and says "Open in File Explorer". File Explorer opens on the screen where you release it, then the MultiExplorer tab closes. A pane's last tab cannot be dropped on the desktop: only the blocked cursor appears, with no floating preview. It can still be moved into the other pane.
 
 Hovering a tab shows a tooltip with the full folder path. All open tab paths are saved and restored between sessions.
+
+### Compare panes and selective sync
+
+Open **View → Compare panes...** in either pane to compare the two active folders,
+including their subfolders. The comparison lists items found on only one side,
+files with different sizes, files with newer modified times, and file/folder
+conflicts. Missing folders appear as one row that includes their contents.
+
+The **Suggested action** column shows the recommended copy direction. If the left
+file is more than two seconds newer, it says **Copy left → right**; if the right
+file is more than two seconds newer, it says **Copy right → left**. This also
+applies when the file sizes differ. Different-size files with similar modified
+times suggest **Skip** because the scan cannot tell which contents you want to
+keep. **Chosen action** starts with the suggested action for each difference, so
+newer files are already set to copy toward the older side. Items without a clear
+copy direction start at **Skip**. You can change any chosen action, click
+**Restore suggestions** to use the recommendations again, or click **Skip all**
+to clear the choices. Only chosen actions are run, after you review them.
+
+**Review actions...** shows the full source and destination path of every selected
+change before starting the normal background file-operation window. Delete actions
+receive an additional confirmation. Compare again if either folder changes before
+applying the plan.
+
+The scan starts only when you open the comparison window, including for network
+shares. It compares file size and modified time with a two-second tolerance; it
+does not hash file contents. Symbolic links and other reparse points are shown but
+cannot be synchronized. For safety, the scan stops rather than presenting partial
+results if a folder cannot be read or a comparison limit is reached.
+
+### Create shortcuts and links
+
+Right-click one file or folder and choose **Create shortcut...**. The dialog fills
+in the selected item's path and a suggested name. Choose a Windows shortcut
+(`.lnk`), a hard link, or a symbolic link, then place it in the current folder,
+its parent, the Desktop, or the other browser pane. Existing names receive a
+numbered suffix so they are not replaced. Hard links work for files on the same
+volume; symbolic links may require Windows Developer Mode or permission.
 
 The status bar at the bottom of each pane shows separate totals for the active tab's visible files and folders. Its right side shows the number of selected files and folders plus their combined size, including the contents of selected folders, using decimal storage units (1 KB = 1,000 bytes). Local counts refresh when folder contents change; network locations are deliberately not enumerated.
 
@@ -148,7 +188,7 @@ MultiExplorer communicates with a running QuickLook instance through its named p
 
 A global hotkey toggles MultiExplorer between its main window and the system tray from any application. When the window is visible, pressing the hotkey hides it to the tray. Press it again while it is in the tray to restore and activate the window.
 
-**Default hotkey: Win + Ctrl + Alt + M**
+**Default hotkey: Win + Shift + E**
 
 Change the hotkey any time via **… → Set hotkey**. The dialog lets you pick any combination of Win / Ctrl / Alt / Shift plus a letter (A–Z) or function key (F1–F12). The choice is saved to `settings.json` and re-registered at the next launch.
 
@@ -312,6 +352,7 @@ The script publishes the app, builds the MSI with WiX, and signs it with a self-
 | `LeftPanelTabs` / `RightPanelTabs` | string[] | `["C:\\"]` | Folder path for every open tab in each panel |
 | `MinimizeToTray` | bool | `true` | Whether closing the window hides to tray |
 | `StartWithWindows` | bool | `false` | Whether MultiExplorer starts when the current user signs in |
+| `OpenExplorerWhenTabDroppedOutside` | bool | `false` | Whether dropping a tab outside MultiExplorer opens its folder in Windows File Explorer |
 | `QuickLookEnabled` | bool | `false` | Whether Space triggers QuickLook preview |
 | `ApplicationTheme` | string | `"Light"` | Selected `Light` or `Dark` application appearance |
 | `ShowWindowModifiers` | int | `0x000B` | Modifier flags for the global hotkey (Win\|Ctrl\|Alt) |

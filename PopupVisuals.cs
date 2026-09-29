@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace MultiExplorer;
 
@@ -11,6 +12,7 @@ internal static class PopupVisuals
     internal const int CornerRadiusLogical = 12;
     private const int DWMWA_NCRENDERING_POLICY = 2;
     private const int DWMNCRP_DISABLED = 1;
+    private static int _shadowWarningReported;
 
     internal static void DisableNonClientShadow(IntPtr hwnd)
     {
@@ -21,8 +23,16 @@ internal static class PopupVisuals
             DwmSetWindowAttribute(hwnd, DWMWA_NCRENDERING_POLICY,
                 ref policy, sizeof(int));
         }
-        catch (DllNotFoundException) { }
-        catch (EntryPointNotFoundException) { }
+        catch (Exception ex) when (ex is DllNotFoundException
+                                   or EntryPointNotFoundException)
+        {
+            if (Interlocked.Exchange(ref _shadowWarningReported, 1) == 0)
+            {
+                AppLog.Warn(ex, nameof(PopupVisuals),
+                    "Windows could not disable a popup shadow. The popup may use "
+                    + "the system shadow instead. See app.log for details.");
+            }
+        }
     }
 
     internal static GraphicsPath CreateBottomRoundedPath(Rectangle bounds, int radius) =>

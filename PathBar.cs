@@ -15,7 +15,7 @@ public sealed class PathBar : UserControl
     private int SegPadH => LogicalToDeviceUnits(8);
     private int SegPadV => LogicalToDeviceUnits(3);
     private int HoverR  => LogicalToDeviceUnits(4);
-    private int SepGap  => LogicalToDeviceUnits(5);
+    private int SepPadH => LogicalToDeviceUnits(8);
     private int LeftMgn => LogicalToDeviceUnits(8);
 
     private readonly TextBox _editor;
@@ -57,6 +57,11 @@ public sealed class PathBar : UserControl
     }
 
     public List<string> GetHistory() => new(_history);
+
+    public void EditAddress()
+    {
+        if (!_editing) SwitchToEdit();
+    }
 
     public PathBar()
     {
@@ -180,12 +185,12 @@ public sealed class PathBar : UserControl
         var raw = BuildSegments(_path);
         if (raw.Count == 0) return;
 
-        const string Sep = "›";
         const TextFormatFlags TFF = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine;
 
         int textH = TextRenderer.MeasureText(g, "Ag", _font, Size.Empty, TFF).Height;
         int textY = (ClientSize.Height - textH) / 2;
-        int sepW  = TextRenderer.MeasureText(g, Sep, _font, Size.Empty, TFF).Width;
+        int sepH  = Math.Max(1, (int)Math.Round(textH * 0.5));
+        int sepW  = Math.Max(1, (int)Math.Round(sepH * 0.6));
         int x     = LeftMgn;
 
         for (int i = 0; i < raw.Count; i++)
@@ -209,11 +214,12 @@ public sealed class PathBar : UserControl
             TextRenderer.DrawText(g, display, _font, new Point(hit.X + SegPadH, textY),
                 textColor, TFF);
 
-            x = hit.Right + SepGap;
+            x = hit.Right + SepPadH;
 
             if (i < raw.Count - 1)
             {
-                var sepHit = new Rectangle(x - SepGap, 0, sepW + SepGap * 2, ClientSize.Height);
+                var sepHit = new Rectangle(x - SepPadH, 0,
+                    sepW + SepPadH * 2, ClientSize.Height);
                 int sepIdx = _seps.Count;
                 _seps.Add((sepHit, i));
 
@@ -226,8 +232,21 @@ public sealed class PathBar : UserControl
                 }
 
                 Color sepColor = sepIdx == _hoveredSep ? ThemeManager.AccentText : ThemeManager.MutedText;
-                TextRenderer.DrawText(g, Sep, _font, new Point(x, textY), sepColor, TFF);
-                x += sepW + SepGap;
+                float sepTop = (ClientSize.Height - sepH) / 2f;
+                float sepLeft = x + Math.Max(1f, DeviceDpi / 96f);
+                using var sepPen = new Pen(sepColor, Math.Max(1.4f, DeviceDpi / 96f * 1.4f))
+                {
+                    LineJoin = LineJoin.Round,
+                    StartCap = LineCap.Round,
+                    EndCap = LineCap.Round,
+                };
+                g.DrawLines(sepPen,
+                [
+                    new PointF(sepLeft, sepTop),
+                    new PointF(sepLeft + sepW - 1, sepTop + sepH / 2f),
+                    new PointF(sepLeft, sepTop + sepH),
+                ]);
+                x += sepW + SepPadH;
             }
         }
     }
@@ -357,12 +376,6 @@ public sealed class PathBar : UserControl
         {
             e.SuppressKeyPress = true;
             SwitchToNav();
-        }
-        else if (e.KeyCode == Keys.F4
-                 || (e.KeyCode == Keys.Down && e.Alt))
-        {
-            e.SuppressKeyPress = true;
-            ShowHistoryMenu();
         }
     }
 

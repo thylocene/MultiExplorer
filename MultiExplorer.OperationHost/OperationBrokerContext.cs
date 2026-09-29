@@ -7,10 +7,13 @@ namespace MultiExplorer;
 internal sealed class OperationBrokerContext : ApplicationContext
 {
     private readonly Dictionary<Guid, OperationWorker> _activeOperations = [];
+    private readonly HashSet<Guid> _reportedFailures = [];
     private readonly OperationProgressForm _progressForm;
+    private readonly IntPtr _progressWindowHandle;
     private readonly System.Windows.Forms.Timer _refreshTimer;
     private readonly bool _exitWhenIdle;
     private bool _hasScanned;
+    private bool _shutdownRequested;
     private bool _disposed;
 
     internal OperationBrokerContext(bool exitWhenIdle)
@@ -20,6 +23,11 @@ internal sealed class OperationBrokerContext : ApplicationContext
         _progressForm.CancellationRequested += OnCancellationRequested;
         _progressForm.PauseRequested += OnPauseRequested;
         _progressForm.ResumeRequested += OnResumeRequested;
+        _progressForm.ShutdownRequested += OnShutdownRequested;
+        // Create a hidden top-level HWND immediately. WiX CloseApplication can
+        // then deliver its session-shutdown messages even while the broker is idle
+        // and the progress window has never been shown.
+        _progressWindowHandle = _progressForm.Handle;
         _refreshTimer = new System.Windows.Forms.Timer { Interval = 125 };
         _refreshTimer.Tick += OnRefreshTimerTick;
         _refreshTimer.Start();
@@ -27,6 +35,12 @@ internal sealed class OperationBrokerContext : ApplicationContext
 
     private void OnRefreshTimerTick(object? sender, EventArgs e)
     {
+        if (_shutdownRequested)
+        {
+            ExitThread();
+            return;
+        }
+
         ScanRequests();
         RefreshProgressWindow();
 
@@ -65,13 +79,34 @@ internal sealed class OperationBrokerContext : ApplicationContext
 
                 FileOperationState? previousState = FileOperationStore.TryReadState(
                     FileOperationStore.StatePath(request.Id));
-                if (previousState?.IsTerminal == true)
+                if (previousState != null)
                 {
-                    FileOperationStore.RemoveTransientArtifacts(request.Id);
+                    if (previousState.IsTerminal)
+                    {
+                        FileOperationStore.RemoveTransientArtifacts(request.Id);
+                    }
+                    else
+                    {
+                        TryWriteFailure(request, new InvalidOperationException(
+                            "The previous operation host stopped before completing the operation."));
+                    }
                     continue;
                 }
 
-                var thread = new Thread(() => ExecuteOperation(request))
+                if (FileOperationStore.HasStartupAcknowledgementTimedOut(
+                        request.CreatedUtc, DateTime.UtcNow))
+                {
+                    TryWriteFailure(request, new TimeoutException(
+                        "The file-operation request expired before an operation host acknowledged it."));
+                    continue;
+                }
+
+                FileOperationState queuedState = CreateQueuedState(request);
+                if (!FileOperationStore.TryWriteInitialState(queuedState))
+                    continue;
+
+                var thread = new Thread(() => ExecuteOperation(
+                    request, _progressWindowHandle))
                 {
                     IsBackground = false,
                     Name = $"MultiExplorer.Operation.{request.Id:N}",
@@ -87,19 +122,29 @@ internal sealed class OperationBrokerContext : ApplicationContext
         }
     }
 
-    private static void ExecuteOperation(FileOperationRequest request)
+    private static void ExecuteOperation(
+        FileOperationRequest request,
+        IntPtr ownerWindow)
     {
-        int oleResult = OleInitialize(IntPtr.Zero);
+        int oleResult = -1;
+        string stage = "OleInitialize";
         try
         {
+            oleResult = OleInitialize(IntPtr.Zero);
+            if (oleResult < 0)
+                Marshal.ThrowExceptionForHR(oleResult);
+
+            stage = "Enter ShellFileOperation.Execute";
             FileOperationState state = ShellFileOperation.Execute(
-                request, showNativeProgressDialog: false);
+                request,
+                showNativeProgressDialog: false,
+                ownerWindow);
             if (state.IsTerminal)
                 FileOperationStore.RemoveTransientArtifacts(request.Id);
         }
         catch (Exception ex)
         {
-            TryWriteFailure(request, ex);
+            TryWriteFailure(request, ex, stage);
         }
         finally
         {
@@ -111,12 +156,16 @@ internal sealed class OperationBrokerContext : ApplicationContext
     private void RefreshProgressWindow()
     {
         var visibleStates = new List<FileOperationState>(_activeOperations.Count);
+        var failures = new List<(FileOperationRequest Request, FileOperationState State)>();
         foreach ((Guid id, OperationWorker worker) in _activeOperations.ToArray())
         {
             FileOperationState? state = FileOperationStore.TryReadState(
                 FileOperationStore.StatePath(id));
             if (state is { IsTerminal: false })
                 visibleStates.Add(state);
+            else if (state?.Status == FileOperationStatus.Failed
+                     && _reportedFailures.Add(id))
+                failures.Add((worker.Request, state));
             else if (state is null && worker.Thread.IsAlive)
                 visibleStates.Add(CreateQueuedState(worker.Request));
 
@@ -133,6 +182,8 @@ internal sealed class OperationBrokerContext : ApplicationContext
             .OrderByDescending(static request => request.CreatedUtc)
             .Select(static request => request.WindowPlacement)
             .FirstOrDefault();
+        foreach ((FileOperationRequest request, FileOperationState state) in failures)
+            _progressForm.ShowFailure(request, state);
         _progressForm.UpdateOperations(visibleStates, placement);
     }
 
@@ -144,6 +195,7 @@ internal sealed class OperationBrokerContext : ApplicationContext
             Kind = request.Kind,
             Status = FileOperationStatus.Queued,
             TotalItems = request.Sources.Length,
+            HostProcessId = Environment.ProcessId,
             CreatedUtc = request.CreatedUtc,
             UpdatedUtc = DateTime.UtcNow,
         };
@@ -187,6 +239,27 @@ internal sealed class OperationBrokerContext : ApplicationContext
         }
     }
 
+    private void OnShutdownRequested(object? sender, EventArgs e)
+    {
+        if (_shutdownRequested) return;
+
+        _shutdownRequested = true;
+        foreach (Guid operationId in _activeOperations.Keys.ToArray())
+        {
+            try
+            {
+                FileOperationStore.RequestCancellation(operationId);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Debug.WriteLine(
+                    $"Could not cancel operation {operationId:N} during shutdown: {ex}");
+            }
+        }
+
+        _progressForm.BeginInvoke((MethodInvoker)ExitThread);
+    }
+
     private static bool HasPendingRequests()
     {
         try
@@ -203,7 +276,8 @@ internal sealed class OperationBrokerContext : ApplicationContext
     }
 
     private static void TryWriteFailure(
-        FileOperationRequest request, Exception exception)
+        FileOperationRequest request, Exception exception,
+        string? failureStage = null)
     {
         try
         {
@@ -214,6 +288,8 @@ internal sealed class OperationBrokerContext : ApplicationContext
                 Status = FileOperationStatus.Failed,
                 TotalItems = request.Sources.Length,
                 Error = exception.Message,
+                FailureStage = failureStage,
+                FailureExceptionType = exception.GetType().FullName,
                 Result = exception.HResult,
                 HostProcessId = Environment.ProcessId,
                 CreatedUtc = request.CreatedUtc,
@@ -240,6 +316,7 @@ internal sealed class OperationBrokerContext : ApplicationContext
             _progressForm.CancellationRequested -= OnCancellationRequested;
             _progressForm.PauseRequested -= OnPauseRequested;
             _progressForm.ResumeRequested -= OnResumeRequested;
+            _progressForm.ShutdownRequested -= OnShutdownRequested;
             _progressForm.Dispose();
         }
 

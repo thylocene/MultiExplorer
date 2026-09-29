@@ -5,14 +5,11 @@ namespace MultiExplorer;
 public static class ShellFileOperation
 {
     private const int EAbort = unchecked((int)0x80004004);
-    private const uint FofSilent = 0x0004;
-    private const uint FofNoConfirmation = 0x0010;
-    private const uint FofAllowUndo = 0x0040;
-    private const uint FofNoConfirmMkdir = 0x0200;
-    private const uint FofxRecycleOnDelete = 0x00080000;
 
     internal static FileOperationState Execute(
-        FileOperationRequest request, bool showNativeProgressDialog = true)
+        FileOperationRequest request,
+        bool showNativeProgressDialog = true,
+        IntPtr ownerWindow = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         using var windowPromoter = new OperationWindowPromoter(
@@ -29,42 +26,55 @@ public static class ShellFileOperation
             UpdatedUtc = DateTime.UtcNow,
         };
         FileOperationPresentation.ApplyRequestContext(state, request);
-        FileOperationStore.WriteState(state);
 
         var control = new OperationControlProbe(request.Id);
         IFileOperation? operation = null;
         FileOperationProgressSink? sink = null;
         uint cookie = 0;
         var shellItems = new List<IShellItem>();
+        var cleanupWarnings = new List<string>();
+        string stage = "Write initial operation state";
         try
         {
-            SourceMetrics metrics = CalculateSourceMetrics(request.Sources, control);
-            state.TotalItems = metrics.ItemCount > 0
-                ? metrics.ItemCount
-                : request.Sources.Length;
-            state.TotalBytes = metrics.TotalBytes;
-            state.UpdatedUtc = DateTime.UtcNow;
             FileOperationStore.WriteState(state);
 
+            stage = "Measure source items";
+            FileOperationSourceMetrics metrics = FileOperationMetrics.Calculate(
+                request,
+                () => control.IsCancellationRequested());
+            state.TotalItems = metrics.ItemCount;
+            state.TotalBytes = metrics.TotalBytes;
+            state.ItemCountIsComplete = metrics.IsComplete;
+            state.UpdatedUtc = DateTime.UtcNow;
+            stage = "Write measured operation state";
+            FileOperationStore.WriteState(state);
+
+            stage = "Check cancellation before Shell setup";
             if (control.IsCancellationRequested(force: true))
                 throw new OperationCanceledException();
 
+            stage = "Resolve IFileOperation COM class";
             var operationType = Type.GetTypeFromCLSID(
                 new Guid("3AD05575-8857-4850-9277-11B85BDB8E09"))
                 ?? throw new InvalidOperationException("IFileOperation is unavailable.");
+            stage = "Activate IFileOperation COM object";
             operation = (IFileOperation)Activator.CreateInstance(operationType)!;
             sink = new FileOperationProgressSink(state, control);
+            stage = "IFileOperation.Advise";
             ThrowIfFailed(operation.Advise(sink, out cookie));
+            if (ownerWindow != IntPtr.Zero)
+            {
+                stage = "IFileOperation.SetOwnerWindow";
+                ThrowIfFailed(operation.SetOwnerWindow(ownerWindow));
+            }
 
-            uint flags = FofNoConfirmMkdir;
-            if (!showNativeProgressDialog)
-                flags |= FofSilent;
-            if (request.Kind == FileOperationKind.DeletePermanently)
-                flags |= FofNoConfirmation;
-            if (request.Kind != FileOperationKind.DeletePermanently)
-                flags |= FofAllowUndo;
-            if (request.Kind == FileOperationKind.Delete)
-                flags |= FofxRecycleOnDelete;
+            // MultiExplorer supplies the progress window, but the Shell must keep
+            // its normal error policy. FOF_NOERRORUI causes a failed child action
+            // to be skipped, which can leave a directory only partly copied.
+            uint flags = ShellFileOperationOptions.CreateFlags(
+                request.Kind,
+                showNativeProgressDialog);
+            stage = "IFileOperation.SetOperationFlags";
             ThrowIfFailed(operation.SetOperationFlags(flags));
 
             IShellItem? destination = null;
@@ -72,17 +82,28 @@ public static class ShellFileOperation
             {
                 if (string.IsNullOrWhiteSpace(request.Destination))
                     throw new InvalidDataException("A destination is required for copy and move operations.");
+                stage = "Resolve destination Shell item";
                 destination = CreateShellItem(request.Destination);
                 shellItems.Add(destination);
             }
 
             foreach (string sourcePath in request.Sources)
             {
+                stage = "Check cancellation before source item";
                 if (sink.CheckControlState() == EAbort)
                     throw new OperationCanceledException();
 
+                stage = "Resolve source Shell item";
                 IShellItem source = CreateShellItem(sourcePath);
                 shellItems.Add(source);
+                stage = request.Kind switch
+                {
+                    FileOperationKind.Copy => "IFileOperation.CopyItem",
+                    FileOperationKind.Move => "IFileOperation.MoveItem",
+                    FileOperationKind.Delete or FileOperationKind.DeletePermanently =>
+                        "IFileOperation.DeleteItem",
+                    _ => "Queue Shell item operation",
+                };
                 int result = request.Kind switch
                 {
                     FileOperationKind.Copy => operation.CopyItem(source, destination!, null, null),
@@ -94,17 +115,27 @@ public static class ShellFileOperation
                 ThrowIfFailed(result);
             }
 
+            stage = "Check cancellation before Shell execution";
             if (sink.CheckControlState() == EAbort)
                 throw new OperationCanceledException();
 
+            stage = "IFileOperation.PerformOperations";
             int performResult = operation.PerformOperations();
+            RecordResult(state, performResult);
+            if (state.Result < 0
+                && !FileOperationResultClassifier.IsCancellation(state.Result))
+                state.FailureStage ??= stage;
+            stage = "IFileOperation.GetAnyOperationsAborted";
             operation.GetAnyOperationsAborted(out bool aborted);
-            state.Result = performResult;
-            state.Aborted = aborted || performResult == EAbort;
-            state.Status = state.Aborted
-                ? FileOperationStatus.Cancelled
-                : performResult < 0 || state.Error != null
-                    ? FileOperationStatus.Failed
+            bool cancelled = control.IsCancellationRequested(force: true)
+                || FileOperationResultClassifier.IsCancellation(state.Result);
+            state.Aborted = aborted || cancelled;
+            bool failed = !string.IsNullOrWhiteSpace(state.Error)
+                || state.Result < 0 && !cancelled;
+            state.Status = failed
+                ? FileOperationStatus.Failed
+                : state.Aborted
+                    ? FileOperationStatus.Cancelled
                     : FileOperationStatus.Completed;
             if (state.Status == FileOperationStatus.Completed && state.TotalWork > 0)
                 state.WorkCompleted = state.TotalWork;
@@ -112,8 +143,6 @@ public static class ShellFileOperation
                 state.BytesCompleted = state.TotalBytes;
             if (state.Status == FileOperationStatus.Completed)
                 state.CompletedItems = state.TotalItems;
-            if (performResult < 0 && !state.Aborted)
-                state.Error = Marshal.GetExceptionForHR(performResult)?.Message;
         }
         catch (OperationCanceledException)
         {
@@ -124,106 +153,84 @@ public static class ShellFileOperation
         catch (Exception ex)
         {
             state.Result = ex.HResult;
-            state.Status = ex.HResult == EAbort
+            state.Status = FileOperationResultClassifier.IsCancellation(ex.HResult)
                 ? FileOperationStatus.Cancelled
                 : FileOperationStatus.Failed;
             state.Aborted = state.Status == FileOperationStatus.Cancelled;
             state.Error = ex.Message;
+            if (state.Status == FileOperationStatus.Failed)
+            {
+                state.FailureStage = stage;
+                state.FailureExceptionType = ex.GetType().FullName;
+            }
         }
         finally
         {
             if (operation != null && cookie != 0)
             {
-                try { operation.Unadvise(cookie); }
-                catch { }
-            }
-            foreach (IShellItem item in shellItems)
-            {
-                try { Marshal.FinalReleaseComObject(item); }
-                catch { }
-            }
-            if (operation != null)
-            {
-                try { Marshal.FinalReleaseComObject(operation); }
-                catch { }
+                try
+                {
+                    int result = operation.Unadvise(cookie);
+                    if (result < 0)
+                    {
+                        Exception exception = Marshal.GetExceptionForHR(result)
+                            ?? new COMException(
+                                $"Windows returned HRESULT 0x{unchecked((uint)result):X8}.",
+                                result);
+                        cleanupWarnings.Add(CreateCleanupWarning(
+                            "Unsubscribing the Shell progress listener failed.",
+                            exception));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    cleanupWarnings.Add(CreateCleanupWarning(
+                        "Unsubscribing the Shell progress listener failed.", ex));
+                }
             }
 
+            int shellItemReleaseFailures = 0;
+            Exception? firstShellItemReleaseException = null;
+            foreach (IShellItem item in shellItems)
+            {
+                try
+                {
+                    Marshal.FinalReleaseComObject(item);
+                }
+                catch (Exception ex)
+                {
+                    shellItemReleaseFailures++;
+                    firstShellItemReleaseException ??= ex;
+                }
+            }
+            if (firstShellItemReleaseException != null)
+            {
+                cleanupWarnings.Add(CreateCleanupWarning(
+                    $"Releasing {shellItemReleaseFailures} Shell item resource(s) failed.",
+                    firstShellItemReleaseException));
+            }
+
+            if (operation != null)
+            {
+                try
+                {
+                    Marshal.FinalReleaseComObject(operation);
+                }
+                catch (Exception ex)
+                {
+                    cleanupWarnings.Add(CreateCleanupWarning(
+                        "Releasing the Shell operation resource failed.", ex));
+                }
+            }
+
+            if (cleanupWarnings.Count > 0)
+                state.Warning = string.Join(" ", cleanupWarnings);
             state.UpdatedUtc = DateTime.UtcNow;
             FileOperationStore.WriteState(state);
         }
 
         return state;
     }
-
-    private static SourceMetrics CalculateSourceMetrics(
-        IEnumerable<string> sourcePaths, OperationControlProbe control)
-    {
-        var enumerationOptions = new EnumerationOptions
-        {
-            RecurseSubdirectories = true,
-            IgnoreInaccessible = true,
-            AttributesToSkip = FileAttributes.ReparsePoint,
-        };
-        int itemCount = 0;
-        ulong totalBytes = 0;
-        foreach (string sourcePath in sourcePaths)
-        {
-            if (control.IsCancellationRequested(force: true))
-                break;
-
-            try
-            {
-                if (File.Exists(sourcePath))
-                {
-                    itemCount = AddItem(itemCount);
-                    totalBytes = AddFileLength(totalBytes, sourcePath);
-                    continue;
-                }
-
-                if (!Directory.Exists(sourcePath))
-                    continue;
-                itemCount = AddItem(itemCount);
-                var directory = new DirectoryInfo(sourcePath);
-                foreach (FileSystemInfo entry in directory.EnumerateFileSystemInfos(
-                             "*", enumerationOptions))
-                {
-                    if (control.IsCancellationRequested())
-                        return new SourceMetrics(itemCount, totalBytes);
-                    itemCount = AddItem(itemCount);
-                    if (entry is FileInfo file)
-                        totalBytes = AddFileLength(totalBytes, file);
-                }
-            }
-            catch (Exception ex) when (ex is IOException
-                                       or UnauthorizedAccessException
-                                       or System.Security.SecurityException)
-            {
-                // Totals are estimates only. The Shell remains responsible for
-                // reporting an actionable operation error if an item is unreadable.
-                System.Diagnostics.Debug.WriteLine(
-                    $"Could not measure '{sourcePath}' for progress: {ex}");
-            }
-        }
-
-        return new SourceMetrics(itemCount, totalBytes);
-    }
-
-    private static ulong AddFileLength(ulong totalBytes, string filePath)
-        => AddFileLength(totalBytes, new FileInfo(filePath));
-
-    private static ulong AddFileLength(ulong totalBytes, FileInfo file)
-    {
-        long length = file.Length;
-        ulong positiveLength = length > 0 ? (ulong)length : 0;
-        return ulong.MaxValue - totalBytes < positiveLength
-            ? ulong.MaxValue
-            : totalBytes + positiveLength;
-    }
-
-    private static int AddItem(int itemCount) =>
-        itemCount == int.MaxValue ? int.MaxValue : itemCount + 1;
-
-    private readonly record struct SourceMetrics(int ItemCount, ulong TotalBytes);
 
     private static IShellItem CreateShellItem(string path)
     {
@@ -236,6 +243,37 @@ public static class ShellFileOperation
     private static void ThrowIfFailed(int result)
     {
         if (result < 0) Marshal.ThrowExceptionForHR(result);
+    }
+
+    private static string CreateCleanupWarning(string action, Exception exception)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(action);
+        ArgumentNullException.ThrowIfNull(exception);
+        return $"{action} {exception.GetType().Name} "
+            + $"(0x{unchecked((uint)exception.HResult):X8}): {exception.Message}";
+    }
+
+    private static void RecordResult(FileOperationState state, int result)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (result >= 0)
+        {
+            if (state.Result >= 0)
+                state.Result = result;
+            return;
+        }
+
+        bool cancellation = FileOperationResultClassifier.IsCancellation(result);
+        // Keep the first real failure rather than replacing a useful per-item
+        // network HRESULT with a later generic PerformOperations failure.
+        if (state.Result >= 0
+            || FileOperationResultClassifier.IsCancellation(state.Result))
+            state.Result = result;
+        if (!cancellation && string.IsNullOrWhiteSpace(state.Error))
+        {
+            state.Error = Marshal.GetExceptionForHR(result)?.Message
+                ?? $"The Shell operation failed with HRESULT 0x{result:X8}.";
+        }
     }
 
     [ComVisible(true)]
@@ -274,18 +312,25 @@ public static class ShellFileOperation
             return 0;
         }
 
-        private int After(int result)
+        private int After(int result, IShellItem? item = null)
         {
             if (result >= 0)
             {
+                if (_state.Kind is FileOperationKind.Delete or FileOperationKind.DeletePermanently
+                    && _state.ProcessedItems < int.MaxValue)
+                    _state.ProcessedItems++;
                 if (_state.TotalItems <= 0 || _state.CompletedItems < _state.TotalItems)
                     _state.CompletedItems++;
             }
             else
             {
-                _state.Result = result;
-                _state.Error = Marshal.GetExceptionForHR(result)?.Message
-                    ?? $"The Shell operation failed with HRESULT 0x{result:X8}.";
+                if (item is not null)
+                {
+                    int nameResult = item.GetDisplayName(0x80058000, out string name);
+                    if (nameResult >= 0 && !string.IsNullOrWhiteSpace(name))
+                        _state.CurrentItem = name;
+                }
+                RecordResult(_state, result);
             }
             Save(force: result < 0);
             return CheckControlState();
@@ -341,17 +386,17 @@ public static class ShellFileOperation
         }
 
         public int StartOperations() { Save(force: true); return CheckControlState(); }
-        public int FinishOperations(int result) { _state.Result = result; Save(force: true); return 0; }
+        public int FinishOperations(int result) { RecordResult(_state, result); Save(force: true); return 0; }
         public int PreRenameItem(uint flags, IShellItem item, string newName) => Before(item);
-        public int PostRenameItem(uint flags, IShellItem item, string newName, int result, IShellItem? newItem) => After(result);
+        public int PostRenameItem(uint flags, IShellItem item, string newName, int result, IShellItem? newItem) => After(result, item);
         public int PreMoveItem(uint flags, IShellItem item, IShellItem destination, string? newName) => Before(item);
-        public int PostMoveItem(uint flags, IShellItem item, IShellItem destination, string? newName, int result, IShellItem? newItem) => After(result);
+        public int PostMoveItem(uint flags, IShellItem item, IShellItem destination, string? newName, int result, IShellItem? newItem) => After(result, item);
         public int PreCopyItem(uint flags, IShellItem item, IShellItem destination, string? newName) => Before(item);
-        public int PostCopyItem(uint flags, IShellItem item, IShellItem destination, string? newName, int result, IShellItem? newItem) => After(result);
+        public int PostCopyItem(uint flags, IShellItem item, IShellItem destination, string? newName, int result, IShellItem? newItem) => After(result, item);
         public int PreDeleteItem(uint flags, IShellItem item) => Before(item);
-        public int PostDeleteItem(uint flags, IShellItem item, int result, IShellItem? newItem) => After(result);
+        public int PostDeleteItem(uint flags, IShellItem item, int result, IShellItem? newItem) => After(result, item);
         public int PreNewItem(uint flags, IShellItem destination, string newName) => Before(destination);
-        public int PostNewItem(uint flags, IShellItem destination, string newName, string? templateName, uint attributes, int result, IShellItem? newItem) => After(result);
+        public int PostNewItem(uint flags, IShellItem destination, string newName, string? templateName, uint attributes, int result, IShellItem? newItem) => After(result, destination);
         public int UpdateProgress(uint totalWork, uint workSoFar)
         {
             OperationProgressMath.ApplyMonotonicWorkProgress(

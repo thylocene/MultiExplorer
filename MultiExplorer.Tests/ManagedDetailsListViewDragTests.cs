@@ -25,19 +25,75 @@ public sealed class ManagedDetailsListViewDragTests
     {
         DragDropEffects effect = ManagedDetailsListView.ChooseDropEffect(
             DragDropEffects.Copy | DragDropEffects.Move,
-            keyState: 0x0008);
+            keyState: 0x0008,
+            [@"C:\source\report.txt"],
+            @"C:\destination");
 
         Assert.Equal(DragDropEffects.Copy, effect);
     }
 
     [Fact]
-    public void ChooseDropEffect_DefaultsToMove()
+    public void ChooseDropEffect_ShiftRequestsMoveAcrossVolumes()
     {
         DragDropEffects effect = ManagedDetailsListView.ChooseDropEffect(
             DragDropEffects.Copy | DragDropEffects.Move,
-            keyState: 0);
+            keyState: 0x0004,
+            [@"C:\source\report.txt"],
+            @"D:\destination");
 
         Assert.Equal(DragDropEffects.Move, effect);
+    }
+
+    [Fact]
+    public void ChooseDropEffect_DefaultsToMoveOnSameVolume()
+    {
+        DragDropEffects effect = ManagedDetailsListView.ChooseDropEffect(
+            DragDropEffects.Copy | DragDropEffects.Move,
+            keyState: 0,
+            [@"C:\source\report.txt"],
+            @"C:\destination");
+
+        Assert.Equal(DragDropEffects.Move, effect);
+    }
+
+    [Fact]
+    public void ChooseDropEffect_DefaultsToCopyAcrossVolumes()
+    {
+        DragDropEffects effect = ManagedDetailsListView.ChooseDropEffect(
+            DragDropEffects.Copy | DragDropEffects.Move,
+            keyState: 0,
+            [@"C:\source\report.txt"],
+            @"D:\destination");
+
+        Assert.Equal(DragDropEffects.Copy, effect);
+    }
+
+    [Theory]
+    [InlineData(@"\\server\share\source\report.txt", @"C:\destination")]
+    [InlineData(@"C:\source\report.txt", @"\\server\share\destination")]
+    [InlineData(@"\\server1\share\report.txt", @"\\server2\share\destination")]
+    public void ChooseDropEffect_DefaultsToMoveWhenNetworkPathIsInvolved(
+        string sourcePath, string destinationPath)
+    {
+        DragDropEffects effect = ManagedDetailsListView.ChooseDropEffect(
+            DragDropEffects.Copy | DragDropEffects.Move,
+            keyState: 0,
+            [sourcePath],
+            destinationPath);
+
+        Assert.Equal(DragDropEffects.Move, effect);
+    }
+
+    [Fact]
+    public void ChooseDropEffect_ControlCopiesFromNetworkPath()
+    {
+        DragDropEffects effect = ManagedDetailsListView.ChooseDropEffect(
+            DragDropEffects.Copy | DragDropEffects.Move,
+            keyState: 0x0008,
+            [@"\\server\share\report.txt"],
+            @"C:\destination");
+
+        Assert.Equal(DragDropEffects.Copy, effect);
     }
 
     [Theory]

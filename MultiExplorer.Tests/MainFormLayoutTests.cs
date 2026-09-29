@@ -16,6 +16,22 @@ public class MainFormLayoutTests
             MainForm.GetApplicationShortcut(0x0100, (IntPtr)Keys.F5, Keys.None));
     }
 
+    [Fact]
+    public void GetApplicationShortcut_MapsF4ToAddressEditor()
+    {
+        Assert.Equal(CommandBar.Cmd.EditAddressBar,
+            MainForm.GetApplicationShortcut(0x0100, (IntPtr)Keys.F4, Keys.None));
+    }
+
+    [Theory]
+    [InlineData(0x0100)]
+    [InlineData(0x0104)]
+    public void GetApplicationShortcut_MapsAltEnterToProperties(int message)
+    {
+        Assert.Equal(CommandBar.Cmd.Properties,
+            MainForm.GetApplicationShortcut(message, (IntPtr)Keys.Return, Keys.Alt));
+    }
+
     [Theory]
     [InlineData(0x4F, CommandBar.Cmd.FolderOptions)]
     [InlineData(0x4C, CommandBar.Cmd.ViewLog)]
@@ -50,6 +66,16 @@ public class MainFormLayoutTests
     }
 
     [Theory]
+    [InlineData(0x43, CommandBar.Cmd.CopyToOtherPane)]
+    [InlineData(0x4D, CommandBar.Cmd.MoveToOtherPane)]
+    public void GetApplicationShortcut_MapsAltTransfersFromSystemKeyMessages(
+        int virtualKey, CommandBar.Cmd expected)
+    {
+        Assert.Equal(expected, MainForm.GetApplicationShortcut(
+            0x0104, (IntPtr)virtualKey, Keys.Alt));
+    }
+
+    [Theory]
     [InlineData(0x4F, Keys.Control | Keys.Shift)]
     [InlineData(0x4C, Keys.Alt)]
     [InlineData(0x48, Keys.Control)]
@@ -57,6 +83,8 @@ public class MainFormLayoutTests
     [InlineData((int)Keys.F1, Keys.Shift)]
     [InlineData((int)Keys.F5, Keys.Control)]
     [InlineData((int)Keys.F5, Keys.Shift)]
+    [InlineData((int)Keys.F4, Keys.Control)]
+    [InlineData((int)Keys.Down, Keys.Alt)]
     public void GetApplicationShortcut_RejectsOtherCombinations(
         int virtualKey, Keys modifiers)
     {

@@ -14,6 +14,8 @@ internal sealed class OperationManager : IDisposable
     private readonly System.Windows.Forms.Timer _pollTimer;
     private readonly SynchronizationContext? _uiContext;
     private readonly Func<OperationWindowPlacement?> _windowPlacementProvider;
+    private readonly Func<FileOperationKind, IReadOnlyList<string>, bool>?
+        _deletionConfirmation;
     private DateTime _nextArtifactCleanupUtc;
     private bool _disposed;
 
@@ -22,7 +24,10 @@ internal sealed class OperationManager : IDisposable
     internal event EventHandler? OperationsChanged;
     internal event EventHandler? OperationsBecameIdle;
 
-    internal OperationManager(Func<OperationWindowPlacement?> windowPlacementProvider)
+    internal OperationManager(
+        Func<OperationWindowPlacement?> windowPlacementProvider,
+        Func<FileOperationKind, IReadOnlyList<string>, bool>?
+            deletionConfirmation = null)
     {
         ArgumentNullException.ThrowIfNull(windowPlacementProvider);
         if (Current != null)
@@ -31,6 +36,7 @@ internal sealed class OperationManager : IDisposable
         Current = this;
         _uiContext = SynchronizationContext.Current;
         _windowPlacementProvider = windowPlacementProvider;
+        _deletionConfirmation = deletionConfirmation;
         DiscoverExistingOperations();
         _nextArtifactCleanupUtc = DateTime.UtcNow + ArtifactCleanupInterval;
         _pollTimer = new System.Windows.Forms.Timer { Interval = 500 };
@@ -66,6 +72,10 @@ internal sealed class OperationManager : IDisposable
         if (paths.Length == 0) return null;
         if (kind is FileOperationKind.Copy or FileOperationKind.Move
             && string.IsNullOrWhiteSpace(destination))
+            return null;
+        if (kind is FileOperationKind.Delete or FileOperationKind.DeletePermanently
+            && _deletionConfirmation is not null
+            && !_deletionConfirmation(kind, paths))
             return null;
 
         var request = new FileOperationRequest
@@ -103,7 +113,7 @@ internal sealed class OperationManager : IDisposable
             {
                 FileName = hostPath,
                 UseShellExecute = false,
-                ArgumentList = { "--broker" },
+                ArgumentList = { "--broker", "--exit-when-idle" },
             });
             if (process == null)
                 throw new InvalidOperationException("Windows did not start the operation host.");
@@ -326,6 +336,7 @@ internal sealed class OperationManager : IDisposable
         bool wasActive;
         bool changed = false;
         var failures = new List<FileOperationState>();
+        var warnings = new List<FileOperationState>();
         lock (_gate) wasActive = _states.Values.Any(state => !state.IsTerminal);
 
         Guid[] ids;
@@ -341,16 +352,52 @@ internal sealed class OperationManager : IDisposable
                     if (_states.TryGetValue(id, out FileOperationState? current))
                         state = Clone(current);
                 }
-                if (state == null || state.HostProcessId <= 0
-                    || DateTime.UtcNow - state.UpdatedUtc <= TimeSpan.FromSeconds(3)
-                    || IsOperationHostRunning(state.HostProcessId))
+                if (state == null)
                     continue;
 
-                state.Status = FileOperationStatus.Failed;
-                state.Error = "The operation host exited before starting the operation.";
-                state.Result = unchecked((int)0x80004005);
-                state.UpdatedUtc = DateTime.UtcNow;
+                DateTime utcNow = DateTime.UtcNow;
+                if (state.HostProcessId <= 0)
+                {
+                    if (!FileOperationStore.HasStartupAcknowledgementTimedOut(
+                            state.CreatedUtc, utcNow))
+                        continue;
+
+                    state.Status = FileOperationStatus.Failed;
+                    state.Error = "The operation host did not acknowledge the request before the startup timeout.";
+                    state.Result = unchecked((int)0x80004005);
+                    state.UpdatedUtc = utcNow;
+                    try
+                    {
+                        if (!FileOperationStore.TryWriteInitialState(state))
+                        {
+                            state = FileOperationStore.TryReadState(
+                                FileOperationStore.StatePath(id));
+                            if (state == null)
+                                continue;
+                        }
+                    }
+                    catch (Exception ex) when (ex is IOException
+                                               or UnauthorizedAccessException)
+                    {
+                        AppLog.Debug(ex, nameof(RefreshStates),
+                            $"Could not persist the startup failure for operation {id:N}.");
+                    }
+                }
+                else
+                {
+                    if (utcNow - state.UpdatedUtc <= TimeSpan.FromSeconds(3)
+                        || IsOperationHostRunning(state.HostProcessId))
+                        continue;
+
+                    state.Status = FileOperationStatus.Failed;
+                    state.Error = "The operation host exited before starting the operation.";
+                    state.Result = unchecked((int)0x80004005);
+                    state.UpdatedUtc = utcNow;
+                }
             }
+
+            if (state == null)
+                continue;
 
             if (!state.IsTerminal && state.HostProcessId > 0
                 && DateTime.UtcNow - state.UpdatedUtc > TimeSpan.FromSeconds(3)
@@ -372,11 +419,16 @@ internal sealed class OperationManager : IDisposable
                 if (!_states.TryGetValue(id, out FileOperationState? previous)
                     || previous.Status != state.Status
                     || previous.CompletedItems != state.CompletedItems
-                    || previous.CurrentItem != state.CurrentItem)
+                    || previous.CurrentItem != state.CurrentItem
+                    || previous.Warning != state.Warning)
                 {
                     if (state.Status == FileOperationStatus.Failed
                         && previous?.Status != FileOperationStatus.Failed)
                         failures.Add(Clone(state));
+                    if (!string.IsNullOrWhiteSpace(state.Warning)
+                        && !string.Equals(previous?.Warning, state.Warning,
+                            StringComparison.Ordinal))
+                        warnings.Add(Clone(state));
                     _states[id] = state;
                     changed = true;
                 }
@@ -389,10 +441,16 @@ internal sealed class OperationManager : IDisposable
             }
         }
 
+        foreach (FileOperationState warning in warnings)
+        {
+            var exception = new InvalidOperationException(
+                $"Operation {warning.Id:N}: {warning.Warning}");
+            AppLog.Warn(exception, nameof(OperationManager),
+                FileOperationPresentation.CreateCleanupWarningMessage(warning));
+        }
         foreach (FileOperationState failure in failures)
             AppLog.Warn(null, nameof(OperationManager),
-                $"A {failure.Kind.ToString().ToLowerInvariant()} operation failed: " +
-                (failure.Error ?? $"Windows returned 0x{failure.Result:X8}."));
+                FileOperationFailurePresentation.CreateLogMessage(failure));
 
         bool isActive;
         lock (_gate) isActive = _states.Values.Any(state => !state.IsTerminal);
@@ -432,6 +490,8 @@ internal sealed class OperationManager : IDisposable
         Status = state.Status,
         TotalItems = state.TotalItems,
         CompletedItems = state.CompletedItems,
+        ProcessedItems = state.ProcessedItems,
+        ItemCountIsComplete = state.ItemCountIsComplete,
         TotalWork = state.TotalWork,
         WorkCompleted = state.WorkCompleted,
         TotalBytes = state.TotalBytes,
@@ -440,6 +500,10 @@ internal sealed class OperationManager : IDisposable
         DestinationDisplayName = state.DestinationDisplayName,
         CurrentItem = state.CurrentItem,
         Error = state.Error,
+        FailureStage = state.FailureStage,
+        FailureExceptionType = state.FailureExceptionType,
+        Warning = state.Warning,
+        StateWriteRetries = state.StateWriteRetries,
         Result = state.Result,
         Aborted = state.Aborted,
         HostProcessId = state.HostProcessId,

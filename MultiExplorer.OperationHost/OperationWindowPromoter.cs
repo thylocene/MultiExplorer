@@ -4,10 +4,9 @@ using System.Runtime.InteropServices;
 namespace MultiExplorer;
 
 /// <summary>
-/// Places newly-created Shell operation windows at the top of the non-modal
-/// window stack. The temporary topmost state makes the progress window visible
-/// when it first appears, then it is returned to ordinary z-order so it cannot
-/// remain above unrelated applications.
+/// Keeps Shell operation prompts in the topmost window band without activating
+/// them. The main application therefore remains usable while prompts stay in
+/// front of its always-on-top operation window.
 /// </summary>
 internal sealed class OperationWindowPromoter : IDisposable
 {
@@ -19,11 +18,11 @@ internal sealed class OperationWindowPromoter : IDisposable
     private const uint SwpShowWindow = 0x0040;
     private const uint PositionFlags = SwpNoSize | SwpNoMove
         | SwpNoActivate | SwpShowWindow;
-    private static readonly TimeSpan TopMostDuration = TimeSpan.FromMilliseconds(900);
+    private const int GwlExStyle = -20;
+    private const int WsExTopMost = 0x00000008;
 
     private readonly object _gate = new();
-    private readonly HashSet<IntPtr> _handledWindows = [];
-    private readonly Dictionary<IntPtr, DateTime> _promotedWindows = [];
+    private readonly HashSet<IntPtr> _promotedWindows = [];
     private readonly System.Threading.Timer _timer;
     private readonly OperationWindowPlacement? _placement;
     private readonly uint _operationThreadId;
@@ -49,29 +48,24 @@ internal sealed class OperationWindowPromoter : IDisposable
             {
                 if (_disposed) return;
 
-                DateTime now = DateTime.UtcNow;
                 foreach (IntPtr window in _promotedWindows
-                             .Where(pair => pair.Value <= now)
-                             .Select(static pair => pair.Key)
+                             .Where(static window => !IsWindow(window))
                              .ToArray())
-                {
-                    ReturnToNormalZOrder(window);
                     _promotedWindows.Remove(window);
-                }
 
                 EnumWindows((window, _) =>
                 {
                     uint windowThreadId = GetWindowThreadProcessId(window, out uint processId);
                     if (processId != (uint)Environment.ProcessId
                         || windowThreadId != _operationThreadId
-                        || !IsWindowVisible(window)
-                        || !_handledWindows.Add(window))
+                        || !IsWindowVisible(window))
                         return true;
 
-                    if (PromoteAndPosition(window))
-                    {
-                        _promotedWindows[window] = now + TopMostDuration;
-                    }
+                    bool wasPromoted = _promotedWindows.Contains(window);
+                    if (OperationWindowPromotionPolicy.RequiresPromotion(
+                            wasPromoted, IsTopMost(window))
+                        && PromoteAndPosition(window, reposition: !wasPromoted))
+                        _promotedWindows.Add(window);
 
                     return true;
                 }, IntPtr.Zero);
@@ -87,12 +81,13 @@ internal sealed class OperationWindowPromoter : IDisposable
         }
     }
 
-    private bool PromoteAndPosition(IntPtr window)
+    private bool PromoteAndPosition(IntPtr window, bool reposition)
     {
         uint flags = PositionFlags;
         int x = 0;
         int y = 0;
-        if (_placement is not null
+        if (reposition
+            && _placement is not null
             && GetWindowRect(window, out WindowRectangle bounds)
             && _placement.TryCalculateLocation(
                 bounds.Right - bounds.Left,
@@ -103,10 +98,13 @@ internal sealed class OperationWindowPromoter : IDisposable
             flags &= ~SwpNoMove;
         }
 
-        // SWP_NOACTIVATE keeps the Shell window non-modal. Its short topmost
-        // promotion remains solely a visibility aid and is removed after 900 ms.
+        // SWP_NOACTIVATE avoids stealing focus. Topmost z-order does not make the
+        // cross-process Shell prompt modal to the main MultiExplorer window.
         return SetWindowPos(window, HwndTopMost, x, y, 0, 0, flags);
     }
+
+    private static bool IsTopMost(IntPtr window) =>
+        (GetWindowLong(window, GwlExStyle) & WsExTopMost) != 0;
 
     private static void ReturnToNormalZOrder(IntPtr window)
     {
@@ -122,10 +120,9 @@ internal sealed class OperationWindowPromoter : IDisposable
 
             _disposed = true;
             _timer.Dispose();
-            foreach (IntPtr window in _promotedWindows.Keys)
+            foreach (IntPtr window in _promotedWindows)
                 ReturnToNormalZOrder(window);
             _promotedWindows.Clear();
-            _handledWindows.Clear();
         }
     }
 
@@ -159,6 +156,9 @@ internal sealed class OperationWindowPromoter : IDisposable
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsWindow(IntPtr window);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern int GetWindowLong(IntPtr window, int index);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

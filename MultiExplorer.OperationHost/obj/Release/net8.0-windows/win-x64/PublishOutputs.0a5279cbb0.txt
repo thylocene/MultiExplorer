@@ -1,7 +1,6 @@
 C:\Projects\MultiExplorer\bin\Release\net8.0-windows10.0.18362.0\win-x64\publish\MultiExplorer.OperationHost.exe
 C:\Projects\MultiExplorer\bin\Release\net8.0-windows10.0.18362.0\win-x64\publish\MultiExplorer.OperationHost.deps.json
 C:\Projects\MultiExplorer\bin\Release\net8.0-windows10.0.18362.0\win-x64\publish\MultiExplorer.OperationHost.runtimeconfig.json
-C:\Projects\MultiExplorer\bin\Release\net8.0-windows10.0.18362.0\win-x64\publish\MultiExplorer.OperationHost.pdb
 C:\Projects\MultiExplorer\bin\Release\net8.0-windows10.0.18362.0\win-x64\publish\Microsoft.DiaSymReader.Native.amd64.dll
 C:\Projects\MultiExplorer\bin\Release\net8.0-windows10.0.18362.0\win-x64\publish\System.IO.Compression.Native.dll
 C:\Projects\MultiExplorer\bin\Release\net8.0-windows10.0.18362.0\win-x64\publish\clretwrc.dll

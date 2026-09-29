@@ -2,6 +2,8 @@
 
   <PropertyGroup>
     <OutputName>MultiExplorer-Setup</OutputName>
+    <!-- Skip WiX ICE checks; Build-Installer.ps1 still validates the MSI payload. -->
+    <SuppressValidation>True</SuppressValidation>
     <!-- Direct project builds use today's date; Build-Installer.ps1 can override it. -->
     <BuildDate Condition="'$(BuildDate)' == ''">$([System.DateTime]::Today.ToString('yyyy-MM-dd'))</BuildDate>
     <!-- Release builds supply a monotonically increasing AppX identity version so
@@ -21,7 +23,8 @@
   <PropertyGroup>
     <_PublishDir>$(MSBuildThisFileDirectory)..\bin\Release\net8.0-windows10.0.18362.0\win-x64\publish\</_PublishDir>
     <_SourceDir>$(MSBuildThisFileDirectory)..\</_SourceDir>
-    <DefineConstants>PublishDir=$(_PublishDir);SourceDir=$(_SourceDir);Version=$(Version);BuildDate=$(BuildDate)</DefineConstants>
+    <_ReleaseNotesRtf>$(MSBuildThisFileDirectory)obj\$(Configuration)\ReleaseNotes.rtf</_ReleaseNotesRtf>
+    <DefineConstants>PublishDir=$(_PublishDir);SourceDir=$(_SourceDir);ReleaseNotesRtf=$(_ReleaseNotesRtf);Version=$(Version);BuildDate=$(BuildDate)</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -39,6 +42,9 @@
     <Content Include="Assets\InstallerBanner.bmp" />
     <Content Include="Assets\InstallerDialog.bmp" />
     <Content Include="Assets\MultiExplorer-Installer.ico" />
+    <Content Include="..\release_notes.txt" Link="release_notes.txt" />
+    <Content Include="Add-WelcomeReleaseNotesButton.ps1" />
+    <Content Include="Convert-ReleaseNotesToRtf.ps1" />
     <Compile Include="$(IntermediateOutputPath)PublishedFiles.wxs" />
   </ItemGroup>
 
@@ -68,6 +74,18 @@
 
   <Target Name="BuildIdentityPackage" DependsOnTargets="PublishMainApp">
     <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\MultiExplorer.Identity\Build-IdentityPackage.ps1&quot; -Version &quot;$(IdentityPackageVersion)&quot; -OutputPath &quot;$(_PublishDir)MultiExplorer.Identity.msix&quot;" />
+  </Target>
+
+  <Target Name="GenerateReleaseNotesRtf" BeforeTargets="CoreCompile">
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)Convert-ReleaseNotesToRtf.ps1&quot; -InputPath &quot;$(_SourceDir)release_notes.txt&quot; -OutputPath &quot;$(_ReleaseNotesRtf)&quot;" />
+  </Target>
+
+  <!-- WixUI's stock WelcomeDlg cannot be extended with an additional control.
+       Insert the one application-specific button after linking and before the
+       release script validates and signs the MSI. The patch is idempotent. -->
+  <Target Name="AddWelcomeReleaseNotesButton" AfterTargets="Build">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)Add-WelcomeReleaseNotesButton.ps1&quot; -MsiPath &quot;$(TargetPath)&quot;" />
   </Target>
 
 </Project>

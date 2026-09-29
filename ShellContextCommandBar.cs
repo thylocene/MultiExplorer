@@ -32,13 +32,13 @@ internal sealed class ShellContextCommandBar
     private const uint MftOwnerDraw = 0x0100;
     private const uint MftSeparator = 0x0800;
     private const uint MfsEnabled = 0;
-    private const int LogicalCellWidth = 76;
-    private const int LogicalHeight = 62;
+    private const int LogicalCellWidth = 68;
+    private const int LogicalHeight = 54;
     private const int LogicalIconSize = 16;
-    private const int LogicalIconAreaTop = 5;
-    private const int LogicalIconAreaSize = 20;
-    private const int LogicalLabelTop = 28;
-    private const int LogicalLabelHeight = 22;
+    private const int LogicalIconAreaTop = 4;
+    private const int LogicalIconAreaSize = 18;
+    private const int LogicalLabelTop = 24;
+    private const int LogicalLabelHeight = 20;
 
     internal static readonly ShellContextCommand[] Commands =
     [
@@ -247,7 +247,7 @@ internal sealed class ShellContextCommandBar
 
             if (index > 0)
             {
-                using var separator = new Pen(Color.FromArgb(80, ThemeManager.Border));
+                using var separator = new Pen(ThemeManager.Border);
                 graphics.DrawLine(separator, left, bounds.Top + Scale(8, scale),
                     left, bounds.Bottom - Scale(8, scale));
             }

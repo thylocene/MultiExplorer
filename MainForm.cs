@@ -19,6 +19,8 @@ public class MainForm : Form, IMessageFilter
     internal const int ActiveRefreshIntervalMilliseconds = 300;
     internal const int IdleRefreshIntervalMilliseconds = 2000;
     internal const int ActiveRefreshWindowMilliseconds = 1500;
+    internal const int InitialPresentationTimeoutMilliseconds = 30000;
+    internal const int WarningStatusDurationMilliseconds = 30000;
     private const string ApplicationIconResourceName =
         "MultiExplorer.MultiExplorer-Installer.ico";
 
@@ -41,12 +43,21 @@ public class MainForm : Form, IMessageFilter
     private List<string> _initialLeftPaths = [];
     private List<string> _initialRightPaths = [];
     private bool _explorerPanelsLaunched;
+    private bool _initialPresentationPending;
+    private bool _hasPendingInitialCollapseState;
+    private bool _pendingInitialLeftCollapsed;
+    private bool _pendingInitialRightCollapsed;
+    private StartupLoadingForm? _startupLoadingForm;
+    private System.Windows.Forms.Timer? _startupLoadingTimeout;
+
+    internal event EventHandler? InitialPresentationCompleted;
 
     private readonly StatusStrip                  _statusBar;
     private readonly ToolStripStatusLabel         _statusIcon;
     private readonly ToolStripStatusLabel         _statusMessage;
     private readonly ToolStripStatusLabel         _statusDismiss;
     private readonly System.Windows.Forms.Timer   _statusClearTimer;
+    private LogEntry? _currentStatusEntry;
 
     private readonly NotifyIcon          _trayIcon;
     private readonly ToolStripMenuItem   _miMinimizeToTray;
@@ -79,21 +90,31 @@ public class MainForm : Form, IMessageFilter
     {
         _settings = settings;
         _startInSystemTray = startInSystemTray;
-        _startupFolder = Directory.Exists(startupFolder)
+        _startupFolder = startupFolder is not null
+            && (ExplorerHost.IsNetworkPath(startupFolder)
+                || Directory.Exists(startupFolder))
             ? Path.GetFullPath(startupFolder)
             : null;
-        _operations = new OperationManager(GetOperationWindowPlacement);
+        _operations = new OperationManager(
+            GetOperationWindowPlacement,
+            ConfirmDeletion);
 
+        // The form needs a real, laid-out HWND for ExplorerBrowser to create its
+        // native children, but it should not expose that partially populated UI.
+        // Keep it transparent until both initial panes report that their visible
+        // navigation and file content is ready.
+        Opacity = 0;
         if (_startInSystemTray)
         {
-            // Keep the initial window out of both the taskbar and the visible desktop.
-            // Opacity is restored after the first Shown event so later user activation
-            // displays the window normally.
+            // Sign-in launches remain completely absent from the taskbar and do
+            // not create Explorer panes until the user opens MultiExplorer.
             ShowInTaskbar = false;
-            Opacity = 0;
         }
 
         Text = "MultiExplorer";
+#if DEBUG
+        Text += " [Debug]";
+#endif
         using var iconStream = GetType().Assembly.GetManifestResourceStream(ApplicationIconResourceName);
         if (iconStream != null)
         {
@@ -107,6 +128,16 @@ public class MainForm : Form, IMessageFilter
         _layoutPanel = new Panel { Dock = DockStyle.Fill };
         _leftPanel   = new PanelView();
         _rightPanel  = new PanelView();
+        _leftPanel.SetOpenExplorerWhenTabDroppedOutside(
+            _settings.OpenExplorerWhenTabDroppedOutside);
+        _rightPanel.SetOpenExplorerWhenTabDroppedOutside(
+            _settings.OpenExplorerWhenTabDroppedOutside);
+        _leftPanel.SetSortFoldersWithFilesByName(
+            _settings.SortFoldersWithFilesByName);
+        _rightPanel.SetSortFoldersWithFilesByName(
+            _settings.SortFoldersWithFilesByName);
+        _leftPanel.OpenInFileExplorerRequested += OnOpenInFileExplorerRequested;
+        _rightPanel.OpenInFileExplorerRequested += OnOpenInFileExplorerRequested;
         _leftPanel.SetPreviewPaneWidth(_settings.LeftPreviewPaneWidth);
         _rightPanel.SetPreviewPaneWidth(_settings.RightPreviewPaneWidth);
         _leftPanel.PreviewPaneWidthChanged += (_, width) =>
@@ -129,6 +160,16 @@ public class MainForm : Form, IMessageFilter
         // Mirror button: each panel's request navigates the opposite panel
         _leftPanel.MirrorToOtherRequested  += (_, path) => _rightPanel.NavigateTo(path);
         _rightPanel.MirrorToOtherRequested += (_, path) => _leftPanel.NavigateTo(path);
+        _leftPanel.ComparePanesRequested += (_, _) => ShowFolderCompare();
+        _rightPanel.ComparePanesRequested += (_, _) => ShowFolderCompare();
+        _leftPanel.CreateShortcutRequested += (_, path) =>
+            ShowCreateShortcut(_leftPanel, _rightPanel, path);
+        _rightPanel.CreateShortcutRequested += (_, path) =>
+            ShowCreateShortcut(_rightPanel, _leftPanel, path);
+        _leftPanel.TransferToOtherPaneRequested += (_, request) =>
+            TransferToOtherPane(_rightPanel, request);
+        _rightPanel.TransferToOtherPaneRequested += (_, request) =>
+            TransferToOtherPane(_leftPanel, request);
 
         // QuickLook toggle: persist the setting immediately and keep both panels in sync
         _leftPanel.QuickLookToggled  += OnQuickLookToggled;
@@ -137,6 +178,8 @@ public class MainForm : Form, IMessageFilter
         // Hotkey configuration
         _leftPanel.SetHotkeyRequested  += (_, _) => OnSetHotkeyRequested();
         _rightPanel.SetHotkeyRequested += (_, _) => OnSetHotkeyRequested();
+        _leftPanel.SettingsRequested += OnSettingsRequested;
+        _rightPanel.SettingsRequested += OnSettingsRequested;
 
         _leftPanel.StartWithWindowsToggled  += OnStartWithWindowsToggled;
         _rightPanel.StartWithWindowsToggled += OnStartWithWindowsToggled;
@@ -183,9 +226,14 @@ public class MainForm : Form, IMessageFilter
         _statusBar.Items.AddRange(new ToolStripItem[] { _statusIcon, _statusMessage, _statusDismiss });
         Controls.Add(_statusBar);
 
-        _statusClearTimer = new System.Windows.Forms.Timer { Interval = 6000 };
+        _statusClearTimer = new System.Windows.Forms.Timer
+        {
+            Interval = WarningStatusDurationMilliseconds,
+        };
         _statusClearTimer.Tick += (_, _) => ClearStatus();
         AppLog.MessageLogged += OnLogMessage;
+        if (AppLog.TakeLatestUserMessage() is { } startupMessage)
+            OnLogMessage(startupMessage);
 
         _pathPollTimer = new System.Windows.Forms.Timer
         {
@@ -280,6 +328,18 @@ public class MainForm : Form, IMessageFilter
         };
     }
 
+    private bool ConfirmDeletion(
+        FileOperationKind operation,
+        IReadOnlyList<string> paths)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        if (!_settings.ConfirmFileAndFolderDeletions)
+            return true;
+
+        using var dialog = new DeleteConfirmationDialog(operation, paths);
+        return dialog.ShowDialog(this) == DialogResult.OK;
+    }
+
     private void ChangeTheme(ApplicationTheme theme)
     {
         if (theme == ThemeManager.Current) return;
@@ -305,7 +365,10 @@ public class MainForm : Form, IMessageFilter
         ThemeManager.ApplyToolStrip(_trayMenu);
         BackColor = ThemeManager.Background;
         ForeColor = ThemeManager.Text;
-        ClearStatus();
+        if (_currentStatusEntry is { } statusEntry)
+            ShowStatus(statusEntry);
+        else
+            ClearStatus();
         if (IsHandleCreated) ThemeManager.ApplyNativeWindow(Handle);
         ResumeLayout(true);
         Refresh();
@@ -372,7 +435,98 @@ public class MainForm : Form, IMessageFilter
             return;
         }
 
+        BeginInitialPresentation();
+    }
+
+    private void BeginInitialPresentation()
+    {
+        if (_initialPresentationPending || IsDisposed || Disposing)
+            return;
+        if (_explorerPanelsLaunched) return;
+
+        _initialPresentationPending = true;
+        Opacity = 0;
+        _startupLoadingForm = new StartupLoadingForm(Icon);
+        _startupLoadingForm.ShowCentered(this);
+
+        _startupLoadingTimeout = new System.Windows.Forms.Timer
+        {
+            Interval = InitialPresentationTimeoutMilliseconds,
+        };
+        _startupLoadingTimeout.Tick += OnStartupLoadingTimeout;
+        _startupLoadingTimeout.Start();
+
         LaunchExplorerPanels();
+    }
+
+    private void OnStartupLoadingTimeout(object? sender, EventArgs e)
+    {
+        AppLog.Warn(null, nameof(MainForm),
+            "Initial Explorer content did not finish loading within 30 seconds; "
+            + "showing the main window while the remaining content continues.");
+        CompleteInitialPresentation();
+    }
+
+    private void CompleteInitialPresentation()
+    {
+        if (!_initialPresentationPending) return;
+
+        _initialPresentationPending = false;
+        RestorePendingInitialCollapseState();
+        StopStartupLoadingTimeout();
+
+        ShowInTaskbar = true;
+        Opacity = 1;
+        Show();
+        Refresh();
+
+        StartupLoadingForm? loadingForm = _startupLoadingForm;
+        _startupLoadingForm = null;
+        if (loadingForm is not null)
+        {
+            loadingForm.Close();
+            loadingForm.Dispose();
+        }
+
+        Activate();
+        BringToFront();
+        InitialPresentationCompleted?.Invoke(this, EventArgs.Empty);
+        _ = WarmContextMenuCachesAsync();
+    }
+
+    private void StopStartupLoadingTimeout()
+    {
+        if (_startupLoadingTimeout is null) return;
+
+        _startupLoadingTimeout.Stop();
+        _startupLoadingTimeout.Tick -= OnStartupLoadingTimeout;
+        _startupLoadingTimeout.Dispose();
+        _startupLoadingTimeout = null;
+    }
+
+    private void CancelInitialPresentation()
+    {
+        _initialPresentationPending = false;
+        RestorePendingInitialCollapseState();
+        StopStartupLoadingTimeout();
+
+        StartupLoadingForm? loadingForm = _startupLoadingForm;
+        _startupLoadingForm = null;
+        if (loadingForm is null) return;
+
+        loadingForm.Close();
+        loadingForm.Dispose();
+    }
+
+    private void RestorePendingInitialCollapseState()
+    {
+        if (!_hasPendingInitialCollapseState) return;
+
+        _hasPendingInitialCollapseState = false;
+        _leftCollapsed = _pendingInitialLeftCollapsed;
+        _rightCollapsed = _pendingInitialRightCollapsed;
+        if (_leftCollapsed || _rightCollapsed)
+            ApplyLayout();
     }
 
     private void LaunchExplorerPanels()
@@ -386,6 +540,9 @@ public class MainForm : Form, IMessageFilter
         // visible at full size, then apply the saved collapse state afterwards.
         bool savedLc = _leftCollapsed;
         bool savedRc = _rightCollapsed;
+        _pendingInitialLeftCollapsed = savedLc;
+        _pendingInitialRightCollapsed = savedRc;
+        _hasPendingInitialCollapseState = true;
         _leftCollapsed = false;
         _rightCollapsed = false;
         ApplyLayout();
@@ -393,14 +550,48 @@ public class MainForm : Form, IMessageFilter
         // ExplorerBrowser's two navigation trees share Shell image-list state.
         // Initializing both on separate STA threads at exactly the same time can
         // leave either tree with blank icon slots until that browser is recreated.
-        // Start the second pane once the first navigation has finished; the two
-        // browser threads remain fully independent after startup.
+        // Start the second pane once the first native navigation is ready, while
+        // allowing its managed Details list to finish in parallel.
+        bool leftContentReady = false;
+        bool rightContentReady = false;
+        bool completionStarted = false;
+
+        void TryCompleteInitialPresentation()
+        {
+            if (!leftContentReady || !rightContentReady || completionStarted
+                || !_initialPresentationPending || IsDisposed || Disposing)
+                return;
+
+            completionStarted = true;
+            _ = CompleteAndRestoreLeftNavigationAsync();
+        }
+
+        async Task CompleteAndRestoreLeftNavigationAsync()
+        {
+            // The file views are ready. Show them before repairing any tree
+            // expansion reset by the second browser's initialization.
+            CompleteInitialPresentation();
+            if (!IsDisposed && !Disposing)
+                await _leftPanel.RestoreActiveNavigationPaneAsync();
+        }
+
+        EventHandler? leftContentCompleted = null;
+        leftContentCompleted = (_, _) =>
+        {
+            _leftPanel.InitialBrowserReady -= leftContentCompleted;
+            leftContentReady = true;
+            TryCompleteInitialPresentation();
+        };
+        _leftPanel.InitialBrowserReady += leftContentCompleted;
+
         EventHandler? launchRightPanel = null;
         launchRightPanel = (_, _) =>
         {
-            _leftPanel.InitialBrowserReady -= launchRightPanel;
+            _leftPanel.InitialNavigationReady -= launchRightPanel;
             if (!IsDisposed && !Disposing)
             {
+                _startupLoadingForm?.SetMessage(
+                    "Preparing files, folders, and navigation in the second pane…");
                 // ExplorerBrowser navigation trees share process-wide Shell
                 // state. Initialising the second tree can reset the expansion
                 // applied to the first, so restore the left tree once the right
@@ -409,26 +600,19 @@ public class MainForm : Form, IMessageFilter
                 restoreLeftNavigation = (_, _) =>
                 {
                     _rightPanel.InitialBrowserReady -= restoreLeftNavigation;
-                    if (!IsDisposed && !Disposing)
-                        _leftPanel.RestoreActiveNavigationPane();
+                    rightContentReady = true;
+                    TryCompleteInitialPresentation();
                 };
                 _rightPanel.InitialBrowserReady += restoreLeftNavigation;
                 _rightPanel.Launch(_initialRightPaths);
             }
         };
-        _leftPanel.InitialBrowserReady += launchRightPanel;
+        _leftPanel.InitialNavigationReady += launchRightPanel;
         _leftPanel.Launch(_initialLeftPaths);
-
-        _leftCollapsed  = savedLc;
-        _rightCollapsed = savedRc;
-        if (_leftCollapsed || _rightCollapsed)
-            ApplyLayout();
 
         BeginFastRefreshWindow();
         _pathPollTimer.Start();
         SetFocusedPanel(_leftPanel);
-        _ = WarmContextMenuCachesAsync();
-        _ = StartPinService.RefreshPinnedTileLogosAsync();
     }
 
     private static async Task WarmContextMenuCachesAsync()
@@ -552,6 +736,7 @@ public class MainForm : Form, IMessageFilter
             return;
         }
 
+        CancelInitialPresentation();
         Application.RemoveMessageFilter(this);
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
@@ -571,6 +756,7 @@ public class MainForm : Form, IMessageFilter
     {
         if (disposing)
         {
+            CancelInitialPresentation();
             _operations.OperationsChanged -= OnOperationsChanged;
             _operations.OperationsBecameIdle -= OnOperationsBecameIdle;
             _operations.Dispose();
@@ -613,15 +799,27 @@ public class MainForm : Form, IMessageFilter
     {
         _isInSystemTray = false;
         ShowInTaskbar = true;
-        Opacity = 1;
+        Opacity = _initialPresentationPending || !_explorerPanelsLaunched ? 0 : 1;
         Show();
         WindowState = _settings.WindowState == "Maximized"
                           ? FormWindowState.Maximized
                           : FormWindowState.Normal;
-        LaunchExplorerPanels();
+        _trayIcon.Visible = false;
+
+        if (_initialPresentationPending)
+        {
+            _startupLoadingForm?.Activate();
+            return;
+        }
+
+        if (!_explorerPanelsLaunched)
+        {
+            BeginInitialPresentation();
+            return;
+        }
+
         Activate();
         BringToFront();
-        _trayIcon.Visible = false;
         BeginFastRefreshWindow();
         _pathPollTimer.Start();
     }
@@ -638,6 +836,53 @@ public class MainForm : Form, IMessageFilter
     {
         _forceClose = true;
         Close();
+    }
+
+    private void ShowFolderCompare()
+    {
+        using var dialog = new FolderCompareDialog(
+            _leftPanel.CurrentPath(), _rightPanel.CurrentPath(), _operations.Start);
+        dialog.ShowDialog(this);
+    }
+
+    private void ShowCreateShortcut(PanelView sourcePane, PanelView otherPane,
+        string targetPath)
+    {
+        string currentFolder = sourcePane.CurrentPath();
+        if (!Directory.Exists(currentFolder))
+            currentFolder = Path.GetDirectoryName(targetPath) ?? currentFolder;
+
+        using var dialog = new CreateShortcutDialog(targetPath, currentFolder,
+            otherPane.CurrentPath(), new ShortcutCreationService());
+        if (dialog.ShowDialog(this) != DialogResult.OK
+            || dialog.CreatedPath is not { } createdPath)
+            return;
+
+        string? destination = Path.GetDirectoryName(createdPath);
+        if (string.Equals(destination, sourcePane.CurrentPath(),
+                StringComparison.OrdinalIgnoreCase))
+            sourcePane.RefreshCurrentFolder();
+        if (string.Equals(destination, otherPane.CurrentPath(),
+                StringComparison.OrdinalIgnoreCase))
+            otherPane.RefreshCurrentFolder();
+    }
+
+    private void TransferToOtherPane(PanelView destinationPane,
+        OppositePaneTransferRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(destinationPane);
+        ArgumentNullException.ThrowIfNull(request);
+        string? destination = destinationPane.AvailableFileOperationDestination;
+        if (destination is null)
+        {
+            MessageBox.Show(this,
+                "The opposite pane does not have an available folder.",
+                "Cannot transfer items", MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        _operations.Start(request.Kind, request.Paths, destination);
     }
 
     private void OnOperationsChanged(object? sender, EventArgs e)
@@ -792,18 +1037,211 @@ public class MainForm : Form, IMessageFilter
         return false;
     }
 
+    private async void OnSettingsRequested(object? sender, EventArgs e)
+    {
+        try
+        {
+            await ShowSettingsAsync();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, nameof(OnSettingsRequested),
+                "Could not apply the selected settings.");
+            MessageBox.Show(
+                this,
+                "MultiExplorer could not apply all of the selected settings. "
+                    + "See the application log for details.",
+                "Settings",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+    }
+
+    private async Task ShowSettingsAsync()
+    {
+        var state = new SettingsDialogState(
+            ThemeManager.Current,
+            _settings.ShowWindowModifiers,
+            _settings.ShowWindowVk,
+            _settings.StartWithWindows,
+            _settings.MinimizeToTray,
+            _settings.QuickLookEnabled,
+            _settings.ConfirmFileAndFolderDeletions,
+            _settings.OpenExplorerWhenTabDroppedOutside,
+            _settings.SortFoldersWithFilesByName);
+        using var dialog = new SettingsForm(state, ExplorerOptions.Open);
+
+        while (dialog.ShowDialog(this) == DialogResult.OK)
+        {
+            if (!TryUpdateHotkey(
+                    dialog.SelectedHotkeyModifiers,
+                    dialog.SelectedHotkeyVirtualKey))
+            {
+                dialog.DialogResult = DialogResult.None;
+                continue;
+            }
+
+            bool startWithWindows = _settings.StartWithWindows;
+            if (dialog.StartWithWindows != _settings.StartWithWindows)
+            {
+                (bool success, Exception? error) =
+                    await StartupManager.TrySetEnabledAsync(
+                        dialog.StartWithWindows);
+                if (success)
+                {
+                    startWithWindows = dialog.StartWithWindows;
+                }
+                else
+                {
+                    AppLog.Warn(error!, nameof(ShowSettingsAsync),
+                        "Could not update start-with-Windows registration.");
+                    MessageBox.Show(
+                        this,
+                        "The Start with Windows setting could not be changed. "
+                            + "The other settings were saved.",
+                        "Settings",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                }
+            }
+
+            _settings.StartWithWindows = startWithWindows;
+            _settings.MinimizeToTray = dialog.MinimizeToTray;
+            _settings.QuickLookEnabled = dialog.QuickLookEnabled;
+            _settings.ConfirmFileAndFolderDeletions =
+                dialog.ConfirmFileAndFolderDeletions;
+            _settings.OpenExplorerWhenTabDroppedOutside =
+                dialog.OpenExplorerWhenTabDroppedOutside;
+            _settings.SortFoldersWithFilesByName =
+                dialog.SortFoldersWithFilesByName;
+            _leftPanel.SetOpenExplorerWhenTabDroppedOutside(
+                _settings.OpenExplorerWhenTabDroppedOutside);
+            _rightPanel.SetOpenExplorerWhenTabDroppedOutside(
+                _settings.OpenExplorerWhenTabDroppedOutside);
+            _leftPanel.SetSortFoldersWithFilesByName(
+                _settings.SortFoldersWithFilesByName);
+            _rightPanel.SetSortFoldersWithFilesByName(
+                _settings.SortFoldersWithFilesByName);
+            ExplorerHost.QuickLookEnabled = dialog.QuickLookEnabled;
+            _miMinimizeToTray.Checked = dialog.MinimizeToTray;
+            UpdateStartWithWindowsUi();
+            UpdateMinimizeToTrayUi();
+            SettingsManager.Save(_settings);
+
+            if (dialog.SelectedTheme != ThemeManager.Current)
+                ChangeTheme(dialog.SelectedTheme);
+            break;
+        }
+    }
+
+    private async void OnOpenInFileExplorerRequested(
+        object? sender, OpenInFileExplorerRequestedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(e.Path)) return;
+
+        ExplorerLaunchResult result;
+        try
+        {
+            result = await ExplorerWindowLauncher.OpenAtAsync(
+                e.Path, e.DropPosition, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn(ex, nameof(OnOpenInFileExplorerRequested),
+                $"Could not open Windows File Explorer at \"{e.Path}\".");
+            return;
+        }
+
+        if (result.WindowFound && sender is PanelView sourcePanel)
+        {
+            try
+            {
+                sourcePanel.CloseTabAfterExplorerOpened(e.SourceTab);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn(ex, nameof(OnOpenInFileExplorerRequested),
+                    "Windows File Explorer opened, but the source tab could not be closed.");
+            }
+        }
+
+        if (!result.WindowFound)
+            AppLog.Warn(null, nameof(OnOpenInFileExplorerRequested),
+                "Windows File Explorer was launched, but its new window could not be found.");
+        else if (!result.Placed)
+            AppLog.Warn(null, nameof(OnOpenInFileExplorerRequested),
+                "Windows File Explorer opened, but its new window could not be placed and focused on the drop screen.");
+    }
+
+    private bool TryUpdateHotkey(int newModifiers, int newVirtualKey)
+    {
+        if (newModifiers == _settings.ShowWindowModifiers
+            && newVirtualKey == _settings.ShowWindowVk)
+            return true;
+
+        int previousModifiers = _registeredModifiers;
+        int previousVirtualKey = _registeredVk;
+        NativeMethods.UnregisterHotKey(Handle, HotkeyToggleWindow);
+
+        if (NativeMethods.RegisterHotKey(
+                Handle,
+                HotkeyToggleWindow,
+                newModifiers | NativeMethods.MOD_NOREPEAT,
+                newVirtualKey))
+        {
+            _registeredModifiers = newModifiers;
+            _registeredVk = newVirtualKey;
+            _settings.ShowWindowModifiers = newModifiers;
+            _settings.ShowWindowVk = newVirtualKey;
+            return true;
+        }
+
+        if (previousModifiers != 0)
+        {
+            NativeMethods.RegisterHotKey(
+                Handle,
+                HotkeyToggleWindow,
+                previousModifiers | NativeMethods.MOD_NOREPEAT,
+                previousVirtualKey);
+        }
+
+        MessageBox.Show(
+            this,
+            $"{HotkeyDialog.Describe(newModifiers, newVirtualKey)} is already "
+                + "in use by another application.",
+            "Could not register hotkey",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Warning);
+        return false;
+    }
+
     internal static CommandBar.Cmd? GetApplicationShortcut(
         int message, IntPtr virtualKey, Keys modifiers)
     {
         const int WM_KEYDOWN = 0x0100;
-        if (message != WM_KEYDOWN)
+        const int WM_SYSKEYDOWN = 0x0104;
+        if (message is not (WM_KEYDOWN or WM_SYSKEYDOWN))
             return null;
+
+        if (modifiers == Keys.Alt)
+            return virtualKey.ToInt32() switch
+            {
+                (int)Keys.C => CommandBar.Cmd.CopyToOtherPane,
+                (int)Keys.M => CommandBar.Cmd.MoveToOtherPane,
+                (int)Keys.Return => CommandBar.Cmd.Properties,
+                _ => null,
+            };
+
+        if (message != WM_KEYDOWN) return null;
 
         if (virtualKey.ToInt32() == (int)Keys.F1 && modifiers == Keys.None)
             return CommandBar.Cmd.Help;
 
         if (virtualKey.ToInt32() == (int)Keys.F5 && modifiers == Keys.None)
             return CommandBar.Cmd.Refresh;
+
+        if (virtualKey.ToInt32() == (int)Keys.F4 && modifiers == Keys.None)
+            return CommandBar.Cmd.EditAddressBar;
 
         if (virtualKey.ToInt32() == (int)Keys.N
             && modifiers == (Keys.Control | Keys.Shift))
@@ -962,16 +1400,29 @@ public class MainForm : Form, IMessageFilter
             return;
         }
 
+        if (!ShouldReplaceStatus(_currentStatusEntry?.Severity, entry.Severity))
+            return;
+
+        _currentStatusEntry = entry;
         _statusClearTimer.Stop();
+        ShowStatus(entry);
+
+        if (entry.Severity == LogSeverity.Warn)
+            _statusClearTimer.Start();
+    }
+
+    internal static bool ShouldReplaceStatus(
+        LogSeverity? currentSeverity, LogSeverity incomingSeverity) =>
+        currentSeverity != LogSeverity.Error || incomingSeverity == LogSeverity.Error;
+
+    private void ShowStatus(LogEntry entry)
+    {
         _statusIcon.Text      = entry.Severity == LogSeverity.Error ? "✕" : "⚠";
         _statusIcon.ForeColor = entry.Severity == LogSeverity.Error ? ThemeManager.Error : ThemeManager.Warning;
         _statusMessage.Text      = entry.ShortMessage;
         _statusMessage.ForeColor = ThemeManager.Text;
         _statusMessage.IsLink    = true;
         _statusDismiss.Visible   = true;
-
-        if (entry.Severity == LogSeverity.Warn)
-            _statusClearTimer.Start(); // auto-clear warnings after 6 s; errors persist
     }
 
     private void OnQuickLookToggled(object? sender, EventArgs e)
@@ -1018,19 +1469,13 @@ public class MainForm : Form, IMessageFilter
 
     private async Task SynchronizeStartupRegistrationAsync()
     {
-        AppLog.Debug(nameof(SynchronizeStartupRegistrationAsync),
-            $"Synchronizing start-with-Windows registration (enabled={_settings.StartWithWindows}).");
         (bool success, Exception? error) =
             await StartupManager.TrySetEnabledAsync(_settings.StartWithWindows);
         if (!success)
         {
             AppLog.Warn(error!, nameof(SynchronizeStartupRegistrationAsync),
                 "Could not synchronize the start-with-Windows preference.");
-            return;
         }
-
-        AppLog.Debug(nameof(SynchronizeStartupRegistrationAsync),
-            "Start-with-Windows registration is synchronized.");
     }
 
     private void UpdateStartWithWindowsUi()
@@ -1048,6 +1493,7 @@ public class MainForm : Form, IMessageFilter
     private void ClearStatus()
     {
         _statusClearTimer.Stop();
+        _currentStatusEntry = null;
         _statusIcon.Text         = "✓";
         _statusIcon.ForeColor    = ThemeManager.MutedText;
         _statusMessage.Text      = "Ready";

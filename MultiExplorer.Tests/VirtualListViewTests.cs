@@ -40,6 +40,105 @@ public sealed class VirtualListViewTests
     }
 
     [Fact]
+    public async Task InlineRename_DoesNotPaintTheOldNameBehindTheEditor()
+    {
+        await RunInStaAsync(() =>
+        {
+            using var list = new ManagedDetailsListView();
+            ListViewItem item = list.Items.Add("New folder");
+            var draw = typeof(ManagedDetailsListView).GetMethod("OnDrawSubItem",
+                BindingFlags.Instance | BindingFlags.NonPublic
+                | BindingFlags.DeclaredOnly)!;
+            var editingIndex = typeof(ManagedDetailsListView).GetField(
+                "_editingItemIndex", BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+            int DrawAndCountTextPixels()
+            {
+                using var bitmap = new Bitmap(220, 32);
+                using Graphics graphics = Graphics.FromImage(bitmap);
+                graphics.Clear(ThemeManager.Window);
+                var args = new DrawListViewSubItemEventArgs(graphics,
+                    new Rectangle(0, 0, 220, 32), item, item.SubItems[0],
+                    0, 0, list.Columns[0], ListViewItemStates.Default);
+                draw.Invoke(list, [list, args]);
+                int differentPixels = 0;
+                for (int y = 0; y < bitmap.Height; y++)
+                for (int x = 0; x < bitmap.Width; x++)
+                    if (bitmap.GetPixel(x, y).ToArgb()
+                        != ThemeManager.Window.ToArgb())
+                        differentPixels++;
+                return differentPixels;
+            }
+
+            Assert.True(DrawAndCountTextPixels() > 0);
+            editingIndex.SetValue(list, item.Index);
+            Assert.Equal(0, DrawAndCountTextPixels());
+        });
+    }
+
+    [Fact]
+    public async Task CreatedTextDocument_OpensTheInlineRenameEditor()
+    {
+        string folder = Path.Combine(Path.GetTempPath(),
+            $"MultiExplorer-document-rename-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var document = new ShellNewMenu.ShellNewItem("Text Document",
+                ShellNewMenu.ShellNewKind.EmptyFile, ".txt", null, null, null);
+            Assert.True(ShellNewMenu.TryExecute(document, folder,
+                out string? createdPath));
+            Assert.NotNull(createdPath);
+
+            await RunInStaAsync(() =>
+            {
+                using var form = new Form
+                {
+                    ShowInTaskbar = false,
+                    ClientSize = new Size(700, 400),
+                };
+                using var list = new ManagedDetailsListView
+                {
+                    Dock = DockStyle.Fill,
+                };
+                using var timer = new System.Windows.Forms.Timer { Interval = 50 };
+                form.Controls.Add(list);
+                DateTime deadline = DateTime.UtcNow.AddSeconds(8);
+                bool editorOpened = false;
+                form.Shown += (_, _) =>
+                {
+                    list.ShowDirectory(folder, showHiddenItems: true);
+                    list.BeginRenameCreatedItem(createdPath);
+                };
+                timer.Tick += (_, _) =>
+                {
+                    IntPtr editor = NativeMethods.SendMessageI(list.Handle,
+                        NativeMethods.LVM_GETEDITCONTROL,
+                        IntPtr.Zero, IntPtr.Zero);
+                    if (editor != IntPtr.Zero)
+                    {
+                        editorOpened = true;
+                        form.Close();
+                    }
+                    else if (DateTime.UtcNow >= deadline)
+                    {
+                        form.Close();
+                    }
+                };
+                timer.Start();
+                Application.Run(form);
+                Assert.True(editorOpened,
+                    "The created text document never entered inline rename.");
+            });
+        }
+        finally
+        {
+            DirectorySnapshotCache.Invalidate(folder);
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task LargeDirectory_UsesVirtualRowsAndPreservesPathSelection()
     {
         const int fileCount = ManagedDetailsListView.VirtualizationThreshold + 8;

@@ -38,6 +38,7 @@ internal sealed class ManagedDetailsListView : ListView
     private const int CompactMinimumRowHeight = 24;
     private const int StandardMinimumRowHeight = 32;
     private const int IconPadding = 4;
+    private const int MkShift = 0x0004;
     private const int MkControl = 0x0008;
     private const string DropDescriptionFormat = "DropDescription";
     internal const int VirtualizationThreshold = 512;
@@ -58,8 +59,10 @@ internal sealed class ManagedDetailsListView : ListView
     private bool _applyingWidths;
     private bool _hasInputFocus;
     private int _hoveredItemIndex = -1;
+    private int _dragPaintItemIndex = -1;
     private string _sortColumnId = "Name";
     private bool _sortAscending = true;
+    private bool _sortFoldersWithFilesByName;
     private ManagedDetailsGroupColumn? _groupColumn;
     private bool _groupAscending = true;
     private string? _pendingRenamePath;
@@ -68,8 +71,10 @@ internal sealed class ManagedDetailsListView : ListView
     private Point _lastBlankAreaClickPoint;
     private IReadOnlyList<ManagedFileItem> _entries = [];
     private IReadOnlyList<ManagedFileItem> _displayEntries = [];
+    private string _completedLoadPath = string.Empty;
     private readonly VirtualListItemCache _virtualItemCache = new();
     private bool _materializeForInlineRename;
+    private int _editingItemIndex = -1;
     private bool _ownedResourcesDisposed;
     private IReadOnlyList<ColumnDefinition>? _availableColumns;
     private readonly HeaderWindowHook _headerWindowHook;
@@ -90,6 +95,8 @@ internal sealed class ManagedDetailsListView : ListView
     internal event EventHandler<CommandBar.Cmd>? CommandRequested;
     internal event EventHandler<string>? QuickLookRequested;
     internal event EventHandler<char>? FilterCharInput;
+    internal event EventHandler<string>? DirectoryLoadCompleted;
+    internal event EventHandler? VisibleColumnsChanged;
 
     internal ManagedDetailsListView()
     {
@@ -144,6 +151,11 @@ internal sealed class ManagedDetailsListView : ListView
         ? null
         : GetPathAt(SelectedIndices[0]);
 
+    internal bool HasCompletedLoad(string path) =>
+        !string.IsNullOrWhiteSpace(path)
+        && string.Equals(path, _completedLoadPath,
+            StringComparison.OrdinalIgnoreCase);
+
     internal IReadOnlyList<string> SelectedPaths => SelectedIndices
         .Cast<int>()
         .Select(GetPathAt)
@@ -182,6 +194,35 @@ internal sealed class ManagedDetailsListView : ListView
     };
 
     internal bool IsSortAscending => _sortAscending;
+
+    internal void SetSortFoldersWithFilesByName(bool enabled)
+    {
+        if (_sortFoldersWithFilesByName == enabled) return;
+        _sortFoldersWithFilesByName = enabled;
+        PopulateItems(SelectedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase));
+        Invalidate(true);
+    }
+
+    internal IReadOnlyList<ColumnDefinition> VisibleColumnDefinitions =>
+        _visibleColumns.ToArray();
+
+    internal void SetVisibleColumns(IReadOnlyList<ColumnDefinition> columns)
+    {
+        ArgumentNullException.ThrowIfNull(columns);
+        if (columns.Count == 0 || columns.All(static column => column.Id != "Name"))
+            return;
+        if (_visibleColumns.SequenceEqual(columns)) return;
+
+        _visibleColumns.Clear();
+        _visibleColumns.AddRange(columns);
+        if (_visibleColumns.All(column => column.Id != _sortColumnId))
+        {
+            _sortColumnId = "Name";
+            _sortAscending = true;
+        }
+        RebuildColumns();
+        VisibleColumnsChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     internal ManagedDetailsGroupColumn? GroupColumn => _groupColumn;
 
@@ -273,6 +314,12 @@ internal sealed class ManagedDetailsListView : ListView
         StartLoad(_folderPath, showHiddenItems);
     }
 
+    internal void CancelDirectoryLoad()
+    {
+        _loadCancellation?.Cancel();
+        _completedLoadPath = string.Empty;
+    }
+
     internal void ApplyShellDisplaySettings(
         bool compactMode,
         bool showItemCheckBoxes,
@@ -337,17 +384,27 @@ internal sealed class ManagedDetailsListView : ListView
         try
         {
             Directory.CreateDirectory(path);
-            DirectorySnapshotCache.Invalidate(_folderPath);
-            _pendingRenamePath = path;
-            _suppressFolderRefreshUntilUtc = DateTime.UtcNow.AddSeconds(2);
-            Reload(_showHiddenItems);
-            StartRenameRetry(path);
+            BeginRenameCreatedItem(path);
         }
         catch (Exception ex)
         {
             AppLog.Warn(ex, nameof(ManagedDetailsListView),
                 "Could not create the new folder.");
         }
+    }
+
+    internal void BeginRenameCreatedItem(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        if (!ExplorerHost.PathsReferToSameFolder(
+                Path.GetDirectoryName(path), _folderPath))
+            return;
+
+        DirectorySnapshotCache.Invalidate(_folderPath);
+        _pendingRenamePath = path;
+        _suppressFolderRefreshUntilUtc = DateTime.UtcNow.AddSeconds(5);
+        Reload(_showHiddenItems);
+        StartRenameRetry(path);
     }
 
     internal void SortBy(ManagedDetailsSortColumn column)
@@ -366,6 +423,17 @@ internal sealed class ManagedDetailsListView : ListView
 
     internal void SetSortDirection(bool ascending)
     {
+        _sortAscending = ascending;
+        PopulateItems(SelectedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase));
+        Invalidate(true);
+    }
+
+    internal void SetSortState(string columnId, bool ascending)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(columnId);
+        if (_visibleColumns.All(column => column.Id != columnId)) return;
+        if (_sortColumnId == columnId && _sortAscending == ascending) return;
+        _sortColumnId = columnId;
         _sortAscending = ascending;
         PopulateItems(SelectedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase));
         Invalidate(true);
@@ -576,6 +644,7 @@ internal sealed class ManagedDetailsListView : ListView
     {
         _loadCancellation?.Cancel();
         _loadCancellation?.Dispose();
+        _completedLoadPath = string.Empty;
         var cancellation = new CancellationTokenSource();
         _loadCancellation = cancellation;
         ColumnDefinition[] columns = _visibleColumns.ToArray();
@@ -592,6 +661,10 @@ internal sealed class ManagedDetailsListView : ListView
     {
         _folderWatchSubscription?.Dispose();
         _folderWatchSubscription = null;
+
+        // Network views are refreshed explicitly. Creating a watcher against a
+        // disconnected share can block the UI thread before the async load starts.
+        if (ExplorerHost.IsNetworkPath(path)) return;
 
         try
         {
@@ -659,12 +732,14 @@ internal sealed class ManagedDetailsListView : ListView
         {
             AppLog.Debug(ex, nameof(ManagedDetailsListView),
                 $"Could not enumerate \"{path}\" for the managed Details view.");
+            CompleteLoad(path, cancellationToken);
             return;
         }
         catch (Exception ex)
         {
             AppLog.Warn(ex, nameof(ManagedDetailsListView),
                 $"The managed Details view could not display \"{path}\".");
+            CompleteLoad(path, cancellationToken);
             return;
         }
 
@@ -676,6 +751,19 @@ internal sealed class ManagedDetailsListView : ListView
         _entries = entries;
         PopulateItems(SelectedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase));
         ApplyResponsiveColumnWidths();
+        CompleteLoad(path, cancellationToken);
+    }
+
+    private void CompleteLoad(string path, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested
+            || IsDisposed
+            || !string.Equals(path, _folderPath,
+                StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _completedLoadPath = path;
+        DirectoryLoadCompleted?.Invoke(this, path);
     }
 
     private void PopulateItems(IReadOnlySet<string> previousSelections)
@@ -833,10 +921,26 @@ internal sealed class ManagedDetailsListView : ListView
         int attempts = 0;
         timer.Tick += (_, _) =>
         {
-            if (BeginRenameIfAvailable(path) || ++attempts >= 20)
+            if (BeginRenameIfAvailable(path) || ++attempts >= 50)
             {
                 timer.Stop();
                 timer.Dispose();
+                if (attempts >= 50 && string.Equals(_pendingRenamePath,
+                        path, StringComparison.OrdinalIgnoreCase))
+                    _pendingRenamePath = null;
+                return;
+            }
+
+            // An application-owned ShellNew command can create its file after
+            // the first folder load. Refresh once the file exists so the retry
+            // can find and edit the new row.
+            if (attempts % 10 == 0
+                && (File.Exists(path) || Directory.Exists(path))
+                && ExplorerHost.PathsReferToSameFolder(
+                    _completedLoadPath, _folderPath))
+            {
+                DirectorySnapshotCache.Invalidate(_folderPath);
+                Reload(_showHiddenItems);
             }
         };
         timer.Start();
@@ -885,6 +989,7 @@ internal sealed class ManagedDetailsListView : ListView
         item.Focused = true;
         item.EnsureVisible();
         Focus();
+        _editingItemIndex = itemIndex;
         item.BeginEdit();
         int selectionLength = GetInitialRenameSelectionLength(
             item.Text,
@@ -942,9 +1047,22 @@ internal sealed class ManagedDetailsListView : ListView
         return -1;
     }
 
-    private IEnumerable<ManagedFileItem> GetSortedEntries() => _entries
-        .OrderBy(static entry => entry.IsDirectory ? 0 : 1)
-        .ThenBy(static entry => entry, Comparer<ManagedFileItem>.Create(CompareEntries));
+    private IEnumerable<ManagedFileItem> GetSortedEntries()
+    {
+        var previousOrder = new Dictionary<string, int>(
+            StringComparer.OrdinalIgnoreCase);
+        if (_sortColumnId != "Name")
+        {
+            for (int index = 0; index < _displayEntries.Count; index++)
+                previousOrder.TryAdd(_displayEntries[index].FullPath, index);
+        }
+        bool groupFoldersFirst = _sortColumnId != "Name"
+            || !_sortFoldersWithFilesByName;
+        return _entries
+            .OrderBy(entry => groupFoldersFirst && !entry.IsDirectory ? 1 : 0)
+            .ThenBy(static entry => entry, Comparer<ManagedFileItem>.Create(CompareEntries))
+            .ThenBy(entry => previousOrder.GetValueOrDefault(entry.FullPath, int.MaxValue));
+    }
 
     private int CompareEntries(ManagedFileItem left, ManagedFileItem right)
     {
@@ -968,10 +1086,7 @@ internal sealed class ManagedDetailsListView : ListView
                 StringComparison.CurrentCultureIgnoreCase),
         };
         comparison = _sortAscending ? comparison : -comparison;
-        return comparison != 0 || _sortColumnId == "Name"
-            ? comparison
-            : string.Compare(left.Name, right.Name,
-                StringComparison.CurrentCultureIgnoreCase);
+        return comparison;
     }
 
     private static string GetGroupName(ManagedFileItem entry, ManagedDetailsGroupColumn column) =>
@@ -1093,24 +1208,41 @@ internal sealed class ManagedDetailsListView : ListView
                      .ThenBy(static item => item.Name, StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string extension = child.Extension.TrimStart('.').ToUpperInvariant();
-            items.Add(new ManagedFileItem(
-                GetDisplayName(child.Name, child.IsDirectory, showFileExtensions),
-                child.FullPath,
-                child.IsDirectory
-                    ? "Folder"
-                    : extension.Length > 0 ? $"{extension} file" : "File",
-                child.IsDirectory ? string.Empty : FormatFileSize(child.Length),
-                child.LastWriteTime,
-                child.CreationTime,
-                child.Attributes,
-                child.Extension,
-                child.IsDirectory,
-                child.Length,
-                GetShellProperties(child.FullPath, columns)));
+            items.Add(CreateEntry(child, showFileExtensions, columns));
         }
 
         return items;
+    }
+
+    internal static string[] GetFilterDisplayValues(
+        DirectorySnapshotItem item,
+        IReadOnlyList<ColumnDefinition> columns)
+    {
+        ArgumentNullException.ThrowIfNull(columns);
+        ManagedFileItem entry = CreateEntry(item, showFileExtensions: true, columns);
+        return columns.Select(entry.GetDisplayValue).ToArray();
+    }
+
+    private static ManagedFileItem CreateEntry(
+        DirectorySnapshotItem child,
+        bool showFileExtensions,
+        IReadOnlyList<ColumnDefinition> columns)
+    {
+        string extension = child.Extension.TrimStart('.').ToUpperInvariant();
+        return new ManagedFileItem(
+            GetDisplayName(child.Name, child.IsDirectory, showFileExtensions),
+            child.FullPath,
+            child.IsDirectory
+                ? "Folder"
+                : extension.Length > 0 ? $"{extension} file" : "File",
+            child.IsDirectory ? string.Empty : FormatFileSize(child.Length),
+            child.LastWriteTime,
+            child.CreationTime,
+            child.Attributes,
+            child.Extension,
+            child.IsDirectory,
+            child.Length,
+            GetShellProperties(child.FullPath, columns));
     }
 
     private static IReadOnlyDictionary<string, string> GetShellProperties(
@@ -1354,6 +1486,7 @@ internal sealed class ManagedDetailsListView : ListView
         }
         RebuildColumns();
         StartLoad(_folderPath, _showHiddenItems);
+        VisibleColumnsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private IReadOnlyList<ColumnDefinition> GetAvailableColumns()
@@ -1658,6 +1791,7 @@ internal sealed class ManagedDetailsListView : ListView
     private void OnAfterLabelEdit(object? sender, LabelEditEventArgs e)
     {
         e.CancelEdit = true;
+        _editingItemIndex = -1;
         HashSet<string> selections = SelectedPaths.ToHashSet(
             StringComparer.OrdinalIgnoreCase);
         _materializeForInlineRename = false;
@@ -1679,36 +1813,73 @@ internal sealed class ManagedDetailsListView : ListView
     private void OnDragEnter(object? sender, DragEventArgs e)
     {
         UpdateDragFeedback(e);
+        RepaintDragRows(e);
     }
 
     private void OnDragOver(object? sender, DragEventArgs e)
     {
         UpdateDragFeedback(e);
+        RepaintDragRows(e);
     }
 
     private void OnDragLeave(object? sender, EventArgs e)
     {
+        EndDragFeedback();
+    }
+
+    private void RepaintDragRows(DragEventArgs e)
+    {
+        if (!IsHandleCreated) return;
+
+        // The OLE drag image can erase owner-drawn subitem text as it moves.
+        // Redraw both the row it left and the row under the cursor, including
+        // horizontal moves within the same row.
+        int itemIndex = HitTest(PointToClient(new Point(e.X, e.Y))).Item?.Index ?? -1;
+        if (_dragPaintItemIndex != itemIndex)
+            RedrawItem(_dragPaintItemIndex);
+        _dragPaintItemIndex = itemIndex;
+        RedrawItem(itemIndex);
+        Update();
+    }
+
+    private void EndDragFeedback()
+    {
         _dragFeedbackWindow.HideFeedback();
+        _dragPaintItemIndex = -1;
+        if (!IsHandleCreated) return;
+
+        // Restore any adjacent cells that were covered by the drag image or
+        // feedback window when the drag was cancelled or completed.
+        Invalidate();
+        Update();
     }
 
     private void UpdateDragFeedback(DragEventArgs e)
     {
-        if (e.Data?.GetDataPresent(DataFormats.FileDrop) != true)
+        if (e.Data?.GetData(DataFormats.FileDrop) is not string[] sourcePaths
+            || sourcePaths.Length == 0
+            || string.IsNullOrWhiteSpace(_folderPath))
         {
             e.Effect = DragDropEffects.None;
             _dragFeedbackWindow.HideFeedback();
             return;
         }
 
-        e.Effect = ChooseDropEffect(e.AllowedEffect, e.KeyState);
-        if (e.Effect == DragDropEffects.None || string.IsNullOrWhiteSpace(_folderPath))
+        string destinationPath = GetDropDestination(
+            PointToClient(new Point(e.X, e.Y)));
+        e.Effect = ChooseDropEffect(
+            e.AllowedEffect,
+            e.KeyState,
+            sourcePaths,
+            destinationPath);
+        if (e.Effect == DragDropEffects.None)
         {
             _dragFeedbackWindow.HideFeedback();
             return;
         }
 
-        string destinationPath = GetDropDestination(PointToClient(new Point(e.X, e.Y)));
-        if (e.Effect == DragDropEffects.Move && IsRedundantMove(e.Data, destinationPath))
+        if (e.Effect == DragDropEffects.Move
+            && IsRedundantMove(sourcePaths, destinationPath))
         {
             e.Effect = DragDropEffects.None;
             _dragFeedbackWindow.HideFeedback();
@@ -1720,17 +1891,39 @@ internal sealed class ManagedDetailsListView : ListView
         _dragFeedbackWindow.ShowFeedback(new Point(e.X, e.Y), e.Effect, destinationName);
     }
 
-    internal static DragDropEffects ChooseDropEffect(DragDropEffects allowedEffect, int keyState)
+    internal static DragDropEffects ChooseDropEffect(
+        DragDropEffects allowedEffect,
+        int keyState,
+        IEnumerable<string> sourcePaths,
+        string destinationPath)
     {
-        // Match File Explorer: an in-place drag moves by default; holding Ctrl
-        // explicitly requests a copy.
-        DragDropEffects requestedEffect = (keyState & MkControl) != 0
-            ? DragDropEffects.Copy
-            : DragDropEffects.Move;
+        ArgumentNullException.ThrowIfNull(sourcePaths);
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
+        string[] paths = sourcePaths
+            .Where(static path => !string.IsNullOrWhiteSpace(path))
+            .ToArray();
+        if (paths.Length == 0) return DragDropEffects.None;
+
+        DragDropEffects requestedEffect;
+        if ((keyState & MkControl) != 0)
+        {
+            requestedEffect = DragDropEffects.Copy;
+        }
+        else if ((keyState & MkShift) != 0)
+        {
+            requestedEffect = DragDropEffects.Move;
+        }
+        else
+        {
+            requestedEffect = FileDragDropPolicy.ShouldMoveByDefault(
+                paths, destinationPath)
+                ? DragDropEffects.Move
+                : DragDropEffects.Copy;
+        }
 
         if ((allowedEffect & requestedEffect) != 0) return requestedEffect;
-        if ((allowedEffect & DragDropEffects.Move) != 0) return DragDropEffects.Move;
         if ((allowedEffect & DragDropEffects.Copy) != 0) return DragDropEffects.Copy;
+        if ((allowedEffect & DragDropEffects.Move) != 0) return DragDropEffects.Move;
         return DragDropEffects.None;
     }
 
@@ -1749,19 +1942,27 @@ internal sealed class ManagedDetailsListView : ListView
         }
         finally
         {
-            _dragFeedbackWindow.HideFeedback();
+            EndDragFeedback();
         }
     }
 
     private void OnDragDrop(object? sender, DragEventArgs e)
     {
-        _dragFeedbackWindow.HideFeedback();
+        EndDragFeedback();
         if (e.Data?.GetData(DataFormats.FileDrop) is not string[] paths
             || paths.Length == 0
             || string.IsNullOrWhiteSpace(_folderPath))
             return;
 
         string destinationPath = GetDropDestination(PointToClient(new Point(e.X, e.Y)));
+
+        e.Effect = ChooseDropEffect(
+            e.AllowedEffect,
+            e.KeyState,
+            paths,
+            destinationPath);
+        if (e.Effect == DragDropEffects.None)
+            return;
 
         FileOperationKind operation = e.Effect == DragDropEffects.Move
             ? FileOperationKind.Move
@@ -1776,10 +1977,6 @@ internal sealed class ManagedDetailsListView : ListView
         HitTest(clientPoint).Item?.Tag is string targetPath && Directory.Exists(targetPath)
             ? targetPath
             : _folderPath;
-
-    private static bool IsRedundantMove(IDataObject dataObject, string destinationPath) =>
-        dataObject.GetData(DataFormats.FileDrop) is string[] sourcePaths
-        && IsRedundantMove(sourcePaths, destinationPath);
 
     internal static bool IsRedundantMove(IEnumerable<string> sourcePaths, string destinationPath)
     {
@@ -1948,9 +2145,14 @@ internal sealed class ManagedDetailsListView : ListView
             textBounds.Width = Math.Max(1,
                 e.Bounds.Right - textInset - textBounds.X);
         }
-        TextRenderer.DrawText(e.Graphics, subItem.Text, Font,
-            textBounds, foreground,
-            GetTextFlags(e.Header?.TextAlign ?? HorizontalAlignment.Left));
+        // Owner drawing normally repaints the label even while ListView's edit
+        // control is open. That leaves pieces of "New folder" behind the text
+        // the user types. Keep the row background and icon, but let the editor
+        // be the only painter for the Name cell during inline rename.
+        if (e.ColumnIndex != 0 || item.Index != _editingItemIndex)
+            TextRenderer.DrawText(e.Graphics, subItem.Text, Font,
+                textBounds, foreground,
+                GetTextFlags(e.Header?.TextAlign ?? HorizontalAlignment.Left));
 
         if (e.ColumnIndex == Columns.Count - 1 && item.Selected && item.Focused)
         {
@@ -2047,7 +2249,7 @@ internal sealed class ManagedDetailsListView : ListView
         new("FullPath", "Full path", 220, 160),
     ];
 
-    private readonly record struct ColumnDefinition(
+    internal readonly record struct ColumnDefinition(
         string Id,
         string Text,
         int PreferredWidth,

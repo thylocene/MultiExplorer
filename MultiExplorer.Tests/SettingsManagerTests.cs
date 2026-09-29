@@ -36,6 +36,8 @@ public class SettingsManagerTests : IDisposable
             RightPreviewPaneWidth = 440,
             MinimizeToTray       = false,
             StartWithWindows     = true,
+            ConfirmFileAndFolderDeletions = false,
+            OpenExplorerWhenTabDroppedOutside = true,
             QuickLookEnabled     = false,
             ApplicationTheme     = "Dark",
             ShowWindowModifiers  = NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT,
@@ -60,6 +62,10 @@ public class SettingsManagerTests : IDisposable
         Assert.Equal(original.RightPreviewPaneWidth, loaded.RightPreviewPaneWidth);
         Assert.Equal(original.MinimizeToTray,      loaded.MinimizeToTray);
         Assert.Equal(original.StartWithWindows,    loaded.StartWithWindows);
+        Assert.Equal(original.ConfirmFileAndFolderDeletions,
+            loaded.ConfirmFileAndFolderDeletions);
+        Assert.Equal(original.OpenExplorerWhenTabDroppedOutside,
+            loaded.OpenExplorerWhenTabDroppedOutside);
         Assert.Equal(original.QuickLookEnabled,    loaded.QuickLookEnabled);
         Assert.Equal(original.ApplicationTheme,    loaded.ApplicationTheme);
         Assert.Equal(original.ShowWindowModifiers, loaded.ShowWindowModifiers);
@@ -78,6 +84,47 @@ public class SettingsManagerTests : IDisposable
 
         Assert.Equal(@"C:\Legacy", loaded.LeftPanelPath);
         Assert.DoesNotContain("UseManagedDetailsView", currentJson);
+    }
+
+    [Fact]
+    public void ExistingSettings_DefaultTabDropOptionToDisabled()
+    {
+        AppSettings loaded = JsonSerializer.Deserialize<AppSettings>("{}")!;
+
+        Assert.False(loaded.OpenExplorerWhenTabDroppedOutside);
+    }
+
+    [Fact]
+    public void LegacyDefaultHotkey_IsUpdatedToWinShiftE()
+    {
+        var settings = new AppSettings
+        {
+            ShowWindowModifiers = NativeMethods.MOD_WIN
+                | NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT,
+            ShowWindowVk = NativeMethods.VK_M,
+        };
+
+        SettingsManager.UpgradeLegacyDefaultHotkey(settings);
+
+        Assert.Equal(NativeMethods.MOD_WIN | NativeMethods.MOD_SHIFT,
+            settings.ShowWindowModifiers);
+        Assert.Equal(NativeMethods.VK_E, settings.ShowWindowVk);
+    }
+
+    [Fact]
+    public void LegacyDefaultHotkeyMigration_PreservesCustomHotkey()
+    {
+        var settings = new AppSettings
+        {
+            ShowWindowModifiers = NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT,
+            ShowWindowVk = 0x48,
+        };
+
+        SettingsManager.UpgradeLegacyDefaultHotkey(settings);
+
+        Assert.Equal(NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT,
+            settings.ShowWindowModifiers);
+        Assert.Equal(0x48, settings.ShowWindowVk);
     }
 
     [Fact]

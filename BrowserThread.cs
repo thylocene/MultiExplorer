@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace MultiExplorer;
@@ -224,6 +225,52 @@ internal sealed class BrowserThread : IDisposable
         T result = default!;
         Invoke(() => { result = func(); });
         return result;
+    }
+
+    /// <summary>
+    /// Runs <paramref name="action"/> on the browser thread without blocking the
+    /// caller. Shell navigation can still be completing callbacks when it reports
+    /// that a folder has loaded; awaiting asynchronously prevents a UI/browser
+    /// cross-thread deadlock during that boundary.
+    /// </summary>
+    public async Task InvokeAsync(
+        Action action,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (_disposed) return;
+        if (NativeMethods.GetCurrentThreadId() == _threadId)
+        {
+            action();
+            return;
+        }
+
+        var completion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _work.Enqueue(() =>
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                completion.TrySetCanceled(cancellationToken);
+                return;
+            }
+
+            try
+            {
+                action();
+                completion.TrySetResult(true);
+            }
+            catch (Exception ex)
+            {
+                completion.TrySetException(ex);
+            }
+        });
+        NativeMethods.PostMessageW(
+            _hwnd, NativeMethods.WM_APP_INVOKE, IntPtr.Zero, IntPtr.Zero);
+
+        await completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

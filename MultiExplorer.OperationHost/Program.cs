@@ -20,10 +20,21 @@ internal static class Program
             : null;
         if (string.IsNullOrWhiteSpace(requestPath)) return 2;
 
-        int oleResult = OleInitialize(IntPtr.Zero);
+        int oleResult = -1;
+        string stage = "OleInitialize";
         try
         {
+            oleResult = OleInitialize(IntPtr.Zero);
+            if (oleResult < 0)
+                Marshal.ThrowExceptionForHR(oleResult);
+
+            stage = "Read operation request";
             FileOperationRequest request = FileOperationStore.ReadRequest(requestPath);
+            if (FileOperationStore.HasStartupAcknowledgementTimedOut(
+                    request.CreatedUtc, DateTime.UtcNow))
+                throw new TimeoutException(
+                    "The file-operation request expired before an operation host acknowledged it.");
+            stage = "Enter ShellFileOperation.Execute";
             FileOperationState state = ShellFileOperation.Execute(request);
             if (state.IsTerminal)
                 FileOperationStore.RemoveTransientArtifacts(request.Id);
@@ -32,7 +43,7 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            TryWriteFailure(requestPath, ex);
+            TryWriteFailure(requestPath, ex, stage);
             return 1;
         }
         finally
@@ -73,7 +84,8 @@ internal static class Program
         }
     }
 
-    private static void TryWriteFailure(string requestPath, Exception exception)
+    private static void TryWriteFailure(
+        string requestPath, Exception exception, string failureStage)
     {
         try
         {
@@ -85,6 +97,8 @@ internal static class Program
                 Status = FileOperationStatus.Failed,
                 TotalItems = request.Sources.Length,
                 Error = exception.Message,
+                FailureStage = failureStage,
+                FailureExceptionType = exception.GetType().FullName,
                 Result = exception.HResult,
                 HostProcessId = Environment.ProcessId,
                 CreatedUtc = request.CreatedUtc,

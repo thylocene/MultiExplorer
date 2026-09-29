@@ -98,6 +98,17 @@ internal sealed class DarkShellMenuRenderer : IDisposable
             if ((info.fType & MftOwnerDraw) != 0)
                 continue;
 
+            CompactMenuGlyph? glyph = info.wID switch
+            {
+                PanelView.CopyToOtherPaneMenuCommandId =>
+                    CompactMenuGlyph.CopyToOtherPane,
+                PanelView.MoveToOtherPaneMenuCommandId =>
+                    CompactMenuGlyph.MoveToOtherPane,
+                _ => PanelView.TryGetFolderMenuGlyph(itemLabel,
+                    out CompactMenuGlyph matchedGlyph)
+                    ? matchedGlyph
+                    : null,
+            };
             var visual = new MenuItemVisual(
                 itemLabel,
                 (info.fType & MftSeparator) != 0,
@@ -105,7 +116,8 @@ internal sealed class DarkShellMenuRenderer : IDisposable
                 (info.fState & MfsChecked) != 0,
                 (info.fState & MfsDefault) != 0,
                 info.hSubMenu != IntPtr.Zero,
-                info.hbmpItem);
+                info.hbmpItem,
+                glyph);
             var registration = new RegisteredMenuItem(menu, (uint)position,
                 info.wID, info.dwItemData, visual);
             Register(registration);
@@ -668,12 +680,27 @@ internal sealed class DarkShellMenuRenderer : IDisposable
     {
         Rectangle bounds = Rectangle.FromLTRB(draw.rcItem.Left, draw.rcItem.Top,
             draw.rcItem.Right, draw.rcItem.Bottom);
+        DrawRow(draw.hDC, bounds, draw.itemState, item);
+    }
+
+    internal void DrawRow(IntPtr destinationDc, Rectangle bounds, uint itemState,
+        MenuItemVisual item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
         if (bounds.Width <= 0 || bounds.Height <= 0) return;
 
         Color? nativeSubmenuArrowColor = null;
-        using (Graphics graphics = Graphics.FromHdc(draw.hDC))
+        int iconSize = Scale(20);
+        int iconLeft = bounds.Left + Scale(10);
+        int iconTop = bounds.Top + (bounds.Height - iconSize) / 2;
+        // GDI bitmap handles can be sign-extended on 64-bit Windows. A numeric
+        // greater-than-zero check discards valid Shell icons unpredictably.
+        bool hasBitmap = item.Bitmap != IntPtr.Zero
+            && GetObjectBitmap(item.Bitmap, Marshal.SizeOf<NativeBitmap>(),
+                out _) > 0;
+        using (Graphics graphics = Graphics.FromHdc(destinationDc))
         {
-            Color background = (draw.itemState & OdsSelected) != 0
+            Color background = (itemState & OdsSelected) != 0
                 ? ThemeManager.Hover
                 : ThemeManager.Surface;
             using (var brush = new SolidBrush(background))
@@ -688,12 +715,10 @@ internal sealed class DarkShellMenuRenderer : IDisposable
                 return;
             }
 
-            int iconSize = Scale(20);
-            int iconLeft = bounds.Left + Scale(10);
-            int iconTop = bounds.Top + (bounds.Height - iconSize) / 2;
-            if (item.Bitmap != IntPtr.Zero && item.Bitmap.ToInt64() > 12)
-                DrawBitmap(draw.hDC, item.Bitmap, iconLeft, iconTop);
-            else if (item.IsChecked)
+            if (item.Glyph is { } glyph)
+                NativeMenuIconSet.DrawGlyph(graphics,
+                    new RectangleF(iconLeft, iconTop, iconSize, iconSize), glyph);
+            else if (!hasBitmap && item.IsChecked)
                 DrawCheck(graphics, new Rectangle(iconLeft, iconTop, iconSize, iconSize));
 
             Color textColor = item.IsEnabled
@@ -731,14 +756,19 @@ internal sealed class DarkShellMenuRenderer : IDisposable
                 nativeSubmenuArrowColor = textColor;
         }
 
+        // Complete all GDI+ drawing before AlphaBlend touches the same DC.
+        // A later GDI+ flush can otherwise cover the bitmap intermittently.
+        if (hasBitmap && item.Glyph is null)
+            DrawBitmap(destinationDc, item.Bitmap, iconLeft, iconTop);
+
         // Windows draws the cascade indicator after WM_DRAWITEM returns. Do not
         // paint a second arrow; leave the menu DC using the row's foreground so
         // the single native indicator remains visible on the dark surface.
         if (nativeSubmenuArrowColor is { } arrowColor)
         {
-            SetTextColor(draw.hDC, ToColorRef(arrowColor));
-            SetBkColor(draw.hDC, ToColorRef(ThemeManager.Surface));
-            SetBkMode(draw.hDC, 1); // TRANSPARENT
+            SetTextColor(destinationDc, ToColorRef(arrowColor));
+            SetBkColor(destinationDc, ToColorRef(ThemeManager.Surface));
+            SetBkMode(destinationDc, 1); // TRANSPARENT
         }
     }
 
@@ -753,25 +783,72 @@ internal sealed class DarkShellMenuRenderer : IDisposable
 
         IntPtr sourceDc = CreateCompatibleDC(destinationDc);
         if (sourceDc == IntPtr.Zero) return;
+        int width = details.Width;
+        int height = Math.Abs(details.Height);
+        bool hasAlpha = details.BitsPixel == 32
+            && HasNonZeroAlpha(destinationDc, bitmap, width, height);
         IntPtr previous = SelectObject(sourceDc, bitmap);
         try
         {
-            int width = details.Width;
-            int height = Math.Abs(details.Height);
-            var blend = new BlendFunction
+            if (hasAlpha)
             {
-                BlendOp = AcSrcOver,
-                SourceConstantAlpha = 255,
-                AlphaFormat = details.BitsPixel == 32 ? AcSrcAlpha : (byte)0,
-            };
-            AlphaBlend(destinationDc, left, top, width, height,
-                sourceDc, 0, 0, width, height, blend);
+                var blend = new BlendFunction
+                {
+                    BlendOp = AcSrcOver,
+                    SourceConstantAlpha = 255,
+                    AlphaFormat = AcSrcAlpha,
+                };
+                AlphaBlend(destinationDc, left, top, width, height,
+                    sourceDc, 0, 0, width, height, blend);
+            }
+            else
+            {
+                // Some Shell extensions provide 32-bit menu bitmaps with every
+                // alpha byte set to zero. Per-pixel AlphaBlend makes those icons
+                // disappear on our owner-drawn dark menu. Use the uniform corner
+                // color as their transparency key when one is present.
+                uint key = GetPixel(sourceDc, 0, 0);
+                bool uniformCorners = key != uint.MaxValue
+                    && GetPixel(sourceDc, width - 1, 0) == key
+                    && GetPixel(sourceDc, 0, height - 1) == key
+                    && GetPixel(sourceDc, width - 1, height - 1) == key;
+                if (!uniformCorners
+                    || !TransparentBlt(destinationDc, left, top, width, height,
+                        sourceDc, 0, 0, width, height, key))
+                    BitBlt(destinationDc, left, top, width, height,
+                        sourceDc, 0, 0, 0x00CC0020);
+            }
         }
         finally
         {
             if (previous != IntPtr.Zero) SelectObject(sourceDc, previous);
             DeleteDC(sourceDc);
         }
+    }
+
+    private static bool HasNonZeroAlpha(IntPtr deviceContext, IntPtr bitmap,
+        int width, int height)
+    {
+        var info = new BitmapInfo
+        {
+            Header = new BitmapInfoHeader
+            {
+                Size = (uint)Marshal.SizeOf<BitmapInfoHeader>(),
+                Width = width,
+                Height = -height,
+                Planes = 1,
+                BitCount = 32,
+            },
+        };
+        byte[] pixels = new byte[checked(width * height * 4)];
+        if (GetDIBits(deviceContext, bitmap, 0, (uint)height,
+                pixels, ref info, 0) == 0)
+            return false;
+
+        for (int index = 3; index < pixels.Length; index += 4)
+            if (pixels[index] != 0)
+                return true;
+        return false;
     }
 
     private static void DrawCheck(Graphics graphics, Rectangle bounds)
@@ -803,7 +880,8 @@ internal sealed class DarkShellMenuRenderer : IDisposable
         bool IsChecked,
         bool IsDefault,
         bool HasSubMenu,
-        IntPtr Bitmap);
+        IntPtr Bitmap,
+        CompactMenuGlyph? Glyph = null);
 
     private sealed record RegisteredMenuItem(
         IntPtr Menu,
@@ -884,6 +962,29 @@ internal sealed class DarkShellMenuRenderer : IDisposable
         internal IntPtr Bits;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BitmapInfoHeader
+    {
+        internal uint Size;
+        internal int Width;
+        internal int Height;
+        internal ushort Planes;
+        internal ushort BitCount;
+        internal uint Compression;
+        internal uint SizeImage;
+        internal int XPelsPerMeter;
+        internal int YPelsPerMeter;
+        internal uint ClrUsed;
+        internal uint ClrImportant;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BitmapInfo
+    {
+        internal BitmapInfoHeader Header;
+        internal uint Colors;
+    }
+
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     private struct BlendFunction
     {
@@ -936,6 +1037,14 @@ internal sealed class DarkShellMenuRenderer : IDisposable
         IntPtr sourceDc, int sourceX, int sourceY, uint rasterOperation);
 
     [DllImport("gdi32.dll")]
+    private static extern uint GetPixel(IntPtr deviceContext, int x, int y);
+
+    [DllImport("gdi32.dll")]
+    private static extern int GetDIBits(IntPtr deviceContext, IntPtr bitmap,
+        uint startScan, uint scanLines, [Out] byte[] bits,
+        ref BitmapInfo bitmapInfo, uint usage);
+
+    [DllImport("gdi32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetDCOrgEx(IntPtr deviceContext,
         ref NativeMethods.POINT point);
@@ -959,4 +1068,11 @@ internal sealed class DarkShellMenuRenderer : IDisposable
         int destinationX, int destinationY, int destinationWidth, int destinationHeight,
         IntPtr sourceDc, int sourceX, int sourceY, int sourceWidth, int sourceHeight,
         BlendFunction blendFunction);
+
+    [DllImport("msimg32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool TransparentBlt(IntPtr destinationDc,
+        int destinationX, int destinationY, int destinationWidth, int destinationHeight,
+        IntPtr sourceDc, int sourceX, int sourceY, int sourceWidth, int sourceHeight,
+        uint transparentColor);
 }

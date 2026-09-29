@@ -80,7 +80,7 @@ public sealed class HelpPageTests
 
         (string Shortcut, string Action)[] expected =
         [
-            ("Win + Ctrl + Alt + M", "system tray"),
+            ("Win + Shift + E", "system tray"),
             ("F1", "Help"),
             ("F2", "Rename"),
             ("F4", "address bar"),
@@ -101,7 +101,6 @@ public sealed class HelpPageTests
             ("Shift + Del", "Permanently delete"),
             ("Alt + Enter", "properties"),
             ("Backspace", "parent folder"),
-            ("Alt + Down", "address history"),
             ("Esc", "clear the current filter"),
             ("Space", "QuickLook"),
             ("Ctrl + Space", "Close filtering"),
@@ -116,6 +115,8 @@ public sealed class HelpPageTests
                 && row.Action.Contains(action,
                     StringComparison.OrdinalIgnoreCase));
         }
+
+        Assert.DoesNotContain(rows, row => row.Shortcut == "Alt + Down");
     }
 
     private static string NormalizeHelpText(string markup)

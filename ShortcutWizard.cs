@@ -192,7 +192,7 @@ internal sealed class ShortcutWizard : Form
         return string.IsNullOrWhiteSpace(name) ? "New Shortcut" : name;
     }
 
-    internal static void CreateShortcut(string destinationFolder, string name, string targetPath)
+    internal static string CreateShortcut(string destinationFolder, string name, string targetPath)
     {
         string shortcutPath = GetUniqueShortcutPath(destinationFolder, name);
         Type shellLinkType = Type.GetTypeFromCLSID(new Guid("00021401-0000-0000-C000-000000000046"),
@@ -211,6 +211,7 @@ internal sealed class ShortcutWizard : Form
 
             var persistFile = (IPersistFile)shellLinkObject;
             persistFile.Save(shortcutPath, true);
+            return shortcutPath;
         }
         finally
         {
@@ -220,7 +221,9 @@ internal sealed class ShortcutWizard : Form
 
     private static string GetUniqueShortcutPath(string folder, string name)
     {
-        string stem = Path.GetFileNameWithoutExtension(name);
+        string stem = name.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)
+            ? name[..^4]
+            : name;
         string candidate = Path.Combine(folder, stem + ".lnk");
         for (int suffix = 2; File.Exists(candidate) || Directory.Exists(candidate); suffix++)
             candidate = Path.Combine(folder, $"{stem} ({suffix}).lnk");

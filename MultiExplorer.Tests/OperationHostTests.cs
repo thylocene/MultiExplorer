@@ -95,6 +95,65 @@ public sealed class OperationHostTests
     }
 
     [Fact]
+    public async Task HelperProcess_PublishesActionableFailureForMissingDestinationAsync()
+    {
+        Guid id = Guid.NewGuid();
+        string testRoot = Path.Combine(Path.GetTempPath(),
+            "MultiExplorer.OperationHost.Tests", id.ToString("N"));
+        string operationDirectory = Path.Combine(testRoot, "operations");
+        string sourcePath = Path.Combine(testRoot, "source.txt");
+        string missingDestination = Path.Combine(testRoot, "missing-destination");
+        string? previousOperationDirectory = Environment.GetEnvironmentVariable(
+            FileOperationStore.DirectoryOverrideEnvironmentVariable);
+
+        Directory.CreateDirectory(testRoot);
+        await File.WriteAllTextAsync(sourcePath, "failure reporting test");
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                FileOperationStore.DirectoryOverrideEnvironmentVariable,
+                operationDirectory);
+            FileOperationStore.WriteRequest(new FileOperationRequest
+            {
+                Id = id,
+                Kind = FileOperationKind.Copy,
+                Sources = [sourcePath],
+                Destination = missingDestination,
+                CreatedUtc = DateTime.UtcNow,
+            });
+
+            using Process? process = Process.Start(new ProcessStartInfo
+            {
+                FileName = GetOperationHostPath(),
+                UseShellExecute = false,
+                ArgumentList = { "--request", FileOperationStore.RequestPath(id) },
+            });
+            Assert.NotNull(process);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await process!.WaitForExitAsync(timeout.Token);
+
+            Assert.Equal(1, process.ExitCode);
+            FileOperationState? state = FileOperationStore.TryReadState(
+                FileOperationStore.StatePath(id));
+            Assert.NotNull(state);
+            Assert.Equal(FileOperationStatus.Failed, state!.Status);
+            Assert.True(state.Result < 0);
+            Assert.False(string.IsNullOrWhiteSpace(state.Error));
+            Assert.Equal("Resolve destination Shell item", state.FailureStage);
+            Assert.False(string.IsNullOrWhiteSpace(state.FailureExceptionType));
+            Assert.False(File.Exists(FileOperationStore.RequestPath(id)));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                FileOperationStore.DirectoryOverrideEnvironmentVariable,
+                previousOperationDirectory);
+            if (Directory.Exists(testRoot))
+                Directory.Delete(testRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public void HelperProcess_HonoursCancellationBeforeStarting()
     {
         Guid id = Guid.NewGuid();
@@ -279,7 +338,9 @@ public sealed class OperationHostTests
                 FileOperationStore.StatePath(id));
             Assert.NotNull(state);
             Assert.Equal(FileOperationStatus.Completed, state!.Status);
-            Assert.True(state.TotalBytes > 0);
+            Assert.Equal(0UL, state.TotalBytes);
+            Assert.Equal(2, state.TotalItems);
+            Assert.Equal(3, state.ProcessedItems);
         }
         finally
         {
@@ -372,6 +433,238 @@ public sealed class OperationHostTests
                 FileOperationStore.DirectoryOverrideEnvironmentVariable,
                 previousOperationDirectory);
             if (Directory.Exists(testRoot)) Directory.Delete(testRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BrokerProcess_ExitsForInstallerSessionShutdownAsync()
+    {
+        string testRoot = Path.Combine(
+            Path.GetTempPath(),
+            "MultiExplorer.OperationHost.Tests",
+            Guid.NewGuid().ToString("N"));
+        string operationDirectory = Path.Combine(testRoot, "operations");
+        Directory.CreateDirectory(operationDirectory);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = GetOperationHostPath(),
+            UseShellExecute = false,
+            ArgumentList = { "--broker" },
+        };
+        startInfo.Environment[
+            FileOperationStore.DirectoryOverrideEnvironmentVariable] = operationDirectory;
+
+        using Process? process = Process.Start(startInfo);
+        Assert.NotNull(process);
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            IntPtr window = await WaitForTopLevelWindowAsync(
+                process!.Id,
+                timeout.Token);
+
+            const uint wmQueryEndSession = 0x0011;
+            const uint wmEndSession = 0x0016;
+            Assert.NotEqual(IntPtr.Zero, NativeMethods.SendMessageI(
+                window, wmQueryEndSession, IntPtr.Zero, IntPtr.Zero));
+            NativeMethods.SendMessageI(
+                window, wmEndSession, (IntPtr)1, IntPtr.Zero);
+
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+        }
+        finally
+        {
+            if (process is { HasExited: false })
+                process.Kill(entireProcessTree: true);
+            if (Directory.Exists(testRoot))
+                Directory.Delete(testRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BrokerProcess_RejectsExpiredUnacknowledgedRequestAsync()
+    {
+        Guid id = Guid.NewGuid();
+        string testRoot = Path.Combine(Path.GetTempPath(),
+            "MultiExplorer.OperationHost.Tests", id.ToString("N"));
+        string sourceDirectory = Path.Combine(testRoot, "source");
+        string destinationDirectory = Path.Combine(testRoot, "destination");
+        string operationDirectory = Path.Combine(testRoot, "operations");
+        string sourcePath = Path.Combine(sourceDirectory, "stale.txt");
+        string destinationPath = Path.Combine(destinationDirectory, "stale.txt");
+        string? previousOperationDirectory = Environment.GetEnvironmentVariable(
+            FileOperationStore.DirectoryOverrideEnvironmentVariable);
+
+        Directory.CreateDirectory(sourceDirectory);
+        Directory.CreateDirectory(destinationDirectory);
+        await File.WriteAllTextAsync(sourcePath, "must not move");
+
+        Process? process = null;
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                FileOperationStore.DirectoryOverrideEnvironmentVariable,
+                operationDirectory);
+            FileOperationStore.WriteRequest(new FileOperationRequest
+            {
+                Id = id,
+                Kind = FileOperationKind.Move,
+                Sources = [sourcePath],
+                Destination = destinationDirectory,
+                CreatedUtc = DateTime.UtcNow
+                    - FileOperationStore.StartupAcknowledgementTimeout
+                    - TimeSpan.FromSeconds(1),
+            });
+
+            process = Process.Start(new ProcessStartInfo
+            {
+                FileName = GetOperationHostPath(),
+                UseShellExecute = false,
+                ArgumentList = { "--broker", "--exit-when-idle" },
+            });
+            Assert.NotNull(process);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await process!.WaitForExitAsync(timeout.Token);
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.True(File.Exists(sourcePath));
+            Assert.False(File.Exists(destinationPath));
+            FileOperationState? state = FileOperationStore.TryReadState(
+                FileOperationStore.StatePath(id));
+            Assert.NotNull(state);
+            Assert.Equal(FileOperationStatus.Failed, state!.Status);
+            Assert.Contains("expired", state.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.False(File.Exists(FileOperationStore.RequestPath(id)));
+        }
+        finally
+        {
+            if (process is { HasExited: false })
+                process.Kill(entireProcessTree: true);
+            process?.Dispose();
+            Environment.SetEnvironmentVariable(
+                FileOperationStore.DirectoryOverrideEnvironmentVariable,
+                previousOperationDirectory);
+            if (Directory.Exists(testRoot))
+                Directory.Delete(testRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void InitialStateWrite_DoesNotOverwriteExistingAcknowledgement()
+    {
+        Guid id = Guid.NewGuid();
+        string testRoot = Path.Combine(Path.GetTempPath(),
+            "MultiExplorer.OperationHost.Tests", id.ToString("N"));
+        string operationDirectory = Path.Combine(testRoot, "operations");
+        string? previousOperationDirectory = Environment.GetEnvironmentVariable(
+            FileOperationStore.DirectoryOverrideEnvironmentVariable);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                FileOperationStore.DirectoryOverrideEnvironmentVariable,
+                operationDirectory);
+            var acknowledgement = new FileOperationState
+            {
+                Id = id,
+                Kind = FileOperationKind.Move,
+                Status = FileOperationStatus.Queued,
+                HostProcessId = 42,
+                CreatedUtc = DateTime.UtcNow,
+                UpdatedUtc = DateTime.UtcNow,
+            };
+            var competingFailure = new FileOperationState
+            {
+                Id = id,
+                Kind = FileOperationKind.Move,
+                Status = FileOperationStatus.Failed,
+                Error = "startup timeout",
+                CreatedUtc = acknowledgement.CreatedUtc,
+                UpdatedUtc = DateTime.UtcNow,
+            };
+
+            Assert.True(FileOperationStore.TryWriteInitialState(acknowledgement));
+            Assert.False(FileOperationStore.TryWriteInitialState(competingFailure));
+
+            FileOperationState? stored = FileOperationStore.TryReadState(
+                FileOperationStore.StatePath(id));
+            Assert.NotNull(stored);
+            Assert.Equal(FileOperationStatus.Queued, stored!.Status);
+            Assert.Equal(42, stored.HostProcessId);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                FileOperationStore.DirectoryOverrideEnvironmentVariable,
+                previousOperationDirectory);
+            if (Directory.Exists(testRoot))
+                Directory.Delete(testRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StateWrite_RetriesWhenExistingStateIsTemporarilyLockedAsync()
+    {
+        Guid id = Guid.NewGuid();
+        string testRoot = Path.Combine(Path.GetTempPath(),
+            "MultiExplorer.OperationHost.Tests", id.ToString("N"));
+        string operationDirectory = Path.Combine(testRoot, "operations");
+        string? previousOperationDirectory = Environment.GetEnvironmentVariable(
+            FileOperationStore.DirectoryOverrideEnvironmentVariable);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                FileOperationStore.DirectoryOverrideEnvironmentVariable,
+                operationDirectory);
+            Assert.True(FileOperationStore.TryWriteInitialState(new FileOperationState
+            {
+                Id = id,
+                Status = FileOperationStatus.Queued,
+            }));
+
+            string statePath = FileOperationStore.StatePath(id);
+            using var blockingReader = new FileStream(statePath, FileMode.Open,
+                FileAccess.Read, FileShare.Read);
+            var started = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            Task writer = Task.Run(() =>
+            {
+                started.SetResult();
+                FileOperationStore.WriteState(new FileOperationState
+                {
+                    Id = id,
+                    Status = FileOperationStatus.Running,
+                });
+            });
+
+            try
+            {
+                await started.Task;
+                await Task.Delay(150);
+                Assert.False(writer.IsCompleted);
+            }
+            finally
+            {
+                blockingReader.Dispose();
+                await writer;
+            }
+
+            FileOperationState? state = FileOperationStore.TryReadState(statePath);
+            Assert.NotNull(state);
+            Assert.Equal(FileOperationStatus.Running, state.Status);
+            Assert.True(state.StateWriteRetries > 0);
+            Assert.Empty(Directory.EnumerateFiles(operationDirectory, "*.tmp"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                FileOperationStore.DirectoryOverrideEnvironmentVariable,
+                previousOperationDirectory);
+            if (Directory.Exists(testRoot))
+                Directory.Delete(testRoot, recursive: true);
         }
     }
 
@@ -489,5 +782,39 @@ public sealed class OperationHostTests
         return Path.Combine(repositoryRoot, "MultiExplorer.OperationHost", "bin",
             configuration, "net8.0-windows", "win-x64",
             "MultiExplorer.OperationHost.exe");
+    }
+
+    private static async Task<IntPtr> WaitForTopLevelWindowAsync(
+        int processId,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            IntPtr window = FindTopLevelWindow(processId);
+            if (window != IntPtr.Zero)
+                return window;
+
+            await Task.Delay(50, cancellationToken);
+        }
+    }
+
+    private static IntPtr FindTopLevelWindow(int processId)
+    {
+        IntPtr result = IntPtr.Zero;
+        NativeMethods.EnumWindows((window, _) =>
+        {
+            NativeMethods.GetWindowThreadProcessId(window, out uint ownerProcessId);
+            if (ownerProcessId != unchecked((uint)processId))
+                return true;
+
+            var title = new System.Text.StringBuilder(128);
+            NativeMethods.GetWindowText(window, title, title.Capacity);
+            if (!title.ToString().EndsWith("% complete", StringComparison.Ordinal))
+                return true;
+
+            result = window;
+            return false;
+        }, IntPtr.Zero);
+        return result;
     }
 }

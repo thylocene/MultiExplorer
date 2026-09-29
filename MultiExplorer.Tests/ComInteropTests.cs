@@ -70,4 +70,25 @@ public sealed class ComInteropTests
             selectedPath: @"C:\Intel",
             allowSelectedFallback: true));
 
+    [Theory]
+    [InlineData(0x0201, true, false, true)]
+    [InlineData(0x0100, true, true, false)]
+    [InlineData(0x0202, true, true, false)]
+    [InlineData(0x000F, true, false, false)]
+    [InlineData(0x0201, false, false, false)]
+    public void SelectionSnapshot_ExcludesNavigationTreeInput(
+        int message, bool isBrowserInput, bool isNavigationTree, bool expected)
+        => Assert.Equal(expected, ExplorerHost.ShouldRefreshSelectionSnapshot(
+            message, isBrowserInput, isNavigationTree));
+
+    [Theory]
+    [InlineData(@"C:\Old", @"C:\Target", @"C:\Target", false)]
+    [InlineData(@"C:\Target", null, @"C:\Target\", false)]
+    [InlineData(@"C:\Old", @"C:\Other", @"C:\Target", true)]
+    [InlineData(null, null, @"C:\Target", true)]
+    public void NavigationTreeFallback_DoesNotRestartActiveNavigation(
+        string? livePath, string? pendingPath, string selectedPath, bool expected)
+        => Assert.Equal(expected, ExplorerHost.ShouldRetryNavigationTreeSelection(
+            livePath, pendingPath, selectedPath));
+
 }

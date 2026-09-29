@@ -2,7 +2,6 @@ C:\Projects\MultiExplorer\MultiExplorer.OperationHost\bin\Release\net8.0-windows
 C:\Projects\MultiExplorer\MultiExplorer.OperationHost\bin\Release\net8.0-windows\win-x64\MultiExplorer.OperationHost.deps.json
 C:\Projects\MultiExplorer\MultiExplorer.OperationHost\bin\Release\net8.0-windows\win-x64\MultiExplorer.OperationHost.runtimeconfig.json
 C:\Projects\MultiExplorer\MultiExplorer.OperationHost\bin\Release\net8.0-windows\win-x64\MultiExplorer.OperationHost.dll
-C:\Projects\MultiExplorer\MultiExplorer.OperationHost\bin\Release\net8.0-windows\win-x64\MultiExplorer.OperationHost.pdb
 C:\Projects\MultiExplorer\MultiExplorer.OperationHost\bin\Release\net8.0-windows\win-x64\Microsoft.CSharp.dll
 C:\Projects\MultiExplorer\MultiExplorer.OperationHost\bin\Release\net8.0-windows\win-x64\Microsoft.VisualBasic.Core.dll
 C:\Projects\MultiExplorer\MultiExplorer.OperationHost\bin\Release\net8.0-windows\win-x64\Microsoft.VisualBasic.dll
@@ -191,7 +190,6 @@ C:\Projects\MultiExplorer\MultiExplorer.OperationHost\obj\Release\net8.0-windows
 C:\Projects\MultiExplorer\MultiExplorer.OperationHost\obj\Release\net8.0-windows\win-x64\MultiExp.BF974F95.Up2Date
 C:\Projects\MultiExplorer\MultiExplorer.OperationHost\obj\Release\net8.0-windows\win-x64\MultiExplorer.OperationHost.dll
 C:\Projects\MultiExplorer\MultiExplorer.OperationHost\obj\Release\net8.0-windows\win-x64\refint\MultiExplorer.OperationHost.dll
-C:\Projects\MultiExplorer\MultiExplorer.OperationHost\obj\Release\net8.0-windows\win-x64\MultiExplorer.OperationHost.pdb
 C:\Projects\MultiExplorer\MultiExplorer.OperationHost\obj\Release\net8.0-windows\win-x64\MultiExplorer.OperationHost.genruntimeconfig.cache
 C:\Projects\MultiExplorer\MultiExplorer.OperationHost\obj\Release\net8.0-windows\win-x64\ref\MultiExplorer.OperationHost.dll
 C:\Projects\MultiExplorer\bin\SecurityCheck\MultiExplorer.OperationHost.exe

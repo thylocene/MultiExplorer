@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace MultiExplorer;
@@ -32,13 +33,18 @@ internal static class ThemeManager
     internal static Color Window     => IsDark ? Color.FromArgb(30, 30, 30) : Color.White;
     internal static Color Text       => IsDark ? Color.FromArgb(245, 245, 245) : Color.FromArgb(25, 25, 25);
     internal static Color MutedText  => IsDark ? Color.FromArgb(190, 190, 190) : Color.FromArgb(96, 96, 96);
-    internal static Color Border     => IsDark ? Color.FromArgb(82, 82, 82) : Color.FromArgb(190, 190, 190);
+    // Keep every dark-mode outline and separator on one neutral grey.  Native
+    // ToolStrip rendering and inactive pane frames also consume this colour so
+    // they do not fall back to the much brighter Windows border palette.
+    internal static Color Border     => IsDark ? Color.FromArgb(105, 105, 105) : Color.FromArgb(190, 190, 190);
     internal static Color Hover      => IsDark ? Color.FromArgb(62, 62, 62) : Color.FromArgb(224, 224, 224);
     // Explorer-style selection colour requested for every application menu.
     internal static Color MenuHighlight => Color.FromArgb(229, 243, 255); // #e5f3ff
     internal static Color MenuHighlightText => Color.FromArgb(25, 25, 25);
     internal static Color Pressed    => IsDark ? Color.FromArgb(76, 76, 76) : Color.FromArgb(207, 207, 207);
     internal static Color Accent     => Color.FromArgb(0, 120, 212);
+    internal static Color ActiveTabBackground => Color.FromArgb(224, 255, 192);
+    internal static Color ActiveTabText => Color.FromArgb(25, 25, 25);
     internal static Color ActiveSelection => Color.FromArgb(43, 136, 197); // #2B88C5
     internal static Color DetailsFolderIcon => IsDark
         ? Color.FromArgb(166, 212, 247)
@@ -53,7 +59,7 @@ internal static class ThemeManager
         ? Color.FromArgb(65, 78, 91)
         : Color.FromArgb(213, 222, 231);
     internal static Color InactiveSelectionText => Text;
-    internal static Color NavigationBorder => IsDark ? Color.FromArgb(105, 105, 105) : Color.FromArgb(158, 158, 158);
+    internal static Color NavigationBorder => IsDark ? Border : Color.FromArgb(158, 158, 158);
     internal static Color Filter     => IsDark ? Color.FromArgb(55, 49, 28) : Color.FromArgb(255, 252, 224);
     internal static Color Error      => IsDark ? Color.FromArgb(255, 112, 112) : Color.Crimson;
     internal static Color Warning    => IsDark ? Color.FromArgb(255, 190, 80) : Color.DarkOrange;
@@ -428,6 +434,7 @@ internal static class ThemeManager
         public override Color ToolStripGradientBegin => Surface;
         public override Color ToolStripGradientMiddle => Surface;
         public override Color ToolStripGradientEnd => Surface;
+        public override Color ToolStripBorder => Border;
         public override Color StatusStripGradientBegin => Surface;
         public override Color StatusStripGradientEnd => Surface;
         public override Color ToolStripDropDownBackground => Surface;
@@ -451,7 +458,7 @@ internal static class ThemeManager
         public override Color ButtonPressedGradientMiddle => Pressed;
         public override Color ButtonPressedGradientEnd => Pressed;
         public override Color SeparatorDark => Border;
-        public override Color SeparatorLight => Surface;
+        public override Color SeparatorLight => Border;
         public override Color CheckBackground => Hover;
         public override Color CheckSelectedBackground => Hover;
         public override Color CheckPressedBackground => Pressed;
@@ -459,6 +466,9 @@ internal static class ThemeManager
 
     private static class NativeDarkMode
     {
+        private static int _preferredModeWarningReported;
+        private static int _windowModeWarningReported;
+
         internal static void SetPreferredMode(bool dark)
         {
             try
@@ -466,15 +476,32 @@ internal static class ThemeManager
                 SetPreferredAppMode(dark ? 2 : 3); // ForceDark / ForceLight
                 FlushMenuThemes();
             }
-            catch (EntryPointNotFoundException) { }
-            catch (DllNotFoundException) { }
+            catch (Exception ex) when (ex is EntryPointNotFoundException
+                                       or DllNotFoundException)
+            {
+                ReportOnce(ref _preferredModeWarningReported, ex,
+                    "Windows dark-mode integration is unavailable. Some native "
+                    + "menus may not match the selected theme. See app.log for details.");
+            }
         }
 
         internal static void AllowForWindow(IntPtr hwnd, bool dark)
         {
             try { AllowDarkModeForWindow(hwnd, dark); }
-            catch (EntryPointNotFoundException) { }
-            catch (DllNotFoundException) { }
+            catch (Exception ex) when (ex is EntryPointNotFoundException
+                                       or DllNotFoundException)
+            {
+                ReportOnce(ref _windowModeWarningReported, ex,
+                    "Windows could not apply the selected theme to a native window. "
+                    + "See app.log for details.");
+            }
+        }
+
+        private static void ReportOnce(
+            ref int warningReported, Exception exception, string message)
+        {
+            if (Interlocked.Exchange(ref warningReported, 1) == 0)
+                AppLog.Warn(exception, nameof(ThemeManager), message);
         }
 
         [DllImport("uxtheme.dll", EntryPoint = "#135")]
